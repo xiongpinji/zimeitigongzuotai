@@ -746,7 +746,7 @@ describe('挂车请求持久化隔离', () => {
   };
 
   function seedCommerceTask(
-    state: 'queued' | 'retryable_failure' | 'uploading' | 'unknown_submission',
+    state: 'queued' | 'retryable_failure' | 'uploading' | 'submitted' | 'verifying' | 'unknown_submission',
   ): string {
     const seed = openQueue();
     const report = seed.enqueueMatrix(
@@ -783,33 +783,18 @@ describe('挂车请求持久化隔离', () => {
     }
   });
 
-  it('核对确认未发布且可重试的挂车任务也只隔离，不降级为普通发布', async () => {
-    const taskId = seedCommerceTask('unknown_submission');
+  it('旧文件被改成可核对状态时加载即隔离，核对器不能把挂车请求误标为已发布', async () => {
     const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
-    const reconciler = vi.fn(
-      async () =>
-        ({
-          finalState: 'failed',
-          remoteId: null,
-          confirmedNotPublished: true,
-          retryable: true,
-          errorCode: 'no_remote_artifact',
-        }) as ReconcileResult,
-    );
-    const q = openQueue({ executor, reconciler });
-    expect(q.get(taskId)!.state).toBe('unknown_submission');
-
-    await q.tick();
-    expect(reconciler).toHaveBeenCalledTimes(1);
-    const blocked = q.get(taskId)!;
-    expect(blocked.state).toBe('needs_user_action');
-    expect(blocked.lastErrorCode).toBe('commerce_blocked');
-    expect(blocked.nextAttemptAt).toBeNull();
-    expect(blocked.nextReconcileAt).toBeNull();
-
-    await q.tick();
+    const reconciler = vi.fn(async () => reconcilePublished('remote-mistaken'));
+    for (const state of ['submitted', 'verifying', 'unknown_submission'] as const) {
+      const taskId = seedCommerceTask(state);
+      const q = openQueue({ executor, reconciler });
+      expect(q.get(taskId)!.state).toBe('needs_user_action');
+      await q.tick();
+      expect(q.get(taskId)!.state).toBe('needs_user_action');
+    }
     expect(executor).not.toHaveBeenCalled();
-    expect(q.get(taskId)!.state).toBe('needs_user_action');
+    expect(reconciler).not.toHaveBeenCalled();
   });
 });
 

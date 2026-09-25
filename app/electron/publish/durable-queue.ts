@@ -966,6 +966,8 @@ export class DurablePublishQueue {
       for (const task of ordered) {
         if (this.running.size + submissions.length + reconciliations.length >= this.budgets.global) break;
         if (!RECONCILABLE_STATES.has(task.state)) continue;
+        // 防御旧文件/外部改写：未实现的商品请求不得进入普通发布核对器。
+        if (task.commerceRequest !== null) continue;
         if (task.reconcileAttempts >= this.retryPolicy.maxReconcileAttempts) continue;
         if (task.nextReconcileAt !== null && task.nextReconcileAt > at) continue;
         if (busyAccounts.has(task.accountId)) continue;
@@ -1401,8 +1403,12 @@ export class DurablePublishQueue {
     const draft = structuredClone(loaded);
     let recovered = false;
     for (const task of draft.tasks) {
-      // 挂车任务绝不能停留在可执行 / 上传态：加载即隔离，等待人工移除请求，防止被当成普通发布执行。
-      if (task.commerceRequest !== null && (EXECUTABLE_STATES.has(task.state) || task.state === 'uploading')) {
+      // 挂车任务绝不能停留在可执行 / 上传 / 核对态：加载即隔离，等待人工移除请求。
+      if (task.commerceRequest !== null && (
+        EXECUTABLE_STATES.has(task.state) ||
+        RECONCILABLE_STATES.has(task.state) ||
+        task.state === 'uploading'
+      )) {
         this.transition(task, 'needs_user_action', { at, errorCode: 'commerce_blocked_recovered' });
         task.leaseUntil = null;
         task.nextAttemptAt = null;
