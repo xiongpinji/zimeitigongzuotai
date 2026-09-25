@@ -24,7 +24,82 @@ function toWindowsPath(p) {
   return p.split('/').join('\\');
 }
 
+// NSIS 双引号字符串内 `$` 会触发变量展开、`"`/反引号会破坏引号、`*`/`?` 是 Delete 通配符、
+// `\` 是路径分隔符、控制字符会截断脚本行。任何进入生成脚本的相对路径都必须先通过校验。
+const UNSAFE_NSIS_PATH_PATTERN = /["`$\\*?\u0000-\u001f\u007f]/;
+
+function assertSafeInstallerRelativePath(relativePath) {
+  if (typeof relativePath !== 'string' || relativePath.length === 0) {
+    throw new Error(`安装清单包含空的相对路径：${JSON.stringify(relativePath)}`);
+  }
+  if (path.isAbsolute(relativePath)) {
+    throw new Error(`安装清单拒绝绝对路径：${relativePath}`);
+  }
+  const segments = relativePath.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new Error(`安装清单拒绝越界或空段路径：${relativePath}`);
+  }
+  if (UNSAFE_NSIS_PATH_PATTERN.test(relativePath)) {
+    throw new Error(`安装清单拒绝含 NSIS 元字符的路径：${relativePath}`);
+  }
+  return relativePath;
+}
+
+// 确定性遍历 appDir，收集打包文件的相对路径（POSIX 分隔符，排序后返回）。
+// 保守策略：遇到任何符号链接直接失败，绝不跟随（防止清单指向 appDir 之外的内容）；
+// 非常规文件（FIFO、socket 等）同样失败，避免安装/卸载清单与 File /r 行为不一致。
+function collectInstallerFileManifest(appDir, { readdirSync = fs.readdirSync } = {}) {
+  const files = [];
+
+  const walk = (absoluteDir, relativeDir) => {
+    const entries = [...readdirSync(absoluteDir, { withFileTypes: true })].sort((a, b) => (
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+    ));
+    for (const entry of entries) {
+      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+      if (entry.isSymbolicLink()) {
+        throw new Error(`应用目录包含符号链接，拒绝生成卸载清单（不跟随任何链接）：${relativePath}`);
+      }
+      const absolutePath = path.join(absoluteDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error(`应用目录包含非常规文件，拒绝生成卸载清单：${relativePath}`);
+      }
+      files.push(assertSafeInstallerRelativePath(relativePath));
+    }
+  };
+
+  walk(appDir, '');
+  return files.sort();
+}
+
+// 由文件清单推导安装器会创建的目录集合（所有父目录），最深优先、同深度按字母序，
+// 供卸载时逐个执行非递归 RMDir：目录非空（用户自己的内容）时 NSIS 会静默保留。
+function deriveInstallerDirectoryManifest(manifest) {
+  const directories = new Set();
+  for (const filePath of manifest) {
+    const segments = filePath.split('/');
+    segments.pop();
+    for (let depth = 1; depth <= segments.length; depth += 1) {
+      directories.add(segments.slice(0, depth).join('/'));
+    }
+  }
+  return [...directories].sort((a, b) => {
+    const depthDiff = b.split('/').length - a.split('/').length;
+    if (depthDiff !== 0) return depthDiff;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+
 // 生成 NSIS 脚本。所有界面文案用简体中文；中文路径与文件名依赖 Unicode true。
+// manifest 是 collectInstallerFileManifest 产出的已排序相对路径清单；卸载段只精确
+// Delete 清单内文件 + Uninstall.exe，再用非递归 RMDir 自深向浅移除空目录。
+// 依据 NSIS 官方文档，绝不对用户可选的 $INSTDIR 做 RMDir /r：
+// https://nsis.sourceforge.io/Reference/RMDir
+// https://nsis.sourceforge.io/Validating_%24INSTDIR_before_uninstall
 function buildNsisScript({
   appName,
   version,
@@ -34,13 +109,25 @@ function buildNsisScript({
   iconPath,
   outFile,
   publisher = appName,
+  manifest,
 }) {
+  if (!Array.isArray(manifest)) {
+    throw new Error('buildNsisScript 需要显式的安装文件清单 manifest（拒绝生成递归清除 $INSTDIR 的卸载脚本）');
+  }
+  const safeManifest = manifest.map((entry) => assertSafeInstallerRelativePath(entry));
   const winAppDir = toWindowsPath(appDir);
   const winOutFile = toWindowsPath(outFile);
   const uninstallKey = `${UNINSTALL_REGISTRY_ROOT}\\${appName}`;
   const iconLine = iconPath
     ? `!define MUI_ICON "${toWindowsPath(iconPath)}"\n!define MUI_UNICON "${toWindowsPath(iconPath)}"`
     : '';
+  const uninstallFileLines = [
+    ...safeManifest.map((entry) => `  Delete "$INSTDIR\\${toWindowsPath(entry)}"`),
+    '  Delete "$INSTDIR\\Uninstall.exe"',
+  ].join('\n');
+  const uninstallDirLines = deriveInstallerDirectoryManifest(safeManifest)
+    .map((entry) => `  RMDir "$INSTDIR\\${toWindowsPath(entry)}"`)
+    .join('\n');
 
   return `Unicode true
 ManifestDPIAware true
@@ -92,7 +179,16 @@ SectionEnd
 Section "Uninstall"
   Delete "$DESKTOP\\${appName}.lnk"
   RMDir /r "$SMPROGRAMS\\${appName}"
-  RMDir /r "$INSTDIR"
+
+  ; 只精确删除安装包写入的文件（构建期清单），绝不递归清除用户可选的 $INSTDIR。
+  ; 用户在安装目录里自行放置的文件 / 文件夹必须保留。
+${uninstallFileLines}
+
+  ; 安装器创建的目录自深向浅移除；非递归 RMDir 对非空目录静默失败，
+  ; 因此残留用户内容的目录不会被删除。
+${uninstallDirLines}
+  RMDir "$INSTDIR"
+
   DeleteRegKey HKLM "${uninstallKey}"
   DeleteRegKey HKLM "Software\\${appName}"
 SectionEnd
@@ -186,6 +282,9 @@ async function createWindowsInstaller({
     throw new Error(`应用目录必须位于发布目录内：${appDir}`);
   }
 
+  // 卸载清单在真实 appDir 上遍历生成（短盘符映射不改变相对路径）。
+  const manifest = collectInstallerFileManifest(appDir);
+
   await withShortWindowsReleaseDir(releaseDir, async (shortReleaseDir) => {
     const scriptText = buildNsisScript({
       appName,
@@ -195,6 +294,7 @@ async function createWindowsInstaller({
       exeName,
       iconPath: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
       outFile: path.join(shortReleaseDir, outName),
+      manifest,
     });
 
     await fsp.mkdir(tmpDir, { recursive: true });
@@ -222,6 +322,9 @@ module.exports = {
   buildMakensisArgs,
   resolveInstallerOutputName,
   resolveMakensisCommand,
+  assertSafeInstallerRelativePath,
+  collectInstallerFileManifest,
+  deriveInstallerDirectoryManifest,
   buildNsisScript,
   makensisMissingMessage,
   withShortWindowsReleaseDir,
