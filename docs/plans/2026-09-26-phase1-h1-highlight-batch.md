@@ -30,12 +30,15 @@
 
 # Checklist
 
-- [ ] H1-S1：仅新增 `project-hotclip-candidates.ts`、聚焦测试和验证记录。
+- [x] H1-S1：仅新增 `project-hotclip-candidates.ts`、聚焦测试和验证记录。
   显式校验录屏/观察哈希、候选 ID 和毫秒时间码，生成稳定 ID、来源追溯、
   `HighlightV1` 与只供评审的上游建议字段；重复或越界输入 fail closed。
-  先 RED 后 GREEN，不接文件系统、模型、UI 或发布。
+  先 RED 后 GREEN，不接文件系统、模型、UI 或发布。验收见
+  [H1-S1 离线投影记录](../validation/p2-1-highlight-projection.md)。
 - [ ] H1-S2：在 S1 契约上实现多录屏持久任务与有界并发、取消、失败重试、
   崩溃重启和相同输入去重；以可注入 sidecar runner 做合成故障注入。
+  扩大调用面前先修 S1 校验后重读字段的动态 getter P2 缺口，并统一或明确
+  `durationMs` 安全整数与生产文档解析器的门槛差异。
 - [ ] H1-S3：以用户配置的外部 HotClip 和已授权真实录屏运行 Windows
   本地试验，记录转写、场景/音频/互动证据、时间边界、人审调整和负对照。
   正式分发前审查 AGPL 与模型/依赖成本，未通过则保持侧车可选且不打包。

@@ -20,8 +20,8 @@
 
 # Checklist
 
-- [ ] A2-S1：实现可注入的主进程 `account-v2` 账号服务与 IPC：create/list/login/relogin/check/delete，四平台白名单、UUID/请求关联、临时会话事务、二维码受限数据事件、错误脱敏、单账号互斥；先写合成 RED 测试。仅改新服务、新测试和验证文档，不接 `main.ts`、preload、Renderer。
-- [ ] A2-S2：在 S1 验收后接 `main.ts` 注册、preload 与 Renderer 类型，验证 IPC 形状、事件退订和生产加密适配器。不得触旧 `publish:*`。
+- [x] A2-S1：实现可注入的主进程 `account-v2` 账号服务与 IPC：create/list/login/relogin/check/delete，四平台白名单、UUID/请求关联、临时会话事务、二维码受限数据事件、错误脱敏、单账号互斥；先写合成 RED 测试。仅改新服务、新测试和验证文档，不接 `main.ts`、preload、Renderer。验收见 [A2-S1 记录](../validation/p1-1-account-ipc-core.md)。
+- [x] A2-S2：在 S1 验收后接 `main.ts` 注册、preload 与 Renderer 类型，验证 IPC 形状、事件退订和生产加密适配器。不得触旧 `publish:*`。验收见 [A2-S2 记录](../validation/p1-1-account-bridge.md)；真实扫码与单实例门槛仍待后续。
 - [ ] A2-S3：在 S2 验收后增加独立账号设置页和 UUID 键控 store，覆盖同平台同名账号、扫码续登、探针、删除和失败提示；旧发布工作台仍使用旧账号列表并清楚显示未切换边界。
 - [ ] A2-S4：修复旧 runner 对未知/UUID 目标的静默跳过，并实现只读旧账号迁移预览；测试旧文件字节不变、B 站排除和无破坏性迁移 IPC。真实迁移留到 P1 激活门槛。
 
