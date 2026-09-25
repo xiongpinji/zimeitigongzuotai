@@ -1285,3 +1285,506 @@ describe('createSafeStorageCipher（生产适配器，mock safeStorage）', () =
     expect(electronMock.calls).not.toContain('decryptString');
   });
 });
+
+// ─── P1-1 登录会话事务（withLoginStorageState，输入 SHA 3ab2fff） ───────────────
+// 平台登录回调只能拿到一次性临时 storageState 路径；只有严格 success:true、
+// 临时明文清理成功且 sessionRef 未被并发提交替换时才加密入仓。
+// 全部使用合成夹具，不触网、不启动浏览器、不含任何真实凭证。
+
+describe('AccountVault：withLoginStorageState 登录会话事务', () => {
+  let ctx: ReturnType<typeof makeVault>;
+  beforeEach(() => {
+    ctx = makeVault();
+  });
+
+  function errnoError(message: string, code = 'EBUSY'): NodeJS.ErrnoException {
+    const err = new Error(message) as NodeJS.ErrnoException;
+    err.code = code;
+    return err;
+  }
+
+  function decryptedSessionBytes(root: string, sessionRef: string): string {
+    return ctx.cipher
+      .decrypt(readFileSync(join(root, 'sessions', `${sessionRef}${SESSION_FILE_EXT}`)))
+      .toString('utf-8');
+  }
+
+  it('新账号登录成功：加密入仓、原样返回回调结果、状态 valid，且不留任何明文临时文件', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '新登录' });
+    const callbackResult = { success: true, message: '登录成功' };
+
+    let seenPath = '';
+    const result = await ctx.vault.withLoginStorageState(acc.id, (p) => {
+      seenPath = p;
+      // 新登录：输出文件事先不存在，路径位于注入的临时基目录下
+      expect(existsSync(p)).toBe(false);
+      expect(p.endsWith('storageState.json')).toBe(true);
+      expect(dirname(p).startsWith(ctx.tmpBase)).toBe(true);
+      writeFileSync(p, storageStateFixture('login-new'));
+      return callbackResult; // 同步（非 Promise）返回值也必须支持
+    });
+
+    expect(result).toBe(callbackResult); // 原对象原样返回，不被改写
+    const saved = ctx.vault.getAccount(acc.id);
+    expect(saved.status).toBe('valid');
+    expect(saved.sessionRef).toMatch(SESSION_REF_RE);
+    expect(saved.lastCheckedAt).toBe(1_700_000_000_000);
+
+    let content = '';
+    await ctx.vault.withDecryptedStorageState(acc.id, (p) => {
+      content = readFileSync(p, 'utf-8');
+    });
+    expect(content).toBe(storageStateFixture('login-new'));
+
+    // 明文临时目录随事务清理
+    expect(existsSync(seenPath)).toBe(false);
+    expect(existsSync(dirname(seenPath))).toBe(false);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+
+    // 临时路径与会话内容绝不进入 registry 或账号元数据
+    const registryText = ctx.registryText();
+    expect(registryText).not.toContain(seenPath);
+    expect(registryText).not.toContain('storageState.json');
+    expect(registryText).not.toContain(SECRET_COOKIE_VALUE);
+    expect(JSON.stringify(saved)).not.toContain(seenPath);
+  });
+
+  it('既有会话刷新成功（异步回调）：种子为旧明文，只轮换目标账号的加密引用', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'kuaishou', displayName: '刷新号' });
+    const other = ctx.vault.createAccount({ platform: 'kuaishou', displayName: '别的号' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('old'));
+    ctx.vault.saveStorageState(other.id, storageStateFixture('other'));
+    const oldRef = ctx.vault.getAccount(acc.id).sessionRef as string;
+    const otherRef = ctx.vault.getAccount(other.id).sessionRef as string;
+
+    let seenPath = '';
+    const result = await ctx.vault.withLoginStorageState(acc.id, async (p) => {
+      seenPath = p;
+      // 既有会话：回调路径先被旧会话明文种子化
+      expect(readFileSync(p, 'utf-8')).toBe(storageStateFixture('old'));
+      writeFileSync(p, storageStateFixture('new'));
+      return { success: true, message: 'ok' };
+    });
+
+    expect(result).toEqual({ success: true, message: 'ok' });
+    const saved = ctx.vault.getAccount(acc.id);
+    expect(saved.status).toBe('valid');
+    expect(saved.sessionRef).toMatch(SESSION_REF_RE);
+    expect(saved.sessionRef).not.toBe(oldRef);
+    expect(existsSync(join(ctx.root, 'sessions', `${oldRef}${SESSION_FILE_EXT}`))).toBe(false);
+
+    let content = '';
+    await ctx.vault.withDecryptedStorageState(acc.id, (p) => {
+      content = readFileSync(p, 'utf-8');
+    });
+    expect(content).toBe(storageStateFixture('new'));
+
+    // 其他账号（哪怕同平台）完全不受影响
+    expect(ctx.vault.getAccount(other.id).sessionRef).toBe(otherRef);
+    expect(existsSync(join(ctx.root, 'sessions', `${otherRef}${SESSION_FILE_EXT}`))).toBe(true);
+    let otherContent = '';
+    await ctx.vault.withDecryptedStorageState(other.id, (p) => {
+      otherContent = readFileSync(p, 'utf-8');
+    });
+    expect(otherContent).toBe(storageStateFixture('other'));
+
+    expect(existsSync(seenPath)).toBe(false);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('刷新时登录返回 success:false：返回原结果，既有会话字节与元数据逐字段保留', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'tencent', displayName: '扫码超时' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('keep-old'));
+    const before = ctx.vault.getAccount(acc.id);
+    const registryBefore = ctx.registryText();
+    const failResult = { success: false, message: '二维码超时' };
+
+    let seenPath = '';
+    const result = await ctx.vault.withLoginStorageState(acc.id, (p) => {
+      seenPath = p;
+      // 登录侧写了新内容但声明失败：候选一律不得入仓
+      writeFileSync(p, storageStateFixture('rejected-new'));
+      return failResult;
+    });
+
+    expect(result).toBe(failResult);
+    expect(ctx.vault.getAccount(acc.id)).toEqual(before);
+    expect(ctx.registryText()).toBe(registryBefore);
+    expect(ctx.sessionsDirEntries()).toEqual([`${before.sessionRef}${SESSION_FILE_EXT}`]);
+    expect(decryptedSessionBytes(ctx.root, before.sessionRef as string)).toBe(
+      storageStateFixture('keep-old'),
+    );
+    expect(existsSync(seenPath)).toBe(false);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('新账号登录返回 success:false：不产生任何会话，状态保持 unknown', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'xiaohongshu', displayName: '新号取消' });
+    const cancelResult = { success: false, message: '用户扫码后取消' };
+
+    const result = await ctx.vault.withLoginStorageState(acc.id, (p) => {
+      writeFileSync(p, storageStateFixture('abandoned'));
+      return cancelResult;
+    });
+
+    expect(result).toBe(cancelResult);
+    const after = ctx.vault.getAccount(acc.id);
+    expect(after.sessionRef).toBeNull();
+    expect(after.status).toBe('unknown');
+    expect(after.lastCheckedAt).toBeNull();
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('回调抛异常：报 login_callback_failed，错误不泄露回调原文/路径/Cookie；旧会话保留', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '回调抛错' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('before-throw'));
+    const oldRef = ctx.vault.getAccount(acc.id).sessionRef as string;
+
+    let seenPath = '';
+    let caught: unknown;
+    try {
+      await ctx.vault.withLoginStorageState(acc.id, (p) => {
+        seenPath = p;
+        throw new Error(`LOGIN-RAW-DETAIL path=${p} cookie=${SECRET_COOKIE_VALUE}`);
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    const vaultErr = caught as AccountVaultError;
+    expect(vaultErr.code).toBe('login_callback_failed');
+    expect(vaultErr.accountId).toBe(acc.id);
+    expect(vaultErr.message).not.toContain('LOGIN-RAW-DETAIL');
+    expect(vaultErr.message).not.toContain(SECRET_COOKIE_VALUE);
+    expect(vaultErr.message).not.toContain(seenPath);
+    expect(vaultErr.cause).toBeUndefined();
+
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBe(oldRef);
+    expect(decryptedSessionBytes(ctx.root, oldRef)).toBe(storageStateFixture('before-throw'));
+    expect(existsSync(seenPath)).toBe(false);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('回调结果畸形（非对象 / success 非严格布尔）：报 login_result_invalid，truthy 值绝不当成功', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '畸形结果' });
+    const malformedResults: unknown[] = [
+      undefined,
+      null,
+      'done',
+      42,
+      {},
+      { success: 'true' },
+      { success: 1 },
+      [1, 2],
+    ];
+
+    for (const malformed of malformedResults) {
+      await expect(
+        ctx.vault.withLoginStorageState<{ success: boolean }>(acc.id, (p) => {
+          writeFileSync(p, storageStateFixture('malformed'));
+          return malformed as { success: boolean };
+        }),
+      ).rejects.toMatchObject({ code: 'login_result_invalid' });
+    }
+
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
+    expect(ctx.vault.getAccount(acc.id).status).toBe('unknown');
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('success:true 但输出文件缺失：报 invalid_storage_state，不产生会话，明文目录已清理', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'kuaishou', displayName: '没写文件' });
+
+    await expect(
+      ctx.vault.withLoginStorageState(acc.id, async () => ({ success: true, message: '没写文件' })),
+    ).rejects.toMatchObject({ code: 'invalid_storage_state' });
+
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('success:true 但输出非法（非 JSON / 缺 cookies·origins）：invalid_storage_state，原文不进错误信息', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '非法输出' });
+
+    let caught: unknown;
+    try {
+      await ctx.vault.withLoginStorageState(acc.id, (p) => {
+        writeFileSync(p, `SECRET-not-json-${SECRET_COOKIE_VALUE}`);
+        return { success: true, message: 'x' };
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    expect((caught as AccountVaultError).code).toBe('invalid_storage_state');
+    expect((caught as Error).message).not.toContain('SECRET-not-json');
+    expect((caught as Error).message).not.toContain(SECRET_COOKIE_VALUE);
+
+    await expect(
+      ctx.vault.withLoginStorageState(acc.id, (p) => {
+        writeFileSync(p, JSON.stringify({ hello: 'world' }));
+        return { success: true, message: 'x' };
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_storage_state' });
+
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('加密不可用：在回调之前拒绝 cipher_unavailable，不创建临时目录、不触碰既有会话', async () => {
+    const fresh = ctx.vault.createAccount({ platform: 'douyin', displayName: '无加密-新号' });
+    const withSession = ctx.vault.createAccount({ platform: 'douyin', displayName: '无加密-旧号' });
+    ctx.vault.saveStorageState(withSession.id, storageStateFixture('cipher-off'));
+    const savedRef = ctx.vault.getAccount(withSession.id).sessionRef as string;
+    ctx.cipher.available = false;
+
+    let called = 0;
+    const cb = (p: string) => {
+      called += 1;
+      writeFileSync(p, storageStateFixture('must-not-run'));
+      return { success: true, message: 'x' };
+    };
+    await expect(ctx.vault.withLoginStorageState(fresh.id, cb)).rejects.toMatchObject({
+      code: 'cipher_unavailable',
+    });
+    await expect(ctx.vault.withLoginStorageState(withSession.id, cb)).rejects.toMatchObject({
+      code: 'cipher_unavailable',
+    });
+
+    expect(called).toBe(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+    expect(ctx.vault.getAccount(withSession.id).sessionRef).toBe(savedRef);
+    expect(ctx.vault.getAccount(fresh.id).sessionRef).toBeNull();
+  });
+
+  it('临时明文清理耗尽：登录成功也报 temp_cleanup_failed，新号与刷新都绝不提交密文', async () => {
+    let attempted = 0;
+    const failCtx = makeVault(1_700_000_000_000, {
+      removeDirSync: (dir) => {
+        attempted += 1;
+        throw errnoError(`RAW-BUSY-DETAIL cookie=${SECRET_COOKIE_VALUE} dir=${dir}`);
+      },
+    });
+
+    // 新账号：清理失败 → fail closed，不产生任何密文
+    const fresh = failCtx.vault.createAccount({ platform: 'douyin', displayName: '清理失败-新' });
+    let freshPath = '';
+    let caught: unknown;
+    try {
+      await failCtx.vault.withLoginStorageState(fresh.id, (p) => {
+        freshPath = p;
+        writeFileSync(p, storageStateFixture('cleanup-fail'));
+        return { success: true, message: 'ok' };
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    const vaultErr = caught as AccountVaultError;
+    expect(vaultErr.code).toBe('temp_cleanup_failed');
+    expect(vaultErr.accountId).toBe(fresh.id);
+    expect(vaultErr.message).not.toContain('RAW-BUSY-DETAIL');
+    expect(vaultErr.message).not.toContain(SECRET_COOKIE_VALUE);
+    expect(vaultErr.message).not.toContain(freshPath);
+    expect(vaultErr.cause).toEqual({ code: 'EBUSY' });
+    expect(failCtx.vault.getAccount(fresh.id).sessionRef).toBeNull();
+    expect(failCtx.vault.getAccount(fresh.id).status).toBe('unknown');
+    expect(failCtx.sessionsDirEntries()).toHaveLength(0);
+
+    // 既有会话刷新：清理失败 → 旧引用与旧密文原样保留
+    const existing = failCtx.vault.createAccount({ platform: 'douyin', displayName: '清理失败-旧' });
+    failCtx.vault.saveStorageState(existing.id, storageStateFixture('cleanup-old'));
+    const oldRef = failCtx.vault.getAccount(existing.id).sessionRef as string;
+    await expect(
+      failCtx.vault.withLoginStorageState(existing.id, (p) => {
+        writeFileSync(p, storageStateFixture('cleanup-new'));
+        return { success: true, message: 'ok' };
+      }),
+    ).rejects.toMatchObject({ code: 'temp_cleanup_failed' });
+    expect(failCtx.vault.getAccount(existing.id).sessionRef).toBe(oldRef);
+    expect(decryptedSessionBytes(failCtx.root, oldRef)).toBe(storageStateFixture('cleanup-old'));
+    expect(failCtx.sessionsDirEntries()).toEqual([`${oldRef}${SESSION_FILE_EXT}`]);
+
+    // 每个事务对清理做同样的有界重试（5 次）后显式失败
+    expect(attempted).toBe(10);
+    rmSync(failCtx.tmpBase, { recursive: true, force: true }); // 清理测试产物（含残留临时目录）
+  });
+
+  it('同平台同名两账号：独立 UUID/临时目录/加密引用，先后登录互不影响', async () => {
+    const a = ctx.vault.createAccount({ platform: 'douyin', displayName: '同名工作室' });
+    const b = ctx.vault.createAccount({ platform: 'douyin', displayName: '同名工作室' });
+    expect(a.id).not.toBe(b.id);
+
+    const dirs: string[] = [];
+    const resA = await ctx.vault.withLoginStorageState(a.id, (p) => {
+      dirs.push(dirname(p));
+      writeFileSync(p, storageStateFixture('twin-a'));
+      return { success: true, message: 'a' };
+    });
+    const resB = await ctx.vault.withLoginStorageState(b.id, (p) => {
+      dirs.push(dirname(p));
+      writeFileSync(p, storageStateFixture('twin-b'));
+      return { success: true, message: 'b' };
+    });
+    expect(resA.success).toBe(true);
+    expect(resB.success).toBe(true);
+    expect(dirs[0]).not.toBe(dirs[1]);
+
+    const aAcc = ctx.vault.getAccount(a.id);
+    const bAcc = ctx.vault.getAccount(b.id);
+    expect(aAcc.sessionRef).toMatch(SESSION_REF_RE);
+    expect(bAcc.sessionRef).toMatch(SESSION_REF_RE);
+    expect(aAcc.sessionRef).not.toBe(bAcc.sessionRef);
+
+    let aContent = '';
+    let bContent = '';
+    await ctx.vault.withDecryptedStorageState(a.id, (p) => {
+      aContent = readFileSync(p, 'utf-8');
+    });
+    await ctx.vault.withDecryptedStorageState(b.id, (p) => {
+      bContent = readFileSync(p, 'utf-8');
+    });
+    expect(aContent).toBe(storageStateFixture('twin-a'));
+    expect(bContent).toBe(storageStateFixture('twin-b'));
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('并发替换（新账号）：登录期间会话被更新提交，晚到者报 session_changed 且不覆盖', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '并发新登' });
+    let releaseLogin!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseLogin = resolve;
+    });
+
+    const pending = ctx.vault.withLoginStorageState(acc.id, async (p) => {
+      writeFileSync(p, storageStateFixture('concurrent-late'));
+      await gate;
+      return { success: true, message: 'late' };
+    });
+
+    // 登录挂起期间，另一路提交已把会话写入（sessionRef: null → winner）
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('concurrent-winner'));
+    const winnerRef = ctx.vault.getAccount(acc.id).sessionRef as string;
+
+    releaseLogin();
+    await expect(pending).rejects.toMatchObject({ code: 'session_changed' });
+
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBe(winnerRef);
+    expect(ctx.sessionsDirEntries()).toEqual([`${winnerRef}${SESSION_FILE_EXT}`]);
+    expect(decryptedSessionBytes(ctx.root, winnerRef)).toBe(
+      storageStateFixture('concurrent-winner'),
+    );
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('并发替换（既有会话刷新）：登录期间会话被轮换，晚到候选不入仓，较新密文完好', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'tencent', displayName: '并发刷新' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('refresh-base'));
+    let releaseLogin!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseLogin = resolve;
+    });
+
+    let seeded = false;
+    const pending = ctx.vault.withLoginStorageState(acc.id, async (p) => {
+      seeded = readFileSync(p, 'utf-8') === storageStateFixture('refresh-base');
+      writeFileSync(p, storageStateFixture('refresh-late'));
+      await gate;
+      return { success: true, message: 'late' };
+    });
+
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('refresh-winner'));
+    const winnerRef = ctx.vault.getAccount(acc.id).sessionRef as string;
+
+    releaseLogin();
+    await expect(pending).rejects.toMatchObject({ code: 'session_changed' });
+
+    expect(seeded).toBe(true);
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBe(winnerRef);
+    expect(ctx.sessionsDirEntries()).toEqual([`${winnerRef}${SESSION_FILE_EXT}`]);
+    expect(decryptedSessionBytes(ctx.root, winnerRef)).toBe(
+      storageStateFixture('refresh-winner'),
+    );
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('未知 accountId 在回调之前拒绝 account_not_found，不创建临时目录', async () => {
+    const missing = '00000000-0000-4000-8000-000000000000';
+    let called = 0;
+    await expect(
+      ctx.vault.withLoginStorageState(missing, () => {
+        called += 1;
+        return { success: true, message: 'x' };
+      }),
+    ).rejects.toMatchObject({ code: 'account_not_found' });
+    expect(called).toBe(0);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('既有会话回调声称成功却未写出新状态时不得把旧会话当作新登录', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '未写出新状态' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('old-session'));
+    const before = ctx.vault.getAccount(acc.id);
+
+    await expect(
+      ctx.vault.withLoginStorageState(acc.id, () => ({ success: true, message: 'reported-success' })),
+    ).rejects.toMatchObject({ code: 'invalid_storage_state' });
+
+    expect(ctx.vault.getAccount(acc.id)).toEqual(before);
+    expect(decryptedSessionBytes(ctx.root, before.sessionRef as string)).toBe(
+      storageStateFixture('old-session'),
+    );
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('回调抛出带原文的 AccountVaultError 也不得泄露原文或临时路径', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'kuaishou', displayName: '错误脱敏' });
+    let tempPath = '';
+    let caught: unknown;
+
+    try {
+      await ctx.vault.withLoginStorageState(acc.id, (path) => {
+        tempPath = path;
+        throw new AccountVaultError('invalid_storage_state', `raw=${SECRET_COOKIE_VALUE} path=${path}`);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    const vaultError = caught as AccountVaultError;
+    expect(vaultError.code).toBe('login_callback_failed');
+    expect(vaultError.message).not.toContain(SECRET_COOKIE_VALUE);
+    expect(vaultError.message).not.toContain(tempPath);
+    expect(vaultError.cause).toBeUndefined();
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('既有会话刷新：回调重写与种子逐字节一致的内容也无新输出证据，fail closed 不轮换引用', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '同内容重写' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('same-seed'));
+    const before = ctx.vault.getAccount(acc.id);
+    const registryBefore = ctx.registryText();
+
+    await expect(
+      ctx.vault.withLoginStorageState(acc.id, (p) => {
+        // 异常回调：把种子原样复制回输出路径并声称成功（同内容重写）。
+        writeFileSync(p, readFileSync(p));
+        return { success: true, message: 'echoed-seed' };
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_storage_state' });
+
+    expect(ctx.vault.getAccount(acc.id)).toEqual(before);
+    expect(ctx.registryText()).toBe(registryBefore);
+    expect(ctx.sessionsDirEntries()).toEqual([`${before.sessionRef}${SESSION_FILE_EXT}`]);
+    expect(decryptedSessionBytes(ctx.root, before.sessionRef as string)).toBe(
+      storageStateFixture('same-seed'),
+    );
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+});

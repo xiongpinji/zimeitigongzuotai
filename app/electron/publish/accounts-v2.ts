@@ -18,6 +18,14 @@
  *   于每次调用独立创建的临时目录，回调结束（含抛错）后连同目录一并删除；
  *   删除对 Windows 常见 EPERM/EBUSY 做有界退避重试，重试耗尽显式抛
  *   temp_cleanup_failed，绝不静默当作成功。
+ * - 平台登录只能通过 withLoginStorageState 一次性事务写入候选会话：回调拿到
+ *   本次独立的临时 <dir>/storageState.json（既有会话先以旧明文种子化）；只有
+ *   回调返回严格 success:true、输出相对本次调用前的种子快照有可证明的新写入
+ *   （逐字节比较，与文件系统时间戳粒度无关）、临时明文清理成功且 sessionRef
+ *   未被并发提交替换，才经 saveStorageState 加密入仓；失败 / 异常 / 畸形结果 /
+ *   输出缺失 / 输出与种子逐字节一致 / 清理失败 / 并发替换一律 fail closed，
+ *   绝不覆盖既有加密会话。回调抛出的一切错误（包括回调自建的
+ *   AccountVaultError）都按不可信输入脱敏包装为 login_callback_failed。
  * - 旧数据迁移崩溃后可安全续清理：只有新仓 marker 对应账号存在、密文文件
  *   存在且解密结果与旧明文逐字节一致时才删除旧明文；任何核验失败一律保留。
  * - 错误与日志只包含 accountId / sessionRef / 错误码，不包含会话内容。
@@ -128,6 +136,9 @@ export type AccountVaultErrorCode =
   | 'session_verify_failed'
   | 'cipher_unavailable'
   | 'temp_cleanup_failed'
+  | 'login_callback_failed'
+  | 'login_result_invalid'
+  | 'session_changed'
   | 'legacy_registry_corrupt'
   | 'legacy_registry_write_failed'
   | 'legacy_scan_failed';
@@ -508,6 +519,67 @@ export class AccountVault {
     }
   }
 
+  /**
+   * 登录会话事务（P1-1）：为平台登录回调提供本次独立的一次性临时
+   * storageState 路径（<dir>/storageState.json），并按回调结果决定是否入仓。
+   * - 既有会话：经 withDecryptedStorageState 以旧明文种子化独立临时路径，
+   *   清理与重试语义完全复用（清理失败 temp_cleanup_failed，绝不提交）。
+   * - 无会话：在注入的 tmpBaseDir 下新建独立临时目录，输出文件事先不存在。
+   * - 回调可返回 Promise 或普通值；结果必须是带**严格布尔** success 的对象，
+   *   truthy 值（1 / 'true'）一律视为畸形（login_result_invalid），绝不当成功。
+   * - 只有 success === true 才把候选明文读入内存；刷新路径下输出必须与调用前
+   *   的种子快照逐字节有差异（证明本次回调确实写出了新输出），输出与种子一致
+   *   或缺失一律报 invalid_storage_state，绝不把旧种子当作新登录轮换加密引用；
+   *   先完成临时明文清理，再核验 sessionRef 未被并发提交替换（session_changed），
+   *   最后才同步调用 saveStorageState 加密入仓（含 JSON 结构校验与回读核验）。
+   * - success === false 时清理后原样返回回调结果；回调抛出的一切异常（包括
+   *   回调自建的、message 携带原文的 AccountVaultError）都按不可信输入包装为
+   *   login_callback_failed；输出缺失 / 非法为 invalid_storage_state。
+   *   以上任何失败路径都不触碰既有加密会话与账号元数据。
+   * - 错误信息与 cause 只含 accountId / 错误码 / 安全系统码，绝不含临时路径、
+   *   Cookie、Token、回调原始错误文本或 storageState 原文。
+   * 未知 accountId 与加密不可用都在暴露回调之前拒绝（account_not_found /
+   * cipher_unavailable），不创建任何临时目录。
+   */
+  async withLoginStorageState<T extends { success: boolean }>(
+    accountId: string,
+    loginCallback: (storageStatePath: string) => Promise<T> | T,
+  ): Promise<T> {
+    const account = this.findAccountOrThrow(accountId);
+    if (!this.cipher.isAvailable()) {
+      throw new AccountVaultError(
+        'cipher_unavailable',
+        `session cipher unavailable; refusing login transaction for account ${accountId} (fail closed, no plaintext fallback)`,
+        { accountId },
+      );
+    }
+    const snapshotRef = account.sessionRef;
+
+    const outcome = account.sessionRef
+      ? await this.withDecryptedStorageState<{ result: T; candidate: string | null }>(
+          accountId,
+          (seedPath) => this.invokeLoginCallback(accountId, seedPath, loginCallback),
+        )
+      : await this.runFreshLoginAttempt(accountId, loginCallback);
+
+    if (!outcome.result.success) return outcome.result;
+
+    // 并发防护：登录挂起期间会话被替换（或账号被删除）时 fail closed，
+    // 绝不覆盖较新的登录成果。本检查与其后的同步 saveStorageState 之间
+    // 没有 await 点，单进程内不可被打断。
+    this.assertSessionRefUnchanged(accountId, snapshotRef);
+    if (outcome.candidate === null) {
+      // 构造上不可达：success:true 必然已捕获候选明文；防御性 fail closed。
+      throw new AccountVaultError(
+        'invalid_storage_state',
+        `login succeeded but no storageState was captured for account ${accountId}`,
+        { accountId },
+      );
+    }
+    this.saveStorageState(accountId, outcome.candidate);
+    return outcome.result;
+  }
+
   private removeTempDir(accountId: string, tempDir: string): void {
     for (let attempt = 0; attempt < TEMP_DIR_REMOVE_ATTEMPTS; attempt += 1) {
       try {
@@ -526,6 +598,109 @@ export class AccountVault {
           { accountId, cause: err },
         );
       }
+    }
+  }
+
+  /** 新账号登录：独立临时目录 + <dir>/storageState.json；返回（含抛错）前必清理明文目录。 */
+  private async runFreshLoginAttempt<T extends { success: boolean }>(
+    accountId: string,
+    loginCallback: (storageStatePath: string) => Promise<T> | T,
+  ): Promise<{ result: T; candidate: string | null }> {
+    const tempDir = mkdtempSync(join(this.tmpBaseDir, 'login-'));
+    const tempPath = join(tempDir, 'storageState.json');
+    try {
+      return await this.invokeLoginCallback(accountId, tempPath, loginCallback);
+    } finally {
+      this.removeTempDir(accountId, tempDir);
+    }
+  }
+
+  /**
+   * 调用登录回调并校验结果：success 必须为严格布尔；success:true 时把输出
+   * 文件读入内存作为候选明文（内容校验留给 saveStorageState 统一执行）。
+   * 新鲜度证据：调用回调前先对输出路径做逐字节快照——刷新路径下快照即旧
+   * 会话明文种子，新登录路径下输出文件事先不存在（快照为 null）。success:true
+   * 后输出与快照逐字节一致（含“同内容重写”）即没有本次调用写出新输出的证据，
+   * 一律报 invalid_storage_state，绝不把旧种子当作新登录；该判定不依赖文件
+   * 系统时间戳粒度（Windows 惰性写入 / 粗粒度 FS 下 mtime 不可靠）。
+   * 回调原始异常可能含 Cookie / 路径 / 平台返回体，且回调可以自行构造携带
+   * 任意 message 的 AccountVaultError：因此回调抛出的**一切**错误都视为
+   * 不可信输入，统一包装为 login_callback_failed，绝不原样上抛；原文不进
+   * message；cause 仅保留安全系统错误码。
+   */
+  private async invokeLoginCallback<T extends { success: boolean }>(
+    accountId: string,
+    storageStatePath: string,
+    loginCallback: (storageStatePath: string) => Promise<T> | T,
+  ): Promise<{ result: T; candidate: string | null }> {
+    // 调用前快照输出路径。文件存在却读不出基线时无法证明新鲜度，
+    // 在暴露回调之前 fail closed。
+    let seedSnapshot: Buffer | null = null;
+    try {
+      seedSnapshot = readFileSync(storageStatePath);
+    } catch (err) {
+      if (existsSync(storageStatePath)) {
+        throw new AccountVaultError(
+          'invalid_storage_state',
+          `login output baseline is unreadable for account ${accountId}; refusing to run the login callback`,
+          { accountId, cause: err },
+        );
+      }
+    }
+    let raw: unknown;
+    try {
+      raw = await loginCallback(storageStatePath);
+    } catch (err) {
+      throw new AccountVaultError(
+        'login_callback_failed',
+        `login callback failed for account ${accountId}`,
+        { accountId, cause: err },
+      );
+    }
+    if (
+      typeof raw !== 'object' ||
+      raw === null ||
+      typeof (raw as { success?: unknown }).success !== 'boolean'
+    ) {
+      throw new AccountVaultError(
+        'login_result_invalid',
+        `login callback returned a malformed result for account ${accountId} (expected an object with a boolean "success" field)`,
+        { accountId },
+      );
+    }
+    const result = raw as T;
+    if (!result.success) return { result, candidate: null };
+    let candidateBytes: Buffer;
+    try {
+      candidateBytes = readFileSync(storageStatePath);
+    } catch (err) {
+      throw new AccountVaultError(
+        'invalid_storage_state',
+        `login callback reported success but the storageState output is missing or unreadable for account ${accountId}`,
+        { accountId, cause: err },
+      );
+    }
+    if (seedSnapshot !== null && candidateBytes.equals(seedSnapshot)) {
+      // success:true 但输出与调用前的种子逐字节一致：本次调用没有可证明的
+      // 新输出写入，绝不把旧会话种子当作新登录轮换加密引用（fail closed）。
+      throw new AccountVaultError(
+        'invalid_storage_state',
+        `login callback reported success but produced no fresh storageState output for account ${accountId}; refusing to rotate the existing session`,
+        { accountId },
+      );
+    }
+    return { result, candidate: candidateBytes.toString('utf-8') };
+  }
+
+  /** 并发防护：登录期间 sessionRef 被轮换则拒绝提交；账号被删除则 account_not_found。 */
+  private assertSessionRefUnchanged(accountId: string, expectedRef: string | null): void {
+    const current = this.findAccountOrThrow(accountId);
+    if (current.sessionRef !== expectedRef) {
+      throw new AccountVaultError(
+        'session_changed',
+        `stored session for account ${accountId} changed during login; refusing to overwrite the newer session`,
+        { accountId },
+      );
     }
   }
 
