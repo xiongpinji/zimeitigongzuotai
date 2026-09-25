@@ -1,6 +1,6 @@
 # 项目协作约定
 
-当前为方案确认阶段。未经用户确认本仓库的架构方案，不得导入上游代码、创建产品实现、调用付费模型、登录账号、发布内容或部署。方案文档和本地只读核查可继续。
+阶段一架构方案已于 2026-09-25 获用户确认，但本项目百炼 Credits 上限尚未提供。在该上限明确前，不得导入上游代码、创建产品实现、启动 Agent Orchestrator job、调用付费模型、登录账号、发布内容或部署；任务契约、方案文档和只读核查可继续。预算确认后按 `docs/plans/2026-09-25-phase1-core.md` 与 `docs/orchestration.md` 执行。
 
 方案确认后，Codex 是总指挥和最终验收人。Agent Orchestrator 仅使用用户指定的三条路由：`claude-bailian=qwen3.8-max` 负责主实现，`opencode-bailian=bailian-token-plan-personal/deepseek-v4.1-flash` 负责互不冲突的并行实现，`qwen-code-review=glm-5.3` 只读审查。执行 Agent 不得自行派生子 Agent、修改凭证、提交、推送或部署。并行任务必须有独立工作树或互不重叠的文件范围；Codex 复查 diff、运行测试并记录审查结论。
 

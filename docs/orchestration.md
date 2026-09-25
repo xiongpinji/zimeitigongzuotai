@@ -6,7 +6,9 @@
 
 阶段一持久计划 ID：`plan-20260925-034739-8a0572`（16 项待执行，未启动 job）。旧计划 `plan-20260925-032413-08fcab`（17 项、含已延期的商品实现）仅为历史账本；后续仅从阶段一计划派发任务，不使用旧计划的 checklist。
 
-本项目首先等待用户确认 [阶段一范围](phase1-scope.md)、[组件组合图](integration-map.md)、[验收](roadmap-and-acceptance.md) 与实际 Credits 风险预算。此前即使持久计划存在，也不得 `launch`。过去其他项目或连通测试的 100 Credits 不是本项目默认预算；CLI 的 `cost=0` 也不代表阿里云 Credits 为零。
+首个 P0-1 的[固定源码与 Windows 基线任务契约](plans/2026-09-25-p0-1-lingji-baseline.md)已准备并通过本地 `validate-task`；仍须等预算上限后才能派发。持久计划是创建时的不可变快照，后续确认记录见[决策日志](decisions/2026-09-25-phase1-approval.md)。
+
+用户已确认 [阶段一范围](phase1-scope.md)、[组件组合图](integration-map.md) 与[验收](roadmap-and-acceptance.md)，见[确认记录](decisions/2026-09-25-phase1-approval.md)。本项目实际 Credits 风险预算仍待提供；此前即使持久计划存在，也不得 `launch`。过去其他项目或连通测试的 100 Credits 不是本项目默认预算；CLI 的 `cost=0` 也不代表阿里云 Credits 为零。
 
 ## 固定路由与责任
 
