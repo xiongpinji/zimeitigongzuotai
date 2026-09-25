@@ -32,6 +32,8 @@ import type { LoginOptions } from '../../electron/publish/types';
 import {
   ACCOUNT_V2_ERROR_MESSAGES,
   ACCOUNT_V2_IPC_CHANNELS,
+  ACCOUNT_V2_MAX_DISPLAY_NAME_LENGTH,
+  ACCOUNT_V2_MAX_OWNER_LENGTH,
   registerAccountsV2Ipc,
   type AccountPlatformFactory,
   type AccountV2Dto,
@@ -136,6 +138,8 @@ interface Behavior {
   missingPlatforms?: string[];
   /** true 时不注入 sendEvent：二维码事件必须走调用事件 sender.send 回退。 */
   useSenderFallback?: boolean;
+  /** true 时注入的 sendEvent 抛错（含敏感原文），验证事件发送失败 fail closed。 */
+  sendEventThrows?: boolean;
 }
 
 function makeContext(behavior: Behavior = {}) {
@@ -180,6 +184,9 @@ function makeContext(behavior: Behavior = {}) {
       ? {}
       : {
           sendEvent: (channel: string, payload: AccountV2QrcodeEvent) => {
+            if (behavior.sendEventThrows) {
+              throw new Error(`send failed ${RAW_PLATFORM_TEXT} at ${tmpBase}`);
+            }
             events.push({ channel, payload });
           },
         }),
@@ -1338,5 +1345,418 @@ describe('account-v2 IPC：序列化安全扫描', () => {
     ]);
     // 事件只允许出现在 qrcode 通道。
     expect(ctx.events.every((e) => e.channel === ACCOUNT_V2_IPC_CHANNELS.qrcode)).toBe(true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A2-S2 硬化（先 RED 后修）：
+// 1) 平台登录 Promise 落定即关闭 QR gate：迟到回调安静丢弃（不发送 / 不抛出 /
+//    不改已提交结果），覆盖成功与失败路径。
+// 2) 同账号同 sessionRef 的乱序探针：仅最近开始的探针能写状态；较旧探针返回
+//    固定 probe_superseded 且不泄露平台原文；不同账号互不阻塞。
+// 3) 事件发送失败 qrcode_failed、探针期间删除 account_not_found、
+//    success:true 但非法 JSON login_result_invalid。
+// 4) displayName / owner 的长度与控制字符边界（固定 invalid_request）。
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('account-v2 IPC：登录 Promise 落定后的迟到二维码回调', () => {
+  it('登录成功后保留的回调：不发送、不抛错、已提交会话与 registry 逐字节不变', async () => {
+    const ctx = makeContext();
+    let retained: ((pngPath: string) => void) | null = null;
+    ctx.behavior.login = async (_platform, opts) => {
+      retained = opts.onQrcode ?? null;
+      const early = join(dirname(opts.storageStatePath), 'qr-early.png');
+      writeFileSync(early, pngFixture('early'));
+      opts.onQrcode?.(early);
+      writeFileSync(opts.storageStatePath, storageStateFixture('late-success'));
+      return { success: true, message: RAW_PLATFORM_TEXT };
+    };
+    const dto = await createAccount(ctx, { displayName: '迟到成功' });
+    const res = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.login, {
+      accountId: dto.id,
+      requestId: randomUUID(),
+    });
+    expect(res.ok).toBe(true);
+    expect(ctx.events).toHaveLength(1);
+    const entryAfter = ctx.registryEntry(dto.id);
+    const bytesAfter = ctx.sessionBytes(entryAfter.sessionRef as string);
+
+    expect(retained).not.toBeNull();
+    const late = (path: string): unknown => {
+      try {
+        retained?.(path);
+        return null;
+      } catch (err) {
+        return err;
+      }
+    };
+    const outside = makeOutsideDir();
+    const latePng = join(outside, 'qr-late.png');
+    writeFileSync(latePng, pngFixture('late'));
+    // 临时目录已清理：不存在路径与越界路径两种迟到回调都必须安静丢弃。
+    expect(late(join(outside, 'qr-missing.png'))).toBeNull();
+    expect(late(latePng)).toBeNull();
+
+    // 平台把回调排进微任务：同样不得抛出、不得产生事件。
+    let microtaskError: unknown = null;
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        microtaskError = late(latePng);
+        resolve();
+      });
+    });
+    expect(microtaskError).toBeNull();
+
+    expect(ctx.events).toHaveLength(1);
+    expect(ctx.registryEntry(dto.id)).toEqual(entryAfter);
+    expect(ctx.sessionBytes(entryAfter.sessionRef as string).equals(bytesAfter)).toBe(true);
+    expect(ctx.decryptSession(dto.id)).toBe(storageStateFixture('late-success'));
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+  });
+
+  it('登录失败后保留的回调：不发送、不抛错、旧密文与 registry 不变', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '迟到失败' });
+    await loginWithFixture(ctx, dto.id, 'late-failure-old');
+    const entryBefore = ctx.registryEntry(dto.id);
+    const bytesBefore = ctx.sessionBytes(entryBefore.sessionRef as string);
+    const eventsBefore = ctx.events.length;
+
+    let retained: ((pngPath: string) => void) | null = null;
+    ctx.behavior.login = async (_platform, opts) => {
+      retained = opts.onQrcode ?? null;
+      return { success: false, message: `${RAW_PLATFORM_TEXT}-late-cancelled` };
+    };
+    const res = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.login, {
+      accountId: dto.id,
+      requestId: randomUUID(),
+    });
+    expect(res).toEqual({
+      ok: false,
+      code: 'login_failed',
+      message: ACCOUNT_V2_ERROR_MESSAGES.login_failed,
+    });
+    expect(retained).not.toBeNull();
+
+const outside = makeOutsideDir();
+    const latePng = join(outside, 'qr-late-fail.png');
+    writeFileSync(latePng, pngFixture('latefail'));
+    const callLate = (path: string): unknown => {
+      try {
+        retained?.(path);
+        return null;
+      } catch (err) {
+        return err;
+      }
+    };
+    expect(callLate(latePng)).toBeNull();
+    expect(ctx.events).toHaveLength(eventsBefore);
+    expect(ctx.registryEntry(dto.id)).toEqual(entryBefore);
+    expect(ctx.sessionBytes(entryBefore.sessionRef as string).equals(bytesBefore)).toBe(true);
+    expect(ctx.decryptSession(dto.id)).toBe(storageStateFixture('late-failure-old'));
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+    expectNoSecrets(JSON.stringify(res), ctx, ['late-cancelled']);
+  });
+});
+
+describe('account-v2 IPC：二维码事件发送失败', () => {
+  it('sendEvent 抛错（含敏感原文）→ qrcode_failed，既有密文与 registry 逐字节不变', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '发送失败' });
+    await loginWithFixture(ctx, dto.id, 'send-old');
+    const entryBefore = ctx.registryEntry(dto.id);
+    const bytesBefore = ctx.sessionBytes(entryBefore.sessionRef as string);
+
+    ctx.behavior.sendEventThrows = true;
+    ctx.behavior.login = async (_platform, opts) => {
+      const png = join(dirname(opts.storageStatePath), 'qr-send-fail.png');
+      writeFileSync(png, pngFixture('send'));
+      writeFileSync(opts.storageStatePath, storageStateFixture('send-new'));
+      opts.onQrcode?.(png);
+      return { success: true, message: `${RAW_PLATFORM_TEXT}-send-unreached` };
+    };
+    const res = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.login, {
+      accountId: dto.id,
+      requestId: randomUUID(),
+    });
+    expect(res).toEqual({
+      ok: false,
+      code: 'qrcode_failed',
+      message: ACCOUNT_V2_ERROR_MESSAGES.qrcode_failed,
+    });
+    expect(ctx.events).toEqual([]);
+    expect(ctx.registryEntry(dto.id)).toEqual(entryBefore);
+    expect(ctx.sessionBytes(entryBefore.sessionRef as string).equals(bytesBefore)).toBe(true);
+    expect(ctx.decryptSession(dto.id)).toBe(storageStateFixture('send-old'));
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+    expectNoSecrets(JSON.stringify(res), ctx, ['send-unreached', 'send failed']);
+  });
+});
+
+describe('account-v2 IPC：同账号乱序探针', () => {
+  it('较新探针先完成：较新探针写状态，较旧探针返回 probe_superseded 且不写状态', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '乱序探针 A' });
+    await loginWithFixture(ctx, dto.id, 'probe-order-1');
+
+    const started: Array<Promise<void>> = [];
+    const releases: Array<(value: boolean) => void> = [];
+    ctx.behavior.check = () => {
+      let markStarted!: () => void;
+      const startedPromise = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      started.push(startedPromise);
+      let release!: (value: boolean) => void;
+      const gate = new Promise<boolean>((resolve) => {
+        release = resolve;
+      });
+      releases.push(release);
+      markStarted();
+      return gate;
+    };
+
+    const older = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dto.id });
+    await started[0];
+    const newer = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dto.id });
+    await started[1];
+    expect(ctx.platformSpies['douyin'].checkCalls).toBe(2);
+
+    releases[1](true);
+    const newerRes = await newer;
+    expect(newerRes.ok).toBe(true);
+    expect(newerRes.valid).toBe(true);
+    expect(newerRes.account.status).toBe('valid');
+
+    releases[0](false);
+    const olderRes = await older;
+    expect(olderRes).toEqual({
+      ok: false,
+      code: 'probe_superseded',
+      message: ACCOUNT_V2_ERROR_MESSAGES.probe_superseded,
+    });
+    // 较旧探针绝不覆盖较新探针结果：状态仍 valid，密文不变，明文临时目录零残留。
+    expect(ctx.registryEntry(dto.id).status).toBe('valid');
+    expect(ctx.decryptSession(dto.id)).toBe(storageStateFixture('probe-order-1'));
+    expect(ctx.sessionFileNames()).toHaveLength(1);
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+    expectNoSecrets(JSON.stringify(olderRes), ctx);
+  });
+
+  it('较旧探针先完成：同样 probe_superseded、不写状态；较新探针随后正常写状态', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '乱序探针 B' });
+    await loginWithFixture(ctx, dto.id, 'probe-order-2');
+
+    const started: Array<Promise<void>> = [];
+    const releases: Array<(value: boolean) => void> = [];
+    ctx.behavior.check = () => {
+      let markStarted!: () => void;
+      const startedPromise = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      started.push(startedPromise);
+      let release!: (value: boolean) => void;
+      const gate = new Promise<boolean>((resolve) => {
+        release = resolve;
+      });
+      releases.push(release);
+      markStarted();
+      return gate;
+    };
+
+    const older = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dto.id });
+    await started[0];
+    const newer = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dto.id });
+    await started[1];
+
+    releases[0](false);
+    const olderRes = await older;
+    expect(olderRes).toEqual({
+      ok: false,
+      code: 'probe_superseded',
+      message: ACCOUNT_V2_ERROR_MESSAGES.probe_superseded,
+    });
+    // 较旧探针的 false 从未落库（登录提交的 valid 保持不变）。
+    expect(ctx.registryEntry(dto.id).status).toBe('valid');
+
+    releases[1](true);
+    const newerRes = await newer;
+    expect(newerRes.ok).toBe(true);
+    expect(newerRes.valid).toBe(true);
+    expect(newerRes.account.status).toBe('valid');
+  });
+
+  it('不同账号的探针互不阻塞：挂起的 A 探针不影响 B 写状态，A 完成后可写自己的账号', async () => {
+    const ctx = makeContext();
+    const dtoA = await createAccount(ctx, { displayName: '独立探针 A' });
+    const dtoB = await createAccount(ctx, { displayName: '独立探针 B' });
+    await loginWithFixture(ctx, dtoA.id, 'independent-A');
+    await loginWithFixture(ctx, dtoB.id, 'independent-B');
+
+    let markStartedA!: () => void;
+    const startedA = new Promise<void>((resolve) => {
+      markStartedA = resolve;
+    });
+    let releaseA!: (value: boolean) => void;
+    const gateA = new Promise<boolean>((resolve) => {
+      releaseA = resolve;
+    });
+    let first = true;
+    ctx.behavior.check = () => {
+      if (first) {
+        first = false;
+        markStartedA();
+        return gateA;
+      }
+      return true;
+    };
+
+    const pendingA = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dtoA.id });
+    await startedA;
+    const resB = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dtoB.id });
+    expect(resB.ok).toBe(true);
+    expect(resB.valid).toBe(true);
+    expect(resB.account.status).toBe('valid');
+
+    releaseA(false);
+    const resA = await pendingA;
+    expect(resA.ok).toBe(true);
+    expect(resA.valid).toBe(false);
+    expect(resA.account.status).toBe('expired');
+    expect(ctx.registryEntry(dtoB.id).status).toBe('valid');
+    expect(ctx.decryptSession(dtoB.id)).toBe(storageStateFixture('independent-B'));
+  });
+
+  it('探针挂起期间账号被删除 → account_not_found；删除保持，不恢复账号', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '删除探针' });
+    await loginWithFixture(ctx, dto.id, 'probe-delete');
+
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let releaseProbe!: () => void;
+    const gate = new Promise<boolean>((resolve) => {
+      releaseProbe = () => resolve(true);
+    });
+    ctx.behavior.check = () => {
+      markStarted();
+      return gate;
+    };
+
+    const pending = ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.check, { accountId: dto.id });
+    await started;
+    const del = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.delete, { accountId: dto.id });
+    expect(del).toEqual({ ok: true, accountId: dto.id });
+
+    releaseProbe();
+    const res = await pending;
+    expect(res).toEqual({
+      ok: false,
+      code: 'account_not_found',
+      message: ACCOUNT_V2_ERROR_MESSAGES.account_not_found,
+    });
+    expect(ctx.registryJson().accounts).toEqual([]);
+    expect(ctx.sessionFileNames()).toEqual([]);
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+  });
+});
+
+describe('account-v2 IPC：登录输出非法 JSON', () => {
+  it('success:true 但 storageState 非法 JSON → login_result_invalid，旧密文逐字节不变', async () => {
+    const ctx = makeContext();
+    const dto = await createAccount(ctx, { displayName: '非法 JSON' });
+    await loginWithFixture(ctx, dto.id, 'invalid-json-old');
+    const entryBefore = ctx.registryEntry(dto.id);
+    const bytesBefore = ctx.sessionBytes(entryBefore.sessionRef as string);
+
+    ctx.behavior.login = async (_platform, opts) => {
+      writeFileSync(opts.storageStatePath, `${RAW_PLATFORM_TEXT} definitely not json`);
+      return { success: true, message: RAW_PLATFORM_TEXT };
+    };
+    const res = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.login, {
+      accountId: dto.id,
+      requestId: randomUUID(),
+    });
+    expect(res).toEqual({
+      ok: false,
+      code: 'login_result_invalid',
+      message: ACCOUNT_V2_ERROR_MESSAGES.login_result_invalid,
+    });
+    expect(ctx.registryEntry(dto.id)).toEqual(entryBefore);
+    expect(ctx.sessionBytes(entryBefore.sessionRef as string).equals(bytesBefore)).toBe(true);
+    expect(ctx.decryptSession(dto.id)).toBe(storageStateFixture('invalid-json-old'));
+    expect(readdirSync(ctx.tmpBase)).toEqual([]);
+    expectNoSecrets(JSON.stringify(res), ctx);
+  });
+});
+
+describe('account-v2 IPC：displayName / owner 字段边界', () => {
+  it('displayName 上限内合法且同平台同名实例各自 UUID；超限固定 invalid_request', async () => {
+    const ctx = makeContext();
+    const atLimit = 'n'.repeat(ACCOUNT_V2_MAX_DISPLAY_NAME_LENGTH);
+    const overLimit = `${atLimit}x`;
+    const first = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'tencent',
+      displayName: atLimit,
+    });
+    const second = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'tencent',
+      displayName: atLimit,
+    });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.account.id).not.toBe(second.account.id);
+    expect(first.account.displayName).toBe(atLimit);
+    expect(second.account.displayName).toBe(atLimit);
+
+    const over = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'tencent',
+      displayName: overLimit,
+    });
+    expect(over).toEqual({
+      ok: false,
+      code: 'invalid_request',
+      message: ACCOUNT_V2_ERROR_MESSAGES.invalid_request,
+    });
+    expect(ctx.registryJson().accounts).toHaveLength(2);
+  });
+
+  it('displayName / owner 含 C0/C1 控制字符或超长 → invalid_request，vault 零写入', async () => {
+    const ctx = makeContext();
+    for (const bad of ['bad\u0000name', 'bad\u001fname', 'bad\u007fname', 'bad\u009fname']) {
+      const res = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+        platform: 'douyin',
+        displayName: bad,
+      });
+      expect(res).toEqual({
+        ok: false,
+        code: 'invalid_request',
+        message: ACCOUNT_V2_ERROR_MESSAGES.invalid_request,
+      });
+    }
+    const badOwner = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'douyin',
+      displayName: '合法名',
+      owner: 'owner\u0001name',
+    });
+    expect(badOwner.code).toBe('invalid_request');
+    const overOwner = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'douyin',
+      displayName: '合法名',
+      owner: 'o'.repeat(ACCOUNT_V2_MAX_OWNER_LENGTH + 1),
+    });
+    expect(overOwner.code).toBe('invalid_request');
+
+    const atOwner = await ctx.invoke(ACCOUNT_V2_IPC_CHANNELS.create, {
+      platform: 'douyin',
+      displayName: '合法名',
+      owner: 'o'.repeat(ACCOUNT_V2_MAX_OWNER_LENGTH),
+    });
+    expect(atOwner.ok).toBe(true);
+    expect(atOwner.account.owner).toBe('o'.repeat(ACCOUNT_V2_MAX_OWNER_LENGTH));
+    expect(ctx.registryJson().accounts).toHaveLength(1);
   });
 });

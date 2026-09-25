@@ -33,6 +33,15 @@ import type {
 } from './prompts';
 import type { PublishAccount, PublishPlatform } from '../../electron/publish/types';
 export type { PublishAccount, PublishPlatform };
+import type {
+  AccountV2CheckResult,
+  AccountV2CreateResult,
+  AccountV2DeleteResult,
+  AccountV2Dto,
+  AccountV2ListResult,
+  AccountV2LoginResult,
+  AccountV2QrcodeEvent,
+} from '../../electron/publish/accounts-v2-ipc';
 
 export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish';
 
@@ -768,6 +777,53 @@ export type ChromiumDownloadProgress = DependencyDownloadProgress;
 declare global {
   interface Window {
     publishAPI: PublishAPI;
+  }
+}
+
+// ─── AccountV2API（A2-S2 安全账号桥；与旧 publishAPI 平行，不覆盖旧桥） ──
+
+export type {
+  AccountV2CheckResult,
+  AccountV2CreateResult,
+  AccountV2DeleteResult,
+  AccountV2Dto,
+  AccountV2ListResult,
+  AccountV2LoginResult,
+  AccountV2QrcodeEvent,
+};
+
+/** 四平台账号服务平台键（与 A1 vault 白名单一致；不含 bilibili）。 */
+export type AccountV2Platform = AccountV2Dto['platform'];
+
+/** login 参数：requestId 由 Renderer 预生成 UUID，用于在 Promise 落定前关联二维码事件。 */
+export interface AccountV2LoginInput {
+  accountId: string;
+  requestId: string;
+  headless?: boolean;
+}
+
+/**
+ * `window.accountV2API`：只映射固定 `account-v2:create/list/login/check/delete`
+ * 通道与 `account-v2:qrcode` 事件；结果 / 事件与 A2-S1 的安全 DTO 联合类型一致，
+ * 绝不含 sessionRef、文件系统路径、Cookie / Token 或平台原文。
+ */
+export interface AccountV2API {
+  create(
+    platform: AccountV2Platform,
+    displayName: string,
+    owner?: string,
+  ): Promise<AccountV2CreateResult>;
+  list(): Promise<AccountV2ListResult>;
+  login(input: AccountV2LoginInput): Promise<AccountV2LoginResult>;
+  check(accountId: string): Promise<AccountV2CheckResult>;
+  delete(accountId: string): Promise<AccountV2DeleteResult>;
+  /** 订阅 `account-v2:qrcode`；返回的函数真实执行 removeListener。 */
+  onQrcode(callback: (event: AccountV2QrcodeEvent) => void): () => void;
+}
+
+declare global {
+  interface Window {
+    accountV2API: AccountV2API;
   }
 }
 

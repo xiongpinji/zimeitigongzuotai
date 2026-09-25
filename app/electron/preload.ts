@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AppLogEntry } from '../src/lib/app-log';
 import type {
+  AccountV2API,
+  AccountV2LoginInput,
+  AccountV2Platform,
+  AccountV2QrcodeEvent,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -801,3 +805,30 @@ contextBridge.exposeInMainWorld('publishAPI', {
     return () => ipcRenderer.removeListener('publish:chromium-download-progress', handler);
   },
 });
+
+// ─── Account V2 API（A2-S2 安全账号桥） ───────────────────
+// 与旧 publishAPI 平行新增，不替换 / 不覆盖旧桥。只映射固定 account-v2 通道；
+// 参数与返回值经主进程 S1 安全 DTO 校验，Renderer 拿不到路径 / SessionCipher。
+
+contextBridge.exposeInMainWorld('accountV2API', {
+  create: (platform: AccountV2Platform, displayName: string, owner?: string) =>
+    ipcRenderer.invoke('account-v2:create', {
+      platform,
+      displayName,
+      ...(owner === undefined ? {} : { owner }),
+    }),
+  list: () => ipcRenderer.invoke('account-v2:list', {}),
+  login: (input: AccountV2LoginInput) =>
+    ipcRenderer.invoke('account-v2:login', {
+      accountId: input.accountId,
+      requestId: input.requestId,
+      ...(input.headless === undefined ? {} : { headless: input.headless }),
+    }),
+  check: (accountId: string) => ipcRenderer.invoke('account-v2:check', { accountId }),
+  delete: (accountId: string) => ipcRenderer.invoke('account-v2:delete', { accountId }),
+  onQrcode: (callback: (event: AccountV2QrcodeEvent) => void) => {
+    const handler = (_event: unknown, payload: AccountV2QrcodeEvent) => callback(payload);
+    ipcRenderer.on('account-v2:qrcode', handler);
+    return () => ipcRenderer.removeListener('account-v2:qrcode', handler);
+  },
+} satisfies AccountV2API);

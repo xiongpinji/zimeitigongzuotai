@@ -79,6 +79,9 @@ import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
+import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
+import { createSafeStorageCipher } from './publish/session-cipher-electron';
+import { getPlatform } from './publish/platforms';
 import { configureBiliupRoot } from './publish/biliup-runtime';
 import { getBiliupDestRoot } from './publish/biliup-install';
 import { LockMonitor } from './ai-edit/lock-watcher';
@@ -2835,6 +2838,26 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     writeAppLog('warn', 'user-prompts', '迁移旧口播模板失败', String(err));
+  }
+  // A2-S2：安全账号服务（account-v2）——只在 ready 之后、首次 createWindow 之前
+  // 注册一次。新仓固定 <userData>/publish-v2（与旧 publish 分离），加密强制走
+  // Electron safeStorage（不可用时 A1/A2 拒绝登录，绝无明文回退），平台解析只
+  // 认四平台白名单。注册失败显式记录并保持 account-v2 通道不可用：不静默吞错、
+  // 不回退旧 publish 明文账号仓。
+  try {
+    bootstrapAccountsV2({
+      userDataPath: app.getPath('userData'),
+      ipc: ipcMain,
+      createCipher: createSafeStorageCipher,
+      resolvePlatform: getPlatform,
+    });
+  } catch (err) {
+    writeAppLog(
+      'error',
+      'account-v2',
+      '安全账号服务注册失败；account-v2 通道不可用（不回退旧明文账号仓）',
+      err instanceof Error ? err.name : 'unknown error',
+    );
   }
   createWindow();
   // 启动 PipelineService 并桥接任务进度到 renderer

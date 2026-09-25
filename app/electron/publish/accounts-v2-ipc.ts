@@ -23,10 +23,18 @@
  *   IPC 返回固定 qrcode_failed。事件只携带 data:image/png;base64,...，绝不携带
  *   磁盘路径。lstat → open → fstat/read 之间存在理论 TOCTOU 窗口，以“同 fd
  *   有界读取 + 魔数校验 + 尺寸上限”收敛危害（见验证文档披露）。
+ * - 平台登录 Promise 一旦落定（成功、失败或抛错）立即关闭本次二维码闸门：
+ *   平台保留的迟到回调此后安静返回——不发送事件、不抛出异常、不改变已提交
+ *   结果；登录进行中仍按 S1 的失败闩锁约束处理。
  * - 单账号登录互斥：同账号并发登录、登录进行中删除该账号 → login_busy；
  *   不同账号完全独立。探针不阻塞登录，但在解密前快照 sessionRef，await 平台
  *   返回后重读账号：期间重登轮换（或删除）则该过期探针结果一律拒绝
- *   （session_changed / account_not_found），绝不写入新提交的会话。
+ *   （session_changed / account_not_found），绝不写入新提交的会话。每账号维护
+ *   探针启动单调序号：同账号一旦有更晚启动的探针，较早探针的结果一律作废
+ *   并返回固定 probe_superseded（不写状态），保证“最近开始的探针”独占写权；
+ *   不同账号各自独立。
+ * - create 在 IPC 入口对 displayName / owner 实施保守长度上限与控制字符
+ *   （C0/C1）拒绝，固定 invalid_request；同平台同名合法实例仍分别持有独立 UUID。
  * - 平台原始 message、Error.message、AccountVaultError.message 一律不作为
  *   IPC 载荷；AccountVaultError.code 经固定映射表脱敏为稳定错误码。
  */
@@ -65,6 +73,16 @@ const QR_MAX_EVENTS = 64;
 /** 通用 UUID 格式：accountId 由 vault 生成，requestId 由调用方预先生成。 */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * displayName / owner 的保守文本上限（UTF-16 code units）与控制字符拒绝集。
+ * 上限只约束 IPC 入口；同平台同名合法实例仍各自持有独立 UUID。
+ */
+export const ACCOUNT_V2_MAX_DISPLAY_NAME_LENGTH = 64;
+export const ACCOUNT_V2_MAX_OWNER_LENGTH = 64;
+
+/** C0（U+0000–U+001F）与 C1（U+007F–U+009F）控制字符拒绝集。 */
+const ACCOUNT_TEXT_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
+
 // ─── 错误码与固定消息 ─────────────────────────────────────────────────────────
 
 export type AccountV2ErrorCode =
@@ -82,6 +100,7 @@ export type AccountV2ErrorCode =
   | 'login_result_invalid'
   | 'qrcode_failed'
   | 'probe_failed'
+  | 'probe_superseded'
   | 'vault_error'
   | 'internal_error';
 
@@ -104,6 +123,7 @@ export const ACCOUNT_V2_ERROR_MESSAGES: Readonly<Record<AccountV2ErrorCode, stri
   login_result_invalid: 'The login produced no verifiable session output.',
   qrcode_failed: 'QR code delivery violated the security policy; the login was refused.',
   probe_failed: 'The session probe failed.',
+  probe_superseded: 'A newer session probe superseded this result.',
   vault_error: 'Account storage failed the operation.',
   internal_error: 'An internal error occurred.',
 };
@@ -269,9 +289,20 @@ function isUuidString(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
 }
 
+/** IPC 入口的保守文本校验：类型、长度上限与控制字符（C0/C1）拒绝。 */
+function isSafeAccountText(value: unknown, maxLength: number): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= maxLength &&
+    !ACCOUNT_TEXT_CONTROL_RE.test(value)
+  );
+}
+
 interface QrGate {
   /** 事务回调开始时绑定本次临时 storageState 路径（决定合法二维码目录）。 */
   bind(storageStatePath: string): void;
+  /** 平台登录 Promise 落定后的静默关闭点；此后迟到回调一律安静丢弃。 */
+  close(): void;
   isLatched(): boolean;
   onQrcode(pngPath: string): void;
 }
@@ -288,6 +319,7 @@ function createQrGate(
 ): QrGate {
   let realDir: string | null = null;
   let latched = false;
+  let closed = false;
   let sentCount = 0;
 
   const rejectQrcode = (): never => {
@@ -304,11 +336,18 @@ function createQrGate(
       }
     },
 
+    close(): void {
+      closed = true;
+    },
+
     isLatched(): boolean {
       return latched;
     },
 
     onQrcode(pngPath: string): void {
+      // 迟到回调：平台登录 Promise 已落定，安静丢弃（不发送、不抛出、不改变
+      // 已提交结果）；登录进行中的违规仍走闩锁 + 固定异常。
+      if (closed) return;
       if (latched) return rejectQrcode();
       if (sentCount >= QR_MAX_EVENTS) return rejectQrcode();
       if (typeof pngPath !== 'string' || pngPath.length === 0 || realDir === null) {
@@ -383,6 +422,8 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
   const { ipc, vault, platformFactory } = deps;
   /** 单账号登录互斥；不同账号互不影响。 */
   const loginsInFlight = new Set<string>();
+  /** 每账号探针启动序号（同账号乱序探针只有最新启动者的结果能写状态）。 */
+  const probeStartSeq = new Map<string, number>();
 
   const qrcodeSenderFor = (
     event: AccountIpcEventLike,
@@ -415,10 +456,13 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
     if (!(ACCOUNT_VAULT_PLATFORMS as readonly string[]).includes(platform)) {
       return errorResult('unsupported_platform');
     }
-    if (typeof displayName !== 'string' || displayName.trim() === '') {
+    if (
+      !isSafeAccountText(displayName, ACCOUNT_V2_MAX_DISPLAY_NAME_LENGTH) ||
+      displayName.trim() === ''
+    ) {
       return errorResult('invalid_request');
     }
-    if (owner !== undefined && typeof owner !== 'string') {
+    if (owner !== undefined && !isSafeAccountText(owner, ACCOUNT_V2_MAX_OWNER_LENGTH)) {
       return errorResult('invalid_request');
     }
     try {
@@ -481,11 +525,19 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
           accountId,
           async (storageStatePath) => {
             gate.bind(storageStatePath);
-            const raw = await platformModule.login({
-              storageStatePath,
-              headless,
-              onQrcode: gate.onQrcode,
-            });
+            let raw: { success: boolean };
+            try {
+              raw = await platformModule.login({
+                storageStatePath,
+                headless,
+                onQrcode: gate.onQrcode,
+              });
+            } finally {
+              // 平台登录 Promise 一旦落定（成功、失败或抛错）立即关闭二维码
+              // 闸门：平台保留的迟到回调从此安静返回，绝不发送事件 / 抛入
+              // 异步上下文 / 改变本次登录已提交的结果。
+              gate.close();
+            }
             // 失败闩锁：任何二维码回调违规（含平台吞掉回调异常后报成功）
             // 都强制按失败返回，A1 事务因此绝不提交本次候选明文。
             return gate.isLatched() ? { success: false } : raw;
@@ -526,6 +578,10 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
     // 重登提交（A1 事务轮换 sessionRef）或被删除。withDecryptedStorageState 的
     // 同步段与本次 getAccount 之间没有 await 点，快照即探针实际解密的那一代。
     const probedSessionRef = account.sessionRef;
+    // 每账号探针启动单调序号：同账号一旦有更晚启动的探针，本探针结果一律作废
+    // （probe_superseded），保证“最近开始的探针”独占状态写权。
+    const probeSeq = (probeStartSeq.get(accountId) ?? 0) + 1;
+    probeStartSeq.set(accountId, probeSeq);
     let probe: unknown;
     try {
       // 明文只存在于 vault 的短时临时事务内；平台异常 / vault 异常都不更新状态。
@@ -542,6 +598,7 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
       // 删除则 getAccount 抛 account_not_found，保持删除且不写状态。
       const current = vault.getAccount(accountId);
       if (current.sessionRef !== probedSessionRef) return errorResult('session_changed');
+      if (probeStartSeq.get(accountId) !== probeSeq) return errorResult('probe_superseded');
       const updated = vault.updateStatusFromProbe(accountId, probe);
       return { ok: true, valid: probe, account: toAccountV2Dto(updated) };
     } catch (err) {
@@ -561,6 +618,9 @@ export function registerAccountsV2Ipc(deps: AccountsV2IpcDeps): void {
     } catch (err) {
       return mapThrownError(err, 'internal_error');
     }
+    // 账号已删除：其探针序号无意义；在途探针在 await 后重读账号时先得到
+    // account_not_found，不会触碰该序号。
+    probeStartSeq.delete(accountId);
     return { ok: true, accountId };
   };
 
