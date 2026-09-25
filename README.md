@@ -6,6 +6,7 @@
 
 - [架构与关键契约](docs/architecture.md)
 - [开源组件选择及许可证边界](docs/source-selection.md)
+- [四平台发布与带货能力准入门槛](docs/platform-capability-gates.md)
 - [阶段计划与验收矩阵](docs/roadmap-and-acceptance.md)
 - [Agent Orchestrator 持久计划](docs/plans/2026-09-25-product-delivery.md)
 - [团队协作与路由](docs/orchestration.md)

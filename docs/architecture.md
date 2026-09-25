@@ -54,7 +54,7 @@ Agent 只能通过类型化工具调用，不能绕过任务状态机直接操�
 
 账号与商品绑定是每个发布任务的独立选项，不是全局开关。`CommerceIntent` 包含 `enabled`、平台商品类型、平台商品 ID/锚点、账号权限快照及明确的失败策略。若用户要求带货但账号或适配器不支持，任务进入 `needs_permission` / `needs_user_action`，不得悄悄改成无商品发布。商品不能只靠填任意 URL 伪装为平台内挂载。
 
-平台能力采用三态 `verified / requires_manual_action / unavailable_or_unverified`，按账号刷新。已查到的[快手官方发布接口](https://open.kuaishou.com/platformDocs/openAbility/contentManagement/createAVideo)接受 `merchant_product_id`，但注明仅支持自建商品，且接口异步返回后还需查发布结果。[抖音官方文档](https://developer.open-douyin.com/docs/resource/zh-CN/mini-app/operation/platform-capabilities/video/self-mount-activate-spec)说明短视频挂载需要小程序和账号资格。视频号与小红书的自动商品挂载权限在真实账号与官方合作能力核实前标为 `unverified`；不得仅凭 UI 入口承诺全自动挂载。最终产品门槛仍要求四平台逐一证明可用路径；如官方不提供某账号类型的自动能力，必须明确报告缺口，而非声称完成。
+平台能力采用三态 `verified / requires_manual_action / unavailable_or_unverified`，按账号刷新。商品类型必须区分自建商品、店铺商品、联盟商品与小程序锚点；详细公开证据和开发前置条件见[平台能力准入门槛](platform-capability-gates.md)。视频号与小红书的自动商品挂载权限在真实账号与官方合作能力核实前标为 `unverified`；不得仅凭 UI 入口承诺全自动挂载。最终产品门槛仍要求四平台逐一证明可用路径；如无法获得某账号类型的自动能力，必须明确报告缺口，而非声称完成。
 
 ## 3. 数据与安全
 
