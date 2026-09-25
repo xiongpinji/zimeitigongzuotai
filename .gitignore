@@ -1,0 +1,20 @@
+# Local agent state and credentials
+.omx/
+.env
+.env.*
+!.env.example
+*.storage-state.json
+**/cookies/**
+**/sessions/**
+**/user-data/**
+
+# Local media, generated output, and build artifacts
+data/
+media/
+outputs/
+dist/
+release/
+node_modules/
+.venv/
+__pycache__/
+*.pyc
