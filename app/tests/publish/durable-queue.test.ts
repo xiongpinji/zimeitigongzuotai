@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -733,6 +733,337 @@ describe('CommerceRequest 与停机状态', () => {
     expect(executor).toHaveBeenCalledTimes(4);
     expect(q.get(loginTask.id)!.state).toBe('verifying');
     expect(q.get(actionTask.id)!.state).toBe('verifying');
+  });
+});
+
+describe('挂车请求持久化隔离', () => {
+  const commerce = {
+    platform: 'douyin' as const,
+    accountId: 'douyin_alpha',
+    kind: 'shop' as const,
+    platformProductId: 'product-42',
+    required: true,
+  };
+
+  function seedCommerceTask(
+    state: 'queued' | 'retryable_failure' | 'uploading' | 'unknown_submission',
+  ): string {
+    const seed = openQueue();
+    const report = seed.enqueueMatrix(
+      matrix({
+        accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }],
+        commerceRequest: commerce,
+      }),
+    );
+    const taskId = report.created[0]?.id ?? report.existing[0]!.id;
+    const store = readStore();
+    const task = store.tasks.find((candidate) => candidate.id === taskId)!;
+    task.state = state;
+    task.leaseUntil = state === 'uploading' ? START + 600_000 : null;
+    writeFileSync(storePath, JSON.stringify(store), 'utf-8');
+    return taskId;
+  }
+
+  it('commerceRequest 非空却处于 queued/retryable_failure/uploading 的任务加载即隔离，tick 永不调用普通发布执行器', async () => {
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    for (const state of ['queued', 'retryable_failure', 'uploading'] as const) {
+      const taskId = seedCommerceTask(state);
+      const q = openQueue({ executor });
+      const loaded = q.get(taskId)!;
+      expect(loaded.state).toBe('needs_user_action');
+      expect(loaded.commerceRequest).toEqual(commerce);
+      expect(loaded.history.some((entry) => entry.errorCode === 'commerce_blocked_recovered')).toBe(true);
+
+      await q.tick();
+      await q.tick();
+      expect(executor).not.toHaveBeenCalled();
+      expect(q.get(taskId)!.state).toBe('needs_user_action');
+      expectQueueError(() => q.resumeTask(taskId), 'commerce_blocked');
+      expect(readStore().tasks.find((task) => task.id === taskId)!.state).toBe('needs_user_action');
+    }
+  });
+
+  it('核对确认未发布且可重试的挂车任务也只隔离，不降级为普通发布', async () => {
+    const taskId = seedCommerceTask('unknown_submission');
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(
+      async () =>
+        ({
+          finalState: 'failed',
+          remoteId: null,
+          confirmedNotPublished: true,
+          retryable: true,
+          errorCode: 'no_remote_artifact',
+        }) as ReconcileResult,
+    );
+    const q = openQueue({ executor, reconciler });
+    expect(q.get(taskId)!.state).toBe('unknown_submission');
+
+    await q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    const blocked = q.get(taskId)!;
+    expect(blocked.state).toBe('needs_user_action');
+    expect(blocked.lastErrorCode).toBe('commerce_blocked');
+    expect(blocked.nextAttemptAt).toBeNull();
+    expect(blocked.nextReconcileAt).toBeNull();
+
+    await q.tick();
+    expect(executor).not.toHaveBeenCalled();
+    expect(q.get(taskId)!.state).toBe('needs_user_action');
+  });
+});
+
+describe('持久化 submitted 状态核对', () => {
+  function seedSubmitted(): string {
+    const seed = openQueue();
+    seed.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const taskId = taskOf(seed, 'douyin_alpha').id;
+    const store = readStore();
+    store.tasks[0]!.state = 'submitted';
+    writeFileSync(storePath, JSON.stringify(store), 'utf-8');
+    return taskId;
+  }
+
+  it('submitted 任务经核对 published 可进入 published，不再每轮 tick 抛错', async () => {
+    const taskId = seedSubmitted();
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(async () => reconcilePublished('remote-confirmed'));
+    const q = openQueue({ executor, reconciler });
+    expect(q.get(taskId)!.state).toBe('submitted');
+
+    const report = await q.tick();
+    expect(report.reconciled).toEqual([taskId]);
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    const done = q.get(taskId)!;
+    expect(done.state).toBe('published');
+    expect(done.remoteResult).toMatchObject({ remoteId: 'remote-confirmed', finalState: 'published' });
+    expect(executor).not.toHaveBeenCalled();
+
+    await q.tick();
+    expect(q.get(taskId)!.state).toBe('published');
+    expect(reconciler).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitted 任务的未证实失败仍进入未知提交，不盲重发', async () => {
+    const taskId = seedSubmitted();
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(
+      async () =>
+        ({ finalState: 'failed', remoteId: null, retryable: true, errorCode: 'lookup_failed' }) as ReconcileResult,
+    );
+    const q = openQueue({ executor, reconciler });
+
+    await q.tick();
+    const task = q.get(taskId)!;
+    expect(task.state).toBe('unknown_submission');
+    expect(task.remoteResult?.finalState).toBe('unknown');
+    expect(task.lastErrorCode).toBe('remote_failure_unconfirmed');
+    expect(executor).not.toHaveBeenCalled();
+    await q.tick();
+    expect(executor).not.toHaveBeenCalled();
+  });
+});
+
+describe('同进程租约回收', () => {
+  it('uploading 超过租约且无在途执行器时转 unknown_submission，只核对不重发', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor = vi.fn(async (input: PublishAttemptInput) => {
+      await gate;
+      return submitOk(`remote-${input.taskId}`);
+    });
+    const reconciler = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'remote_pending' }) as ReconcileResult);
+    const q = openQueue({ executor, reconciler });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q, 'douyin_alpha');
+
+    const tick1 = q.tick();
+    expect(readStore().tasks[0]!.state).toBe('uploading');
+    expect(executor).toHaveBeenCalledTimes(1);
+
+    // 模拟“执行器已结束但结果落盘失败”：把 storePath 换成目录，令 rename 原子替换失败。
+    rmSync(storePath, { force: true });
+    mkdirSync(storePath, { recursive: true });
+    release();
+    await expect(tick1).rejects.toMatchObject({ code: 'store_write_failed' });
+    rmSync(storePath, { recursive: true, force: true });
+
+    const stuck = q.get(task.id)!;
+    expect(stuck.state).toBe('uploading');
+    expect(stuck.leaseUntil).toBe(START + 600_000);
+    expect(reconciler).not.toHaveBeenCalled();
+
+    // 租约未到期：不回收、不核对。
+    advance(599_999);
+    await q.tick();
+    expect(q.get(task.id)!.state).toBe('uploading');
+    expect(reconciler).not.toHaveBeenCalled();
+
+    // 租约到期：转未知提交并只核对，执行器不得再次调用。
+    advance(1);
+    const report = await q.tick();
+    const recovered = q.get(task.id)!;
+    expect(report.claimed).toEqual([]);
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(recovered.state).toBe('unknown_submission');
+    expect(recovered.history.some((entry) => entry.errorCode === 'leased_upload_expired')).toBe(true);
+  });
+
+  it('在途执行器即使租约超时也不会被并发补发，tick 合并等待', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor = vi.fn(async (input: PublishAttemptInput) => {
+      await gate;
+      return submitOk(`remote-${input.taskId}`);
+    });
+    const q = openQueue({ executor });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q, 'douyin_alpha');
+
+    const tick1 = q.tick();
+    advance(600_000 + 1);
+    const tick2 = q.tick();
+    expect(tick2).toBe(tick1);
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(q.get(task.id)!.state).toBe('uploading');
+
+    release();
+    await tick1;
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(q.get(task.id)!.state).toBe('verifying');
+  });
+});
+
+describe('人工决议与在途核对竞态', () => {
+  it('人工决议成功后在途核对迟到，保留终态且该轮 tick 平稳结束', async () => {
+    let release!: () => void;
+    const reconciler = vi.fn(
+      () =>
+        new Promise<ReconcileResult>((resolve) => {
+          release = () => resolve({ finalState: 'unknown', errorCode: 'late_reconcile' });
+        }),
+    );
+    const executor = vi.fn(async (): Promise<PublishAttemptOutcome> => ({ kind: 'unknown', errorCode: 'first_unknown' }));
+    const q = openQueue({ executor, reconciler });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q, 'douyin_alpha');
+
+    await q.tick();
+    expect(q.get(task.id)!.state).toBe('unknown_submission');
+
+    const tick2 = q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    const resolved = q.applyManualResolution(task.id, {
+      finalState: 'published',
+      remoteId: 'remote-manual',
+      resolvedBy: 'codex',
+    });
+    expect(resolved.state).toBe('published');
+
+    release();
+    await expect(tick2).resolves.toBeDefined();
+    const final = q.get(task.id)!;
+    expect(final.state).toBe('published');
+    expect(final.remoteResult).toMatchObject({ remoteId: 'remote-manual', finalState: 'published' });
+    expect(final.nextReconcileAt).toBeNull();
+    expect(final.reconcileAttempts).toBe(1);
+  });
+
+  it('人工决议判定可重试后迟到的核对结果不得触发非法迁移，队列平稳结束', async () => {
+    let release!: () => void;
+    const reconciler = vi.fn(
+      () =>
+        new Promise<ReconcileResult>((resolve) => {
+          release = () => resolve(reconcilePublished('remote-late'));
+        }),
+    );
+    const executor = vi.fn(async (): Promise<PublishAttemptOutcome> => ({ kind: 'unknown', errorCode: 'first_unknown' }));
+    const q = openQueue({ executor, reconciler });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q, 'douyin_alpha');
+
+    await q.tick();
+    const tick2 = q.tick();
+    q.applyManualResolution(task.id, {
+      finalState: 'failed',
+      remoteId: null,
+      confirmedNotPublished: true,
+      retryable: true,
+      resolvedBy: 'codex',
+    });
+    expect(q.get(task.id)!.state).toBe('retryable_failure');
+
+    release();
+    await expect(tick2).resolves.toBeDefined();
+    const final = q.get(task.id)!;
+    expect(final.state).toBe('retryable_failure');
+    expect(final.remoteResult!.finalState).toBe('failed');
+    expect(executor).toHaveBeenCalledTimes(1);
+  });
+
+  it('迟到的 published 核对不得用另一个远端 ID 覆盖人工终态', async () => {
+    let release!: () => void;
+    const reconciler = vi.fn(
+      () =>
+        new Promise<ReconcileResult>((resolve) => {
+          release = () => resolve(reconcilePublished('remote-late'));
+        }),
+    );
+    const executor = vi.fn(async (): Promise<PublishAttemptOutcome> => ({ kind: 'unknown', errorCode: 'first_unknown' }));
+    const q = openQueue({ executor, reconciler });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q, 'douyin_alpha');
+
+    await q.tick();
+    const tick2 = q.tick();
+    q.applyManualResolution(task.id, { finalState: 'published', remoteId: 'remote-manual', resolvedBy: 'codex' });
+    release();
+    await tick2;
+
+    const final = q.get(task.id)!;
+    expect(final.state).toBe('published');
+    expect(final.remoteResult!.remoteId).toBe('remote-manual');
+    expect(final.remoteResult!.remoteUrl).toBeNull();
+  });
+});
+
+describe('人工决议返回值隔离', () => {
+  it('applyManualResolution 返回副本，调用方改写不影响内部状态与磁盘', () => {
+    const seed = openQueue();
+    seed.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const taskId = taskOf(seed, 'douyin_alpha').id;
+    const store = readStore();
+    store.tasks[0]!.state = 'unknown_submission';
+    writeFileSync(storePath, JSON.stringify(store), 'utf-8');
+
+    const q = openQueue();
+    const resolved = q.applyManualResolution(taskId, {
+      finalState: 'published',
+      remoteId: 'remote-manual',
+      resolvedBy: 'codex',
+    });
+    resolved.state = 'queued';
+    resolved.lastErrorCode = 'tampered';
+    resolved.metadata.tags.push('tampered-tag');
+    resolved.remoteResult!.remoteId = 'tampered';
+    resolved.history.length = 0;
+
+    const internal = q.get(taskId)!;
+    expect(internal.state).toBe('published');
+    expect(internal.lastErrorCode).toBeNull();
+    expect(internal.metadata.tags).toEqual(['tag-a']);
+    expect(internal.remoteResult!.remoteId).toBe('remote-manual');
+    expect(internal.history.length).toBeGreaterThan(0);
+
+    const persisted = readStore().tasks.find((task) => task.id === taskId)!;
+    expect(persisted.state).toBe('published');
+    expect(persisted.remoteResult.remoteId).toBe('remote-manual');
+    expect(persisted.history.length).toBeGreaterThan(0);
   });
 });
 

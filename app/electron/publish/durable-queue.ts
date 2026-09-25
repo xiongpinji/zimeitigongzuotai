@@ -332,7 +332,7 @@ const TERMINAL_STATES: ReadonlySet<QueueTaskState> = new Set([
 const ALLOWED_TRANSITIONS: Record<QueueTaskState, readonly QueueTaskState[]> = {
   draft: ['preflight', 'queued', 'cancelled', 'needs_user_action'],
   preflight: ['queued', 'terminal_failure', 'needs_user_action', 'needs_login', 'cancelled'],
-  queued: ['uploading', 'cancelled'],
+  queued: ['uploading', 'cancelled', 'needs_user_action'],
   uploading: [
     'verifying',
     'retryable_failure',
@@ -342,7 +342,7 @@ const ALLOWED_TRANSITIONS: Record<QueueTaskState, readonly QueueTaskState[]> = {
     'unknown_submission',
     'cancelled',
   ],
-  submitted: ['verifying', 'unknown_submission', 'terminal_failure', 'retryable_failure', 'needs_user_action', 'cancelled'],
+  submitted: ['verifying', 'published', 'unknown_submission', 'terminal_failure', 'retryable_failure', 'needs_user_action', 'cancelled'],
   verifying: ['published', 'unknown_submission', 'terminal_failure', 'retryable_failure', 'needs_user_action', 'cancelled'],
   retryable_failure: ['uploading', 'cancelled', 'terminal_failure', 'needs_user_action'],
   needs_login: ['queued', 'cancelled'],
@@ -917,6 +917,18 @@ export class DurablePublishQueue {
     this.mutate((draft) => {
       const ordered = [...draft.tasks].sort(compareTasks);
 
+      // 0) 同进程租约回收：uploading 超过租约且没有在途执行器（例如结果落盘失败留下）时，
+      //    转 unknown_submission 交由核对，绝不直接重发。仍在 running 中的执行器即使
+      //    租约超时也不能在这里回收——无法中止挂起的执行器是已知限制，不能伪称已解决。
+      for (const task of ordered) {
+        if (task.state !== 'uploading' || this.running.has(task.id)) continue;
+        if (task.leaseUntil !== null && task.leaseUntil > at) continue;
+        this.transition(task, 'unknown_submission', { at, errorCode: 'leased_upload_expired' });
+        task.leaseUntil = null;
+        task.nextAttemptAt = null;
+        task.nextReconcileAt = at;
+      }
+
       // 1) restart 后仍带取消标记的未提交任务在下一轮直接终止
       for (const task of ordered) {
         if (!task.cancelRequested) continue;
@@ -931,6 +943,8 @@ export class DurablePublishQueue {
         if (submissions.length >= this.budgets.global) break;
         if (submissions.length >= this.budgets.device) break;
         if (!EXECUTABLE_STATES.has(task.state) || task.cancelRequested) continue;
+        // 挂车任务即使状态可执行也绝不进入普通发布执行器。
+        if (task.commerceRequest !== null) continue;
         if (task.metadata.scheduleAt !== null && task.metadata.scheduleAt > at) continue;
         if (task.nextAttemptAt !== null && task.nextAttemptAt > at) continue;
         if (busyAccounts.has(task.accountId)) continue;
@@ -1037,6 +1051,8 @@ export class DurablePublishQueue {
     this.mutate((draft) => {
       const task = draft.tasks.find((candidate) => candidate.id === taskId);
       if (!task) return;
+      // 人工决议已写入终态后，迟到的执行器结果必须丢弃，不得覆盖终态。
+      if (TERMINAL_STATES.has(task.state)) return;
       // AbortSignal 只能请求停止；适配器返回的普通失败也无法证明远端没有受理。
       // 取消上传后先核对，避免把可能已发布的作品误记为已取消。
       if (task.cancelRequested && outcome.kind !== 'submitted') {
@@ -1140,6 +1156,9 @@ export class DurablePublishQueue {
     this.mutate((draft) => {
       const task = draft.tasks.find((candidate) => candidate.id === taskId);
       if (!task) return;
+      // 任务已被人工决议等并发操作移出可核对状态时，迟到的核对结果必须丢弃：
+      // 不得覆盖人工持久化决定，也不得触发非法迁移使本轮 tick 抛错。
+      if (!RECONCILABLE_STATES.has(task.state)) return;
       task.reconcileAttempts += 1;
       const priorRemoteId = task.remoteResult?.remoteId ?? null;
       if (result.finalState === 'published') {
@@ -1187,8 +1206,14 @@ export class DurablePublishQueue {
         }
         // 只有核对确认「远端没有产物」（remoteId 为空）时才允许重新提交，避免重复作品。
         if (result.retryable === true && remoteId === null && task.attempt < this.retryPolicy.maxAttempts) {
-          this.transition(task, 'retryable_failure', { at, errorCode: code });
-          task.nextAttemptAt = at + this.backoffFor(task.attempt);
+          if (task.commerceRequest !== null) {
+            // 挂车任务绝不能借“核对确认未发布”降级为普通发布，隔离等待人工移除请求。
+            this.transition(task, 'needs_user_action', { at, errorCode: 'commerce_blocked' });
+            task.nextAttemptAt = null;
+          } else {
+            this.transition(task, 'retryable_failure', { at, errorCode: code });
+            task.nextAttemptAt = at + this.backoffFor(task.attempt);
+          }
         } else {
           this.transition(task, 'terminal_failure', { at, errorCode: code });
         }
@@ -1219,6 +1244,8 @@ export class DurablePublishQueue {
     this.mutate((draft) => {
       const task = draft.tasks.find((candidate) => candidate.id === taskId);
       if (!task) return;
+      // 已离开可核对状态的任务不再接受迟到核对的重入记录。
+      if (!RECONCILABLE_STATES.has(task.state)) return;
       task.reconcileAttempts += 1;
       this.transition(task, task.state, { at, errorCode: sanitizeSafeCode(errorCode, 'reconcile_failed') });
       task.nextReconcileAt =
@@ -1359,7 +1386,7 @@ export class DurablePublishQueue {
       target.leaseUntil = null;
       target.nextReconcileAt = null;
     });
-    return this.requireTask(taskId);
+    return cloneTask(this.requireTask(taskId));
   }
 
   // ————————————————————————————— 内部工具 —————————————————————————————
@@ -1374,6 +1401,15 @@ export class DurablePublishQueue {
     const draft = structuredClone(loaded);
     let recovered = false;
     for (const task of draft.tasks) {
+      // 挂车任务绝不能停留在可执行 / 上传态：加载即隔离，等待人工移除请求，防止被当成普通发布执行。
+      if (task.commerceRequest !== null && (EXECUTABLE_STATES.has(task.state) || task.state === 'uploading')) {
+        this.transition(task, 'needs_user_action', { at, errorCode: 'commerce_blocked_recovered' });
+        task.leaseUntil = null;
+        task.nextAttemptAt = null;
+        task.nextReconcileAt = null;
+        recovered = true;
+        continue;
+      }
       // 进程在提交执行中退出：磁盘上的 uploading 不能当作失败或成功，必须先核对。
       if (task.state === 'uploading') {
         this.transition(task, 'unknown_submission', {
