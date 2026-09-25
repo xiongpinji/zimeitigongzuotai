@@ -21,7 +21,7 @@
  * 未接线：本模块不注册 IPC、不读账号仓、不接平台适配器；
  * runner.ts / ipc.ts 的现网发布路径保持不变，接线由后续任务完成。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -656,7 +656,6 @@ export class DurablePublishQueue {
   private readonly reconciler: RemoteReconciler;
   private readonly clock: () => number;
   private readonly running = new Map<string, RunningEntry>();
-  private writeSeq = 0;
   private tickInFlight: Promise<QueueTickReport> | null = null;
   private file: DurableQueueFileV1;
 
@@ -1479,10 +1478,12 @@ export class DurablePublishQueue {
   private persist(file: DurableQueueFileV1): void {
     const dir = dirname(this.storePath);
     mkdirSync(dir, { recursive: true });
-    const tmpPath = `${this.storePath}.tmp-${process.pid}-${++this.writeSeq}`;
+    const tmpPath = `${this.storePath}.tmp-${process.pid}-${randomUUID()}`;
     let fd: number | null = null;
+    let ownedTmp = false;
     try {
       fd = openSync(tmpPath, 'wx');
+      ownedTmp = true;
       writeFileSync(fd, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
       fsyncSync(fd);
       closeSync(fd);
@@ -1496,10 +1497,12 @@ export class DurablePublishQueue {
           // 忽略关闭失败，继续尝试清理临时文件。
         }
       }
-      try {
-        rmSync(tmpPath, { force: true });
-      } catch {
-        // 临时文件清理失败不影响旧文件完整性。
+      if (ownedTmp) {
+        try {
+          rmSync(tmpPath, { force: true });
+        } catch {
+          // 临时文件清理失败不影响旧文件完整性。
+        }
       }
       throw new DurableQueueError(
         'store_write_failed',

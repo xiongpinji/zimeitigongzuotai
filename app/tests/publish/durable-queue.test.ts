@@ -1053,6 +1053,17 @@ describe('人工决议返回值隔离', () => {
 });
 
 describe('持久化健壮性', () => {
+  it('旧进程遗留同名临时文件时仍能写盘，且不删除遗留文件', () => {
+    const q = openQueue();
+    const residualPath = `${storePath}.tmp-${process.pid}-1`;
+    writeFileSync(residualPath, 'residual from prior process', 'utf-8');
+
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+
+    expect(readStore().tasks).toHaveLength(1);
+    expect(readFileSync(residualPath, 'utf-8')).toBe('residual from prior process');
+  });
+
   it('坏 JSON 与未来 schema 显式拒绝，且不清空旧任务', () => {
     const q = openQueue();
     q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
