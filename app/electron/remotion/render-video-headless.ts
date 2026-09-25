@@ -12,6 +12,7 @@ import { parseSrt } from '../../src/lib/srt-parser';
 import { compileCards, type CompiledCard } from './compile-card-node';
 import { getRemotionBundle } from './bundle';
 import { renderRemotionVideo } from './render';
+import { planRemotionRenderDimensions } from './render-dimensions';
 import { collectMotionCards } from '../../src/remotion/collect-cards';
 import { hydrateTimelineCards } from '../../src/lib/motion-card-externalize';
 import { prepareTimelineForHyperframes, type HyperframesAssetDescriptor } from '../../src/hyperframes/assets';
@@ -202,10 +203,14 @@ export async function renderVideoHeadless(
     resolution: args.exportConfig.resolution,
     quality: args.exportConfig.quality,
   });
-  // 用 scale 而不是覆盖 composition 尺寸：React 树仍按 timeline.width/height 渲染，
-  // 所有 px 字号/padding/位置完全等同预览；renderMedia 拍照时按 scale 像素化输出。
-  // 这样字幕字号在 720p / 540p / 480p 上视觉占比与预览一致，不会变大变小。
-  const exportScale = Math.max(0.05, Math.min(1, renderConfig.renderWidth / timelineData.width));
+  // React 树仍按时间线原始尺寸排版；Remotion 先用偶数整数栅格截帧，
+  // 不可整除的目标尺寸（例如 1920×1080 → 854×480）在 FFmpeg 拼帧时精确缩放。
+  const renderPlan = planRemotionRenderDimensions(
+    timelineData.width,
+    timelineData.height,
+    renderConfig.renderWidth,
+    renderConfig.renderHeight,
+  );
 
   if (isDev) {
     console.log(`${renderLogPrefix} 开始导出`, {
@@ -214,7 +219,8 @@ export async function renderVideoHeadless(
       quality: args.exportConfig.quality,
       timelineSize: `${timelineData.width}x${timelineData.height}`,
       exportSize: `${renderConfig.renderWidth}x${renderConfig.renderHeight}`,
-      scale: exportScale,
+      scale: renderPlan.scale,
+      rasterSize: `${renderPlan.rasterWidth}x${renderPlan.rasterHeight}`,
       x264Preset: renderConfig.x264Preset,
       videoBitrate: renderConfig.videoBitrate,
       audioBitrate: renderConfig.audioBitrate,
@@ -234,7 +240,9 @@ export async function renderVideoHeadless(
     quality: args.exportConfig.quality,
     renderWidth: renderConfig.renderWidth,
     renderHeight: renderConfig.renderHeight,
-    scale: exportScale,
+    scale: renderPlan.scale,
+    rasterWidth: renderPlan.rasterWidth,
+    rasterHeight: renderPlan.rasterHeight,
   });
   const projectPrepStart = assetsStart;
   // materialize 资源到临时 publicDir，并把 timeline 内绝对素材路径改写为 assets/... 相对路径。
@@ -377,8 +385,7 @@ export async function renderVideoHeadless(
         timeline: renderTimeline,
         srtEntries,
         compiledCards,
-        width: renderConfig.renderWidth,
-        height: renderConfig.renderHeight,
+        renderPlan,
         x264Preset: renderConfig.x264Preset,
         videoBitrate: renderConfig.videoBitrate,
         audioBitrate: renderConfig.audioBitrate,

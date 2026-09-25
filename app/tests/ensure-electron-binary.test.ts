@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildElectronInstallEnv,
+  ensureElectronBinary,
   getPlatformExecutable,
   isElectronInstalled,
 } from '../scripts/ensure-electron-binary.cjs';
@@ -42,5 +46,18 @@ describe('ensure-electron-binary helpers', () => {
       versionFileExists: true,
       expectedExecutable: 'electron.exe',
     })).toBe(false);
+  });
+
+  it('fails if install.js exits successfully without creating an Electron binary', () => {
+    const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingji-electron-install-test-'));
+    fs.writeFileSync(path.join(packageDir, 'install.js'), '');
+    try {
+      expect(() => ensureElectronBinary({
+        electronPackageDir: packageDir,
+        spawn: () => ({ status: 0 }),
+      })).toThrow(/binary.*missing|未生成.*Electron/i);
+    } finally {
+      fs.rmSync(packageDir, { recursive: true, force: true });
+    }
   });
 });

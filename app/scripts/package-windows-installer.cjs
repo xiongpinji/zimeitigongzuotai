@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 // Windows NSIS 安装包生成：把 @electron/packager 产出的免安装文件夹打成 Setup.exe。
 // 安装到 $PROGRAMFILES64\<appName>（短根路径），从根本上规避用户自行解压到深目录
@@ -99,11 +99,15 @@ SectionEnd
 `;
 }
 
+function buildMakensisArgs(scriptPath) {
+  return ['/INPUTCHARSET', 'UTF8', scriptPath];
+}
+
 function runMakensis(command, scriptPath, cwd) {
   return new Promise((resolve, reject) => {
     // Windows 上 makensis 多为 .exe；若用户用 .bat/.cmd 包装则需 shell。
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
-    const child = spawn(command, [scriptPath], {
+    const child = spawn(command, buildMakensisArgs(scriptPath), {
       cwd,
       stdio: 'inherit',
       shell: useShell,
@@ -129,6 +133,32 @@ function makensisMissingMessage(command) {
   ].join('\n');
 }
 
+// NSIS File /r still uses MAX_PATH while scanning source files. Map the release
+// folder (not the app folder) so both the app source and installer output are short.
+async function withShortWindowsReleaseDir(releaseDir, operation, {
+  platform = process.platform,
+  existsSync = fs.existsSync,
+  spawnSync: runSubst = spawnSync,
+} = {}) {
+  if (platform !== 'win32') return operation(releaseDir);
+
+  for (const letter of 'ZYXWVUT') {
+    const drive = `${letter}:`;
+    if (existsSync(`${drive}\\`)) continue;
+    const mapped = runSubst('subst', [drive, releaseDir], { encoding: 'utf8' });
+    if (mapped.error || mapped.status !== 0) continue;
+    try {
+      return await operation(`${drive}\\`);
+    } finally {
+      const unmapped = runSubst('subst', [drive, '/D'], { encoding: 'utf8' });
+      if (unmapped.error || unmapped.status !== 0) {
+        throw new Error(`短盘符 ${drive} 清理失败：${unmapped.error?.message || unmapped.stderr || unmapped.status}`);
+      }
+    }
+  }
+  throw new Error(`无法为 NSIS 映射短盘符：${releaseDir}`);
+}
+
 async function createWindowsInstaller({
   appName,
   version,
@@ -151,29 +181,35 @@ async function createWindowsInstaller({
   const outName = resolveInstallerOutputName({ appName, version, arch });
   const outFile = path.join(releaseDir, outName);
   const command = resolveMakensisCommand(env);
-
-  const scriptText = buildNsisScript({
-    appName,
-    version,
-    arch,
-    appDir,
-    exeName,
-    iconPath: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
-    outFile,
-  });
-
-  await fsp.mkdir(tmpDir, { recursive: true });
-  const scriptPath = path.join(tmpDir, 'installer.nsi');
-  await fsp.writeFile(scriptPath, scriptText, 'utf8');
-
-  try {
-    await runMakensis(command, scriptPath, tmpDir);
-  } catch (error) {
-    if (error && error.code === 'ENOENT') {
-      throw new Error(makensisMissingMessage(command));
-    }
-    throw error;
+  const appRelativePath = path.relative(releaseDir, appDir);
+  if (!appRelativePath || appRelativePath.startsWith('..') || path.isAbsolute(appRelativePath)) {
+    throw new Error(`应用目录必须位于发布目录内：${appDir}`);
   }
+
+  await withShortWindowsReleaseDir(releaseDir, async (shortReleaseDir) => {
+    const scriptText = buildNsisScript({
+      appName,
+      version,
+      arch,
+      appDir: path.join(shortReleaseDir, appRelativePath),
+      exeName,
+      iconPath: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
+      outFile: path.join(shortReleaseDir, outName),
+    });
+
+    await fsp.mkdir(tmpDir, { recursive: true });
+    const scriptPath = path.join(tmpDir, 'installer.nsi');
+    await fsp.writeFile(scriptPath, scriptText, 'utf8');
+
+    try {
+      await runMakensis(command, scriptPath, tmpDir);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        throw new Error(makensisMissingMessage(command));
+      }
+      throw error;
+    }
+  });
 
   if (!fs.existsSync(outFile)) {
     throw new Error(`安装包生成失败，未找到产物：${outFile}`);
@@ -183,9 +219,11 @@ async function createWindowsInstaller({
 
 module.exports = {
   UNINSTALL_REGISTRY_ROOT,
+  buildMakensisArgs,
   resolveInstallerOutputName,
   resolveMakensisCommand,
   buildNsisScript,
   makensisMissingMessage,
+  withShortWindowsReleaseDir,
   createWindowsInstaller,
 };

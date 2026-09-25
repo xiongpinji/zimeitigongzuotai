@@ -94,6 +94,10 @@ function ensureElectronBinary({
   if (result.status !== 0) {
     throw new Error(`Electron binary install failed with exit code ${result.status ?? 'unknown'}`);
   }
+
+  if (!isElectronInstalled(readElectronInstallState({ electronPackageDir }))) {
+    throw new Error('Electron binary still missing after install.js reported success');
+  }
 }
 
 if (require.main === module) {

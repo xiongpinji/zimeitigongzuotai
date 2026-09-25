@@ -4,8 +4,10 @@ import {
   UNINSTALL_REGISTRY_ROOT,
   resolveInstallerOutputName,
   resolveMakensisCommand,
+  buildMakensisArgs,
   buildNsisScript,
   makensisMissingMessage,
+  withShortWindowsReleaseDir,
 } from '../scripts/package-windows-installer.cjs';
 
 describe('resolveInstallerOutputName', () => {
@@ -27,6 +29,16 @@ describe('resolveMakensisCommand', () => {
 
   it('ignores blank MAKENSIS', () => {
     expect(resolveMakensisCommand({ MAKENSIS: '   ' })).toBe('makensis');
+  });
+});
+
+describe('buildMakensisArgs', () => {
+  it('reads the generated NSIS script as UTF-8 so Chinese paths remain intact', () => {
+    expect(buildMakensisArgs('D:/项目/installer.nsi')).toEqual([
+      '/INPUTCHARSET',
+      'UTF8',
+      'D:/项目/installer.nsi',
+    ]);
   });
 });
 
@@ -83,5 +95,66 @@ describe('makensisMissingMessage', () => {
     expect(message).toContain('choco install nsis');
     expect(message).toContain('brew install makensis');
     expect(message).toContain('MAKENSIS');
+  });
+});
+
+describe('withShortWindowsReleaseDir', () => {
+  it('maps a deep Windows release directory to a free drive and unmaps it after success', async () => {
+    const calls: Array<[string, string[]]> = [];
+    const result = await withShortWindowsReleaseDir('D:\\deep\\release', async (shortDir: string) => {
+      expect(shortDir).toBe('Z:\\');
+      return 'built';
+    }, {
+      platform: 'win32',
+      existsSync: () => false,
+      spawnSync: (command: string, args: string[]) => {
+        calls.push([command, args]);
+        return { status: 0 };
+      },
+    });
+    expect(result).toBe('built');
+    expect(calls).toEqual([
+      ['subst', ['Z:', 'D:\\deep\\release']],
+      ['subst', ['Z:', '/D']],
+    ]);
+  });
+
+  it('unmaps the drive when installer generation fails', async () => {
+    const calls: string[][] = [];
+    await expect(withShortWindowsReleaseDir('D:\\deep\\release', async () => {
+      throw new Error('makensis failed');
+    }, {
+      platform: 'win32',
+      existsSync: () => false,
+      spawnSync: (_command: string, args: string[]) => {
+        calls.push(args);
+        return { status: 0 };
+      },
+    })).rejects.toThrow('makensis failed');
+    expect(calls).toEqual([
+      ['Z:', 'D:\\deep\\release'],
+      ['Z:', '/D'],
+    ]);
+  });
+
+  it('skips occupied drives and fails clearly if no drive can be mapped', async () => {
+    const calls: string[][] = [];
+    await expect(withShortWindowsReleaseDir('D:\\deep\\release', async () => 'unused', {
+      platform: 'win32',
+      existsSync: (drive: string) => drive === 'Z:\\',
+      spawnSync: (_command: string, args: string[]) => {
+        calls.push(args);
+        return { status: 1, stderr: 'failed' };
+      },
+    })).rejects.toThrow('短盘符');
+    expect(calls[0]).toEqual(['Y:', 'D:\\deep\\release']);
+  });
+
+  it('does not call subst outside Windows', async () => {
+    const result = await withShortWindowsReleaseDir('/deep/release', async (dir: string) => dir, {
+      platform: 'linux',
+      spawnSync: () => { throw new Error('unexpected subst'); },
+    });
+    expect(result).toBe('/deep/release');
   });
 });

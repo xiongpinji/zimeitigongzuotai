@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
@@ -12,6 +16,33 @@ const {
 } = require('../scripts/package-windows.cjs');
 
 describe('package windows helpers', () => {
+  it('returns a failure code if an asynchronous packaging step ends without settling', () => {
+    const scriptPath = path.resolve(__dirname, '../scripts/package-windows.cjs');
+    const childScript = `require(${JSON.stringify(scriptPath)}).runPackageWindowsCli(() => new Promise(() => {}));`;
+    const result = spawnSync(process.execPath, ['-e', childScript], { encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Windows packaging stopped before completion');
+  });
+
+  it('rejects a reported portable release when the executable or asar is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingji-win-release-test-'));
+    const appDir = path.join(tmpDir, 'Demo-win32-x64');
+    fs.mkdirSync(path.join(appDir, 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(appDir, 'Demo.exe'), 'binary');
+    fs.writeFileSync(path.join(appDir, 'resources', 'app.asar'), 'archive');
+    try {
+      expect(() => require('../scripts/package-windows.cjs').assertWindowsReleaseArtifacts(
+        [appDir], 'Demo',
+      )).not.toThrow();
+      fs.rmSync(path.join(appDir, 'resources', 'app.asar'));
+      expect(() => require('../scripts/package-windows.cjs').assertWindowsReleaseArtifacts(
+        [appDir], 'Demo',
+      )).toThrow(/app\.asar/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes Node architectures to Electron packager architectures', () => {
     expect(normalizePackageArch('x64')).toBe('x64');
     expect(normalizePackageArch('ia32')).toBe('ia32');

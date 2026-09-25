@@ -336,6 +336,30 @@ function buildWindowsPackagerOptions({
   };
 }
 
+function assertWindowsReleaseArtifacts(appPaths, packagedAppName, installerPath) {
+  if (!Array.isArray(appPaths) || appPaths.length === 0) {
+    throw new Error('Windows release is incomplete: packager returned no app directory');
+  }
+  for (const appPath of appPaths) {
+    const requiredFiles = [
+      path.join(appPath, `${packagedAppName}.exe`),
+      path.join(appPath, 'resources', 'app.asar'),
+    ];
+    for (const filePath of requiredFiles) {
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile() || fs.statSync(filePath).size === 0) {
+        throw new Error(`Windows release is incomplete: ${filePath}`);
+      }
+    }
+  }
+  if (installerPath && (
+    !fs.existsSync(installerPath) ||
+    !fs.statSync(installerPath).isFile() ||
+    fs.statSync(installerPath).size === 0
+  )) {
+    throw new Error(`Windows installer is incomplete: ${installerPath}`);
+  }
+}
+
 async function packageWindows() {
   const arch = resolvePackageArch();
   if (!arch) {
@@ -376,6 +400,8 @@ async function packageWindows() {
       }),
     );
 
+    assertWindowsReleaseArtifacts(appPaths, appName);
+
     console.log('Windows 打包完成，产物如下：');
     appPaths.forEach((appPath) => {
       console.log(`- ${path.relative(rootDir, appPath)}`);
@@ -396,6 +422,7 @@ async function packageWindows() {
         releaseDir,
         tmpDir: path.join(rootDir, '.tmp', `win-installer-${arch}`),
       });
+      assertWindowsReleaseArtifacts(appPaths, appName, installerPath);
       console.log(`安装包生成完成：- ${path.relative(rootDir, installerPath)}`);
     }
   } finally {
@@ -403,15 +430,37 @@ async function packageWindows() {
   }
 }
 
+function runPackageWindowsCli(run = packageWindows) {
+  let settled = false;
+  const detectIncompleteExit = () => {
+    if (!settled) {
+      console.error('Windows packaging stopped before completion');
+      process.exitCode = 1;
+    }
+  };
+  process.on('beforeExit', detectIncompleteExit);
+
+  Promise.resolve().then(run).then(
+    () => {
+      settled = true;
+      process.off('beforeExit', detectIncompleteExit);
+    },
+    (error) => {
+      settled = true;
+      process.off('beforeExit', detectIncompleteExit);
+      console.error('Windows 打包失败');
+      console.error(error instanceof Error ? error.stack || error.message : String(error));
+      process.exitCode = 1;
+    },
+  );
+}
+
 if (require.main === module) {
-  packageWindows().catch((error) => {
-    console.error('Windows 打包失败');
-    console.error(error instanceof Error ? error.stack || error.message : String(error));
-    process.exit(1);
-  });
+  runPackageWindowsCli();
 }
 
 module.exports = {
+  assertWindowsReleaseArtifacts,
   buildWindowsPackagerOptions,
   createStageDirectory,
   createIcoFromPng,
@@ -421,5 +470,6 @@ module.exports = {
   resolvePackageArch,
   resolveSpawnCommand,
   resolveSpawnOptions,
+  runPackageWindowsCli,
   windowsFfmpegPackages,
 };

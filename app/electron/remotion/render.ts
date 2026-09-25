@@ -1,5 +1,9 @@
 import { selectComposition, renderMedia } from '@remotion/renderer';
 import type { SrtEntry, TimelineData } from '../../src/types';
+import {
+  insertOutputScaleFilter,
+  type RemotionRenderDimensionPlan,
+} from './render-dimensions';
 
 export interface RemotionRenderParams {
   serveUrl: string;
@@ -7,13 +11,8 @@ export interface RemotionRenderParams {
   timeline: TimelineData;
   srtEntries: SrtEntry[];
   compiledCards: Record<string, string>;
-  /**
-   * 缩放比例：React 树仍按 timeline 原始 width/height 渲染，
-   * 导出拍照时按 scale 像素化（最终导出尺寸 = 原始尺寸 × scale）。
-   * 由 buildExportRenderConfig 算 renderWidth 后用 renderWidth/timelineWidth 得出。
-   * 好处：所有 px 字号/padding/偏移完全不动，预览与导出 1:1 一致。
-   */
-  scale: number;
+  /** 先以偶数整数栅格截帧，必要时在 FFmpeg 拼帧中缩至精确导出尺寸。 */
+  renderPlan: RemotionRenderDimensionPlan;
   /** x264 编码 preset；硬件加速可用时 ffmpeg 会忽略，但软编回退仍受益。 */
   x264Preset: 'ultrafast' | 'veryfast' | 'medium';
   /** 视频码率，形如 '1800k' / '3000k' / '4500k'；与 crf 互斥，硬件加速路径下必填。 */
@@ -58,7 +57,11 @@ export async function renderRemotionVideo(params: RemotionRenderParams): Promise
     outputLocation: params.outputPath,
     inputProps,
     concurrency: Math.max(1, params.concurrency),
-    scale: params.scale,
+    scale: params.renderPlan.scale,
+    // 需要 FFmpeg 缩放时，预编码路径会在 stitcher 使用 -c:v copy，无法再应用 -vf。
+    disallowParallelEncoding: params.renderPlan.needsFinalScale,
+    ffmpegOverride: ({ type, args }) =>
+      type === 'stitcher' ? insertOutputScaleFilter(args, params.renderPlan) : args,
     x264Preset: params.x264Preset,
     // buildExportRenderConfig 产出的字符串始终满足 Remotion 的 Bitrate 模板类型（如 '1800k'），
     // 这里 as 收窄一下，TS 才不会因为返回值是普通 string 而拒绝。
