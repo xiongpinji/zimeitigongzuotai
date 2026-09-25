@@ -4,7 +4,9 @@
 
 2026-09-25 已完成本机看板复用和三个自定义 CLI profile 的只读 `choices`/`catalog`/`doctor` 检查，均显示可用。**没有派发开发任务，也没有因此产生百炼模型调用。** 看板 URL 含本机私有 token，只在当前会话提供，不写入仓库。
 
-本项目首先等待用户确认 [架构](architecture.md)、[验收](roadmap-and-acceptance.md) 与实际 Credits 风险预算。此前即使持久计划存在，也不得 `launch`。过去其他项目或连通测试的 100 Credits 不是本项目默认预算；CLI 的 `cost=0` 也不代表阿里云 Credits 为零。
+阶段一持久计划 ID：`plan-20260925-034739-8a0572`（16 项待执行，未启动 job）。旧计划 `plan-20260925-032413-08fcab`（17 项、含已延期的商品实现）仅为历史账本；后续仅从阶段一计划派发任务，不使用旧计划的 checklist。
+
+本项目首先等待用户确认 [阶段一范围](phase1-scope.md)、[组件组合图](integration-map.md)、[验收](roadmap-and-acceptance.md) 与实际 Credits 风险预算。此前即使持久计划存在，也不得 `launch`。过去其他项目或连通测试的 100 Credits 不是本项目默认预算；CLI 的 `cost=0` 也不代表阿里云 Credits 为零。
 
 ## 固定路由与责任
 
@@ -25,4 +27,4 @@
 4. Codex 对每项完整 diff 做范围和安全检查、独立跑测试；高风险任务交 `qwen-code-review` 只读复审。写入 `record-review` 后才解除依赖项。
 5. 本机代码验收、真实账号验收、平台最终状态和公开发布分别记录。任何成本/状态未知时停止自动重试，先核对记录。
 
-本仓库的 [持久计划文件](plans/2026-09-25-product-delivery.md) 是目标与任务分解的版本控制副本；运行时账本、job 日志与私有 dashboard token 位于 WSL 用户的 Agent Orchestrator 状态目录，不进入 Git。
+本仓库的 [阶段一持久计划文件](plans/2026-09-25-phase1-core.md) 是目标与任务分解的版本控制副本；早期的[全量计划](plans/2026-09-25-product-delivery.md)仅作历史记录，其商品任务不得派发。运行时账本、job 日志与私有 dashboard token 位于 WSL 用户的 Agent Orchestrator 状态目录，不进入 Git。

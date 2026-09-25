@@ -2,7 +2,7 @@
 
 ## 1. 产品边界和基座
 
-产品是 Windows 优先、本地优先的桌面工作台。编辑器与预览采用 Lingji Cut 的 Electron + React + Remotion 路线，保留人可逐帧复核和修改的时间线；批处理与发布由持久化任务引擎执行，不能依靠 UI 页面停留来维持任务。Easel 提供可选择的运营 Skills 模板，HotClip 和语义检索作为进程边界内的专用工具，均不直接掌握发布账号凭证。
+产品是 Windows 优先、本地优先的桌面工作台。编辑器与预览采用 Lingji Cut 的 Electron + React + Remotion 路线，保留人可逐帧复核和修改的时间线；批处理与发布由持久化任务引擎执行，不能依靠 UI 页面停留来维持任务。Easel 提供可选择的运营 Skills 模板，HotClip 和语义检索作为进程边界内的专用工具，均不直接掌握发布账号凭证。各功能可用开源源码、CLI、AI Skill 或 MCP 组合，但均须通过同一项目模型和任务 API；具体接入见[组件组合图](integration-map.md)。
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,7 @@ flowchart LR
   K --> API
 ```
 
-受保护的不变量：素材与账号凭证绝不交给不需要它们的进程；每个发布任务固定一个账号、一个视频版本和一组商品设置；同一账号同时最多一个发布动作；未知提交状态先核实再重试。导出的视频、时间线方案、源素材及授权信息都有稳定 ID 和可追踪来源。
+受保护的不变量：素材与账号凭证绝不交给不需要它们的进程；每个发布任务固定一个账号和一个视频版本，商品请求在阶段一只能为空；同一账号同时最多一个发布动作；未知提交状态先核实再重试。导出的视频、时间线方案、源素材及授权信息都有稳定 ID 和可追踪来源。
 
 ## 2. 六项能力的实现设计
 
@@ -46,15 +46,15 @@ flowchart LR
 
 Agent 只能通过类型化工具调用，不能绕过任务状态机直接操作账号会话文件。第一批 Skills：`ingest-recording`、`detect-highlights`、`draft-variants`、`match-assets`、`edit-timeline`、`render-and-qc`、`prepare-publish`、`publish-and-verify`、`review-performance`。每一步产出结构化对象和审计事件，可重放、暂停、人工改稿后续跑。Easel 技能只移植经审阅、有实际脚本和测试的部分；不按技能数量宣称自动化完成。
 
-允许用户为特定活动和账号预先授权自动发布策略（账号范围、时间窗、每日上限、是否允许带货、商品白名单、失败停机规则）。未授权发布策略时，Agent 可完成素材、剪辑、渲染和发布准备，但提交前必须由用户触发。这里的“完全自动”指在预授权策略内能从录屏走到结果核验，异常时能停止并告知原因。
+允许用户为特定活动和账号预先授权自动发布策略（账号范围、时间窗、每日上限、失败停机规则）。未授权发布策略时，Agent 可完成素材、剪辑、渲染和发布准备，但提交前必须由用户触发。这里的“完全自动”指在预授权策略内能从录屏走到**普通视频**结果核验，异常时能停止并告知原因；商品发布授权留待 R6-C。
 
-### F. 高并发发布与账号级带货配置
+### F. 批量普通发布与商品扩展端口
 
-`PublishJob(id, accountId, videoVariantId, metadata, commerceIntent, state, idempotencyKey, remoteId, attempt, leaseUntil)` 持久化。状态：`draft → preflight → queued → uploading → submitted → verifying → published`，另有 `needs_login`、`needs_permission`、`needs_user_action`、`retryable_failure`、`terminal_failure`、`unknown_submission`。定时任务、重启恢复、退避与熔断由队列负责；单账号互斥，跨账号并行，平台级与设备级并发预算独立配置。`unknown_submission` 必须先查远端，无法核实时交人工处理，绝不盲重发造成重复作品。
+`PublishJob(id, accountId, videoVariantId, metadata, commerceRequest?, state, idempotencyKey, remoteId, attempt, leaseUntil)` 持久化。状态：`draft → preflight → queued → uploading → submitted → verifying → published`，另有 `needs_login`、`needs_permission`、`needs_user_action`、`retryable_failure`、`terminal_failure`、`unknown_submission`。定时任务、重启恢复、退避与熔断由队列负责；单账号互斥，跨账号并行，平台级与设备级并发预算独立配置。`unknown_submission` 必须先查远端，无法核实时交人工处理，绝不盲重发造成重复作品。
 
-账号与商品绑定是每个发布任务的独立选项，不是全局开关。`CommerceIntent` 包含 `enabled`、平台商品类型、平台商品 ID/锚点、账号权限快照及明确的失败策略。若用户要求带货但账号或适配器不支持，任务进入 `needs_permission` / `needs_user_action`，不得悄悄改成无商品发布。商品不能只靠填任意 URL 伪装为平台内挂载。
+阶段一只有无 `commerceRequest` 的普通发布可入队。预留的 `CommerceRequest(platform, accountId, kind, platformProductId, required)` 表示未来按账号和平台商品 ID 的带货请求；有请求时四个平台插件均返回 `not_implemented`，预检阻止提交。用户必须显式移除商品请求，才能另建普通任务，避免静默降级。未来插件统一实现 `probeCapability → prepareAttachment → applyAttachment → verifyAttachment`；商品不能只靠填任意 URL 伪装为平台内挂载。
 
-平台能力采用三态 `verified / requires_manual_action / unavailable_or_unverified`，按账号刷新。商品类型必须区分自建商品、店铺商品、联盟商品与小程序锚点；详细公开证据和开发前置条件见[平台能力准入门槛](platform-capability-gates.md)。视频号与小红书的自动商品挂载权限在真实账号与官方合作能力核实前标为 `unverified`；不得仅凭 UI 入口承诺全自动挂载。最终产品门槛仍要求四平台逐一证明可用路径；如无法获得某账号类型的自动能力，必须明确报告缺口，而非声称完成。
+商品类型必须区分自建商品、店铺商品、联盟商品与小程序锚点；具体类型及接口在用户研究后由 R6-C 决定，不能先假设四平台同构。详细公开证据见[平台能力准入门槛](platform-capability-gates.md)，但不构成阶段一商品开发门槛。未来商品插件按账号报告 `verified / requires_manual_action / unavailable_or_unverified` 和证据；无法获得某账号类型的自动能力时明确报告缺口，不声称完成。
 
 ## 3. 数据与安全
 
