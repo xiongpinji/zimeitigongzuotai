@@ -104,6 +104,20 @@ function taskOf(q: DurablePublishQueue, accountId: string) {
   return task;
 }
 
+/** 真实重启模拟：先正常入队，再把磁盘上的任务改写为带未到期租约的 uploading 状态。 */
+function seedUploadingTask(): string {
+  const seed = openQueue();
+  seed.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+  const taskId = taskOf(seed, 'douyin_alpha').id;
+  const store = readStore();
+  const task = store.tasks.find((candidate) => candidate.id === taskId)!;
+  task.state = 'uploading';
+  task.attempt = 1;
+  task.leaseUntil = START + 600_000;
+  writeFileSync(storePath, JSON.stringify(store), 'utf-8');
+  return taskId;
+}
+
 describe('持久任务矩阵', () => {
   it('一个视频版本 × 多账号展开为独立任务，ID/幂等键稳定且重复入队不产生副本', () => {
     const q = openQueue();
@@ -502,83 +516,87 @@ describe('计划时间、取消与退避', () => {
 });
 
 describe('崩溃恢复与未知提交', () => {
-  it('重启时 uploading 任务转为 unknown_submission，只核对不重发', async () => {
-    const executor = vi.fn(() => new Promise<PublishAttemptOutcome>(() => {}));
-    const q1 = openQueue({ executor });
-    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
-    const task = taskOf(q1, 'douyin_alpha');
-    void q1.tick();
-    expect(readStore().tasks[0].state).toBe('uploading');
-    expect(q1.get(task.id)!.leaseUntil).toBe(START + 600_000);
+  it('真实重启：未到期 uploading 打开时保持原状，租约到期后才转 unknown_submission 且只核对不重发', async () => {
+    const taskId = seedUploadingTask();
+    const seededBytes = readFileSync(storePath, 'utf-8');
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'remote_pending' }) as ReconcileResult);
+    const q = openQueue({ executor, reconciler });
 
-    const executor2 = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
-    const reconciler2 = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'remote_pending' }) as ReconcileResult);
-    const q2 = openQueue({ executor: executor2, reconciler: reconciler2 });
-    const recovered = q2.get(task.id)!;
+    expect(q.get(taskId)!.state).toBe('uploading');
+    expect(q.get(taskId)!.leaseUntil).toBe(START + 600_000);
+    expect(readFileSync(storePath, 'utf-8')).toBe(seededBytes);
+    expectQueueError(() => q.retryNow(taskId), 'invalid_transition');
+
+    await q.tick();
+    expect(q.get(taskId)!.state).toBe('uploading');
+    expect(executor).not.toHaveBeenCalled();
+    expect(reconciler).not.toHaveBeenCalled();
+
+    advance(599_999);
+    await q.tick();
+    expect(q.get(taskId)!.state).toBe('uploading');
+    expect(reconciler).not.toHaveBeenCalled();
+
+    advance(1);
+    const report = await q.tick();
+    const recovered = q.get(taskId)!;
+    expect(report.claimed).toEqual([]);
     expect(recovered.state).toBe('unknown_submission');
-    expect(recovered.lastErrorCode).toBe('recovered_uploading_restart');
+    expect(recovered.history.some((entry) => entry.errorCode === 'leased_upload_expired')).toBe(true);
+    expect(recovered.lastErrorCode).toBe('remote_pending');
     expect(recovered.attempt).toBe(1);
-
-    await q2.tick();
-    expect(reconciler2).toHaveBeenCalledTimes(1);
-    expect(executor2).not.toHaveBeenCalled();
-    expect(q2.get(task.id)!.state).toBe('unknown_submission');
-    expectQueueError(() => q2.retryNow(task.id), 'invalid_transition');
+    expect(executor).not.toHaveBeenCalled();
+    expect(reconciler).toHaveBeenCalledTimes(1);
   });
 
   it('未知提交经核对确认远端失败且无远端 ID 后才允许重新执行', async () => {
-    const q1 = openQueue({ executor: vi.fn(() => new Promise<PublishAttemptOutcome>(() => {})) });
-    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
-    const task = taskOf(q1, 'douyin_alpha');
-    void q1.tick();
-
-    const executor2 = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
-    const reconciler2 = vi.fn(
+    const taskId = seedUploadingTask();
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(
       async () => ({ finalState: 'failed', remoteId: null, confirmedNotPublished: true, retryable: true, errorCode: 'no_remote_artifact' }) as ReconcileResult,
     );
-    const q2 = openQueue({ executor: executor2, reconciler: reconciler2, retryPolicy: { baseBackoffMs: 1_000 } });
-    expect(q2.get(task.id)!.state).toBe('unknown_submission');
+    const q = openQueue({ executor, reconciler, retryPolicy: { baseBackoffMs: 1_000 } });
+    expect(q.get(taskId)!.state).toBe('uploading');
+    expectQueueError(() => q.retryNow(taskId), 'invalid_transition');
 
-    expectQueueError(() => q2.retryNow(task.id), 'invalid_transition');
-    await q2.tick();
-    expect(reconciler2).toHaveBeenCalledTimes(1);
-    expect(executor2).not.toHaveBeenCalled();
-    expect(q2.get(task.id)!.state).toBe('retryable_failure');
-    expect(q2.get(task.id)!.remoteResult!.finalState).toBe('failed');
+    advance(600_000);
+    await q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    expect(executor).not.toHaveBeenCalled();
+    expect(q.get(taskId)!.state).toBe('retryable_failure');
+    expect(q.get(taskId)!.remoteResult!.finalState).toBe('failed');
 
     advance(1_000);
-    await q2.tick();
-    expect(executor2).toHaveBeenCalledTimes(1);
-    expect(q2.get(task.id)!.state).toBe('verifying');
+    await q.tick();
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(q.get(taskId)!.state).toBe('verifying');
   });
 
   it('核对持续不明会停止自动核对并等待人工接管', async () => {
-    const q1 = openQueue({ executor: vi.fn(() => new Promise<PublishAttemptOutcome>(() => {})) });
-    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
-    const task = taskOf(q1, 'douyin_alpha');
-    void q1.tick();
-
-    const executor2 = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
-    const reconciler2 = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'still_unknown' }) as ReconcileResult);
-    const q2 = openQueue({
-      executor: executor2,
-      reconciler: reconciler2,
+    const taskId = seedUploadingTask();
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const reconciler = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'still_unknown' }) as ReconcileResult);
+    const q = openQueue({
+      executor,
+      reconciler,
       retryPolicy: { baseBackoffMs: 1_000, maxReconcileAttempts: 2 },
     });
 
-    await q2.tick();
-    expect(reconciler2).toHaveBeenCalledTimes(1);
-    expect(q2.get(task.id)!.reconcileAttempts).toBe(1);
+    advance(600_000);
+    await q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    expect(q.get(taskId)!.reconcileAttempts).toBe(1);
     advance(1_000);
-    await q2.tick();
-    expect(reconciler2).toHaveBeenCalledTimes(2);
+    await q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(2);
     advance(1_000_000);
-    await q2.tick();
-    expect(reconciler2).toHaveBeenCalledTimes(2);
-    expect(q2.get(task.id)!.state).toBe('unknown_submission');
-    expect(executor2).not.toHaveBeenCalled();
+    await q.tick();
+    expect(reconciler).toHaveBeenCalledTimes(2);
+    expect(q.get(taskId)!.state).toBe('unknown_submission');
+    expect(executor).not.toHaveBeenCalled();
 
-    const resolved = q2.applyManualResolution(task.id, {
+    const resolved = q.applyManualResolution(taskId, {
       finalState: 'published',
       remoteId: 'remote-manual',
       resolvedBy: 'codex',
@@ -587,7 +605,7 @@ describe('崩溃恢复与未知提交', () => {
     expect(resolved.remoteResult).toMatchObject({ remoteId: 'remote-manual', finalState: 'published' });
     expect(resolved.history[resolved.history.length - 1]!.actor).toBe('codex');
     expectQueueError(
-      () => q2.applyManualResolution(task.id, { finalState: 'failed', resolvedBy: 'codex' }),
+      () => q.applyManualResolution(taskId, { finalState: 'failed', resolvedBy: 'codex' }),
       'invalid_transition',
     );
   });
@@ -867,13 +885,16 @@ describe('同进程租约回收', () => {
     const tick1 = q.tick();
     expect(readStore().tasks[0]!.state).toBe('uploading');
     expect(executor).toHaveBeenCalledTimes(1);
+    const claimedBytes = readFileSync(storePath);
 
     // 模拟“执行器已结束但结果落盘失败”：把 storePath 换成目录，令 rename 原子替换失败。
+    // 写入失败不应改变磁盘上的领取快照；恢复该快照后继续验证同一实例的租约回收。
     rmSync(storePath, { force: true });
     mkdirSync(storePath, { recursive: true });
     release();
     await expect(tick1).rejects.toMatchObject({ code: 'store_write_failed' });
     rmSync(storePath, { recursive: true, force: true });
+    writeFileSync(storePath, claimedBytes);
 
     const stuck = q.get(task.id)!;
     expect(stuck.state).toBe('uploading');
@@ -895,6 +916,60 @@ describe('同进程租约回收', () => {
     expect(executor).toHaveBeenCalledTimes(1);
     expect(recovered.state).toBe('unknown_submission');
     expect(recovered.history.some((entry) => entry.errorCode === 'leased_upload_expired')).toBe(true);
+  });
+
+  it('结果落盘失败释放同进程活动计数：新实例可打开，未到期 uploading 租约保留且只核对不盲重发', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor1 = vi.fn(async (input: PublishAttemptInput) => {
+      await gate;
+      return submitOk(`remote-${input.taskId}`);
+    });
+    const q1 = openQueue({ executor: executor1 });
+    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q1, 'douyin_alpha');
+
+    const tick1 = q1.tick();
+    expect(executor1).toHaveBeenCalledTimes(1);
+    const claimedBytes = readFileSync(storePath);
+    expect(readStore().tasks[0]!.state).toBe('uploading');
+
+    // 令结果落盘失败：把 storePath 换成目录使原子替换失败；失败后恢复领取时的快照。
+    rmSync(storePath, { force: true });
+    mkdirSync(storePath, { recursive: true });
+    release();
+    await expect(tick1).rejects.toMatchObject({ code: 'store_write_failed' });
+    rmSync(storePath, { recursive: true, force: true });
+    writeFileSync(storePath, claimedBytes);
+
+    // 活动计数已由 finally 释放：新实例打开不再抛 store_in_use。
+    const executor2 = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-resub-${input.taskId}`));
+    const reconciler2 = vi.fn(async () => ({ finalState: 'unknown', errorCode: 'remote_pending' }) as ReconcileResult);
+    const q2 = openQueue({ executor: executor2, reconciler: reconciler2 });
+    const loaded = q2.get(task.id)!;
+    expect(loaded.state).toBe('uploading');
+    expect(loaded.leaseUntil).toBe(START + 600_000);
+    // 失败的结果未被部分应用：首实例内存快照仍是 uploading。
+    expect(q1.get(task.id)!.state).toBe('uploading');
+
+    // 租约未到期：新实例不提交、不核对、不改写任务。
+    await q2.tick();
+    expect(executor2).not.toHaveBeenCalled();
+    expect(reconciler2).not.toHaveBeenCalled();
+    expect(q2.get(task.id)!.state).toBe('uploading');
+
+    // 租约到期：转 unknown_submission 并只核对，绝不盲目重发。
+    advance(600_000);
+    const report = await q2.tick();
+    const recovered = q2.get(task.id)!;
+    expect(report.claimed).toEqual([]);
+    expect(recovered.state).toBe('unknown_submission');
+    expect(recovered.history.some((entry) => entry.errorCode === 'leased_upload_expired')).toBe(true);
+    expect(reconciler2).toHaveBeenCalledTimes(1);
+    expect(executor2).not.toHaveBeenCalled();
+    expect(readStore().tasks[0]!.state).toBe('unknown_submission');
   });
 
   it('在途执行器即使租约超时也不会被并发补发，tick 合并等待', async () => {
@@ -921,6 +996,137 @@ describe('同进程租约回收', () => {
     await tick1;
     expect(executor).toHaveBeenCalledTimes(1);
     expect(q.get(task.id)!.state).toBe('verifying');
+  });
+});
+
+describe('同进程实例隔离与磁盘版本新鲜度', () => {
+  it('在途提交期间拒绝第二实例打开，租约过期不影响，磁盘与首实例任务保持不变', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor1 = vi.fn(async (input: PublishAttemptInput) => {
+      await gate;
+      return submitOk(`remote-${input.taskId}`);
+    });
+    const q1 = openQueue({ executor: executor1 });
+    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q1, 'douyin_alpha');
+
+    const tick1 = q1.tick();
+    expect(executor1).toHaveBeenCalledTimes(1);
+    const inFlightBytes = readFileSync(storePath, 'utf-8');
+    expect(readStore().tasks[0]!.state).toBe('uploading');
+
+    advance(600_000 + 1);
+    expectQueueError(() => openQueue(), 'store_in_use');
+    expect(readFileSync(storePath, 'utf-8')).toBe(inFlightBytes);
+    const untouched = q1.get(task.id)!;
+    expect(untouched.state).toBe('uploading');
+    expect(untouched.leaseUntil).toBe(START + 600_000);
+
+    release();
+    await tick1;
+    expect(q1.get(task.id)!.state).toBe('verifying');
+    expect(readStore().tasks[0]!.state).toBe('verifying');
+
+    const reopened = openQueue();
+    expect(reopened.get(task.id)!.state).toBe('verifying');
+  });
+
+  it('在途核对期间同样拒绝第二实例打开，核对结束后才允许重开', async () => {
+    let release!: () => void;
+    const gate = new Promise<ReconcileResult>((resolve) => {
+      release = () => resolve({ finalState: 'unknown', errorCode: 'still_pending' });
+    });
+    const executor = vi.fn(async (): Promise<PublishAttemptOutcome> => ({ kind: 'unknown', errorCode: 'first_unknown' }));
+    const reconciler = vi.fn(() => gate);
+    const q1 = openQueue({ executor, reconciler });
+    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q1, 'douyin_alpha');
+
+    await q1.tick();
+    expect(q1.get(task.id)!.state).toBe('unknown_submission');
+
+    const tick2 = q1.tick();
+    expect(reconciler).toHaveBeenCalledTimes(1);
+    expectQueueError(() => openQueue(), 'store_in_use');
+
+    release();
+    await tick2;
+    expect(q1.get(task.id)!.state).toBe('unknown_submission');
+    const reopened = openQueue();
+    expect(reopened.get(task.id)!.state).toBe('unknown_submission');
+  });
+
+  it('已打开的陈旧第二实例在第一实例上传在途时 tick 失败关闭：不调用执行器、不改写较新磁盘字节', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor1 = vi.fn(async (input: PublishAttemptInput) => {
+      await gate;
+      return submitOk(`remote-${input.taskId}`);
+    });
+    const executor2 = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-dup-${input.taskId}`));
+    const q1 = openQueue({ executor: executor1 });
+    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const task = taskOf(q1, 'douyin_alpha');
+    // q2 在入队后、领取前打开：快照中任务仍是 queued，若放行将造成同一任务双发。
+    const q2 = openQueue({ executor: executor2 });
+    expect(q2.get(task.id)!.state).toBe('queued');
+
+    const tick1 = q1.tick();
+    expect(executor1).toHaveBeenCalledTimes(1);
+    const inFlightBytes = readFileSync(storePath, 'utf-8');
+    expect(readStore().tasks[0]!.state).toBe('uploading');
+
+    // 陈旧实例的 tick 必须在写盘与调用执行器之前失败关闭，磁盘保持首实例的较新字节。
+    await expect(q2.tick()).rejects.toMatchObject({ code: 'store_changed_externally' });
+    expect(executor2).not.toHaveBeenCalled();
+    expect(readFileSync(storePath, 'utf-8')).toBe(inFlightBytes);
+    const untouched = q1.get(task.id)!;
+    expect(untouched.state).toBe('uploading');
+    expect(untouched.leaseUntil).toBe(START + 600_000);
+
+    release();
+    await tick1;
+    expect(executor1).toHaveBeenCalledTimes(1);
+    expect(q1.get(task.id)!.state).toBe('verifying');
+    expect(readStore().tasks[0]!.state).toBe('verifying');
+  });
+
+  it('两个已打开的空闲实例：陈旧实例在写盘前失败，磁盘字节不变', () => {
+    const q1 = openQueue();
+    const q2 = openQueue();
+    q1.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const afterQ1 = readFileSync(storePath, 'utf-8');
+    expect(q2.list()).toHaveLength(0);
+
+    expectQueueError(
+      () =>
+        q2.enqueueMatrix(
+          matrix({ videoVariantId: 'variant-2', accounts: [{ accountId: 'douyin_beta', platform: 'douyin' }] }),
+        ),
+      'store_changed_externally',
+    );
+    expect(readFileSync(storePath, 'utf-8')).toBe(afterQ1);
+    expect(q1.list()).toHaveLength(1);
+    expect(q2.list()).toHaveLength(0);
+
+    const q3 = openQueue();
+    q3.enqueueMatrix(matrix({ videoVariantId: 'variant-3', accounts: [{ accountId: 'kuaishou_gamma', platform: 'kuaishou' }] }));
+    const afterQ3 = readFileSync(storePath, 'utf-8');
+    expectQueueError(
+      () =>
+        q1.enqueueMatrix(
+          matrix({ videoVariantId: 'variant-4', accounts: [{ accountId: 'xiaohongshu_delta', platform: 'xiaohongshu' }] }),
+        ),
+      'store_changed_externally',
+    );
+    expect(readFileSync(storePath, 'utf-8')).toBe(afterQ3);
+    expect(q3.list()).toHaveLength(2);
+    expect(q1.list()).toHaveLength(1);
   });
 });
 
@@ -1062,6 +1268,26 @@ describe('持久化健壮性', () => {
 
     expect(readStore().tasks).toHaveLength(1);
     expect(readFileSync(residualPath, 'utf-8')).toBe('residual from prior process');
+  });
+
+  it('store 不可读（目录 / 读取竞态）时构造 fail closed：类型化读取错误且不回显原始文件系统文本', () => {
+    mkdirSync(storePath, { recursive: true });
+    let caught: unknown;
+    try {
+      openQueue();
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(DurableQueueError);
+    const err = caught as DurableQueueError;
+    expect(err.code).toBe('store_read_failed');
+    expect(err.message).toBe('发布队列存储不可读，已拒绝按空存储加载且未改动原文件');
+    expect(err.detail).toBeUndefined();
+    // 不回显原始文件系统错误文本（EISDIR / EPERM / 完整路径都可能泄露环境信息）。
+    expect(err.message).not.toContain('EISDIR');
+    expect(err.message).not.toContain(storePath);
+    // fail closed：没有实例被构造，也没有把不可读内容当成全新的空存储或向目录写入任何内容。
+    expect(readdirSync(storePath)).toEqual([]);
   });
 
   it('坏 JSON 与未来 schema 显式拒绝，且不清空旧任务', () => {

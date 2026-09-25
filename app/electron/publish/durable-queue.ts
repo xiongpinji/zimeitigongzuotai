@@ -6,11 +6,16 @@
  * - 原子写盘（同目录临时文件 + fsync + rename），坏 JSON / 未来 schema / 非法任务
  *   一律显式拒绝且不清空旧任务；
  * - 调度：单账号互斥（硬保证）、全局 / 设备 / 平台预算、计划时间、取消、退避；
- * - 崩溃恢复：重启时把 uploading 任务转为 unknown_submission，只核对不重发；
+ * - 崩溃恢复：重启后未到期 leasing 的 uploading 保持原样，租约到期由 tick 转
+ *   unknown_submission，只核对不重发；
+ * - 同进程实例隔离：同一 store 有在途提交 / 核对的实例时拒绝打开；每个实例写盘前
+ *   核验磁盘字节指纹，外部改写后拒绝用陈旧快照整库覆盖；
  * - 未知提交必须先经注入的 reconcile 得到远端 ID / 最终状态，或人工解决。
  *
  * 边界：
  * - 只依赖注入的 clock / executor / reconciler，不调用任何真实平台或云端；
+ * - 指纹核验只覆盖同一 Node / Electron main 进程，不是跨进程原子 CAS：两个 OS 进程
+ *   仍可能读到同一旧字节后竞态 rename。跨进程安全、系统级单实例锁与远端幂等未验证。
  * - 队列只驱动已授权的普通视频任务：commerceRequest 非空时 fail closed
  *   （落库为 needs_user_action 并禁止提交），绝不静默降级为普通发布；
  * - 不读写 Cookie / Token / 存储态；executor 输入只含引用与安全元数据；
@@ -33,7 +38,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   COMMERCE_KINDS,
   PRODUCTION_PLATFORMS,
@@ -288,7 +293,10 @@ export type DurableQueueErrorCode =
   | 'task_not_found'
   | 'invalid_transition'
   | 'commerce_blocked'
-  | 'store_write_failed';
+  | 'store_read_failed'
+  | 'store_write_failed'
+  | 'store_in_use'
+  | 'store_changed_externally';
 
 export class DurableQueueError extends Error {
   readonly code: DurableQueueErrorCode;
@@ -370,6 +378,30 @@ function sanitizeSafeCode(value: string | undefined, fallback: string): string {
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * 同进程活动注册表：按规范化 store 路径统计在途提交 / 核对。
+ * 只约束同一 Node 进程；跨进程竞态不在此守卫范围内（见文件头边界说明）。
+ */
+const activeStoreOperations = new Map<string, number>();
+
+function normalizeStorePath(storePath: string): string {
+  const resolved = resolve(storePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function beginStoreOperation(normalizedStorePath: string): void {
+  activeStoreOperations.set(normalizedStorePath, (activeStoreOperations.get(normalizedStorePath) ?? 0) + 1);
+}
+
+function endStoreOperation(normalizedStorePath: string): void {
+  const count = activeStoreOperations.get(normalizedStorePath) ?? 0;
+  if (count <= 1) {
+    activeStoreOperations.delete(normalizedStorePath);
+    return;
+  }
+  activeStoreOperations.set(normalizedStorePath, count - 1);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -652,12 +684,15 @@ export class DurablePublishQueue {
   readonly retryPolicy: ResolvedQueueRetryPolicy;
 
   private readonly storePath: string;
+  private readonly normalizedStorePath: string;
   private readonly executor: PublishExecutor;
   private readonly reconciler: RemoteReconciler;
   private readonly clock: () => number;
   private readonly running = new Map<string, RunningEntry>();
   private tickInFlight: Promise<QueueTickReport> | null = null;
   private file: DurableQueueFileV1;
+  /** 本实例最近一次读 / 写盘得到的字节指纹；null 表示当时文件不存在。 */
+  private expectedStoreDigest: string | null = null;
 
   constructor(options: DurableQueueOptions) {
     if (!isNonEmptyString(options.storePath)) {
@@ -667,6 +702,13 @@ export class DurablePublishQueue {
       throw new DurableQueueError('invalid_task_input', 'executor 与 reconciler 必须为函数');
     }
     this.storePath = options.storePath;
+    this.normalizedStorePath = normalizeStorePath(options.storePath);
+    if ((activeStoreOperations.get(this.normalizedStorePath) ?? 0) > 0) {
+      throw new DurableQueueError(
+        'store_in_use',
+        '同一 store 已有实例正在执行提交或核对，拒绝并发打开新实例',
+      );
+    }
     this.executor = options.executor;
     this.reconciler = options.reconciler;
     this.clock = options.clock ?? Date.now;
@@ -984,6 +1026,7 @@ export class DurablePublishQueue {
         kind: 'submit',
         controller: entry.controller,
       });
+      beginStoreOperation(this.normalizedStorePath);
       work.push(this.runSubmission(entry.task, entry.controller));
     }
     for (const entry of reconciliations) {
@@ -993,6 +1036,7 @@ export class DurablePublishQueue {
         kind: 'reconcile',
         controller: entry.controller,
       });
+      beginStoreOperation(this.normalizedStorePath);
       work.push(this.runReconciliation(entry.task, entry.controller));
     }
     const settled = await Promise.allSettled(work);
@@ -1002,48 +1046,56 @@ export class DurablePublishQueue {
   }
 
   private async runSubmission(task: DurablePublishTaskV1, controller: AbortController): Promise<void> {
-    let outcome: PublishAttemptOutcome;
     try {
-      outcome = await this.executor({
-        taskId: task.id,
-        accountId: task.accountId,
-        platform: task.platform,
-        videoVariantId: task.videoVariantId,
-        idempotencyKey: task.idempotencyKey,
-        videoRef: task.videoRef,
-        metadata: cloneMetadata(task.metadata),
-        attempt: task.attempt,
-        signal: controller.signal,
-      });
-    } catch {
-      // 适配器抛异常时无法判断远端是否已受理，保守按未知提交处理。
-      outcome = { kind: 'unknown', errorCode: 'executor_threw' };
+      let outcome: PublishAttemptOutcome;
+      try {
+        outcome = await this.executor({
+          taskId: task.id,
+          accountId: task.accountId,
+          platform: task.platform,
+          videoVariantId: task.videoVariantId,
+          idempotencyKey: task.idempotencyKey,
+          videoRef: task.videoRef,
+          metadata: cloneMetadata(task.metadata),
+          attempt: task.attempt,
+          signal: controller.signal,
+        });
+      } catch {
+        // 适配器抛异常时无法判断远端是否已受理，保守按未知提交处理。
+        outcome = { kind: 'unknown', errorCode: 'executor_threw' };
+      }
+      this.running.delete(task.id);
+      this.applyAttemptOutcome(task.id, outcome);
+    } finally {
+      endStoreOperation(this.normalizedStorePath);
     }
-    this.running.delete(task.id);
-    this.applyAttemptOutcome(task.id, outcome);
   }
 
   private async runReconciliation(task: DurablePublishTaskV1, controller: AbortController): Promise<void> {
-    let result: ReconcileResult | null = null;
     try {
-      result = await this.reconciler({
-        taskId: task.id,
-        accountId: task.accountId,
-        platform: task.platform,
-        videoVariantId: task.videoVariantId,
-        videoRef: task.videoRef,
-        remoteResult: task.remoteResult ? { ...task.remoteResult } : null,
-        reconcileAttempt: task.reconcileAttempts + 1,
-        signal: controller.signal,
-      });
-    } catch {
-      result = null;
-    }
-    this.running.delete(task.id);
-    if (result) {
-      this.applyReconcileResult(task.id, result);
-    } else {
-      this.recordReconcileInconclusive(task.id, 'reconcile_threw');
+      let result: ReconcileResult | null = null;
+      try {
+        result = await this.reconciler({
+          taskId: task.id,
+          accountId: task.accountId,
+          platform: task.platform,
+          videoVariantId: task.videoVariantId,
+          videoRef: task.videoRef,
+          remoteResult: task.remoteResult ? { ...task.remoteResult } : null,
+          reconcileAttempt: task.reconcileAttempts + 1,
+          signal: controller.signal,
+        });
+      } catch {
+        result = null;
+      }
+      this.running.delete(task.id);
+      if (result) {
+        this.applyReconcileResult(task.id, result);
+      } else {
+        this.recordReconcileInconclusive(task.id, 'reconcile_threw');
+      }
+    } finally {
+      endStoreOperation(this.normalizedStorePath);
     }
   }
 
@@ -1394,10 +1446,21 @@ export class DurablePublishQueue {
 
   private load(): DurableQueueFileV1 {
     if (!existsSync(this.storePath)) {
+      this.expectedStoreDigest = null;
       const at = this.clock();
       return { schemaVersion: DURABLE_QUEUE_SCHEMA_VERSION, updatedAt: at, tasks: [] };
     }
-    const loaded = parsePersistedStore(readFileSync(this.storePath, 'utf-8'));
+    let raw: string;
+    try {
+      raw = readFileSync(this.storePath, 'utf-8');
+    } catch {
+      throw new DurableQueueError(
+        'store_read_failed',
+        '发布队列存储不可读，已拒绝按空存储加载且未改动原文件',
+      );
+    }
+    const loaded = parsePersistedStore(raw);
+    this.expectedStoreDigest = sha256Hex(raw);
     const at = this.clock();
     const draft = structuredClone(loaded);
     let recovered = false;
@@ -1413,17 +1476,9 @@ export class DurablePublishQueue {
         task.nextAttemptAt = null;
         task.nextReconcileAt = null;
         recovered = true;
-        continue;
       }
-      // 进程在提交执行中退出：磁盘上的 uploading 不能当作失败或成功，必须先核对。
-      if (task.state === 'uploading') {
-        this.transition(task, 'unknown_submission', {
-          at,
-          errorCode: 'recovered_uploading_restart',
-        });
-        task.nextReconcileAt = at;
-        recovered = true;
-      }
+      // uploading 不在加载时改写：真实重启必须等租约到期后由 tick 转 unknown_submission，
+      // 打开新实例不得抹掉其他实例尚未结束的租约或领取快照。
     }
     if (recovered) {
       draft.updatedAt = at;
@@ -1431,6 +1486,33 @@ export class DurablePublishQueue {
       return draft;
     }
     return loaded;
+  }
+
+  /**
+   * 写盘前核验磁盘字节与上一次读写是否一致：外部实例改写后拒绝用陈旧快照整库覆盖。
+   * 这是同进程守卫，不是跨进程原子 CAS（见文件头边界说明）。
+   */
+  private assertStoreUnchanged(): void {
+    let actual: string | null;
+    if (!existsSync(this.storePath)) {
+      actual = null;
+    } else {
+      try {
+        actual = sha256Hex(readFileSync(this.storePath, 'utf-8'));
+      } catch (err) {
+        throw new DurableQueueError(
+          'store_write_failed',
+          '发布队列存储当前不可读，拒绝继续写入',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    if (actual !== this.expectedStoreDigest) {
+      throw new DurableQueueError(
+        'store_changed_externally',
+        '发布队列存储已被其他实例改写，拒绝用陈旧快照整库覆盖',
+      );
+    }
   }
 
   private requireTask(taskId: string): DurablePublishTaskV1 {
@@ -1466,6 +1548,7 @@ export class DurablePublishQueue {
   }
 
   private mutate<T>(fn: (draft: DurableQueueFileV1) => T): T {
+    this.assertStoreUnchanged();
     const draft = structuredClone(this.file);
     const result = fn(draft);
     draft.updatedAt = this.clock();
@@ -1479,16 +1562,18 @@ export class DurablePublishQueue {
     const dir = dirname(this.storePath);
     mkdirSync(dir, { recursive: true });
     const tmpPath = `${this.storePath}.tmp-${process.pid}-${randomUUID()}`;
+    const payload = `${JSON.stringify(file, null, 2)}\n`;
     let fd: number | null = null;
     let ownedTmp = false;
     try {
       fd = openSync(tmpPath, 'wx');
       ownedTmp = true;
-      writeFileSync(fd, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
+      writeFileSync(fd, payload, 'utf-8');
       fsyncSync(fd);
       closeSync(fd);
       fd = null;
       renameSync(tmpPath, this.storePath);
+      this.expectedStoreDigest = sha256Hex(payload);
     } catch (err) {
       if (fd !== null) {
         try {
