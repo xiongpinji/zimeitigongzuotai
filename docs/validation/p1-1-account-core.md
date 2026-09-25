@@ -4,14 +4,16 @@
 本文档只覆盖**账号核心模块本身**；P1-1 整体（IPC、平台接线、真实账号登录 /
 过期探针 / 重登 / 删除的端到端验证）**未在本 job 完成，也不因本 job 宣称完成**。
 
-2026-09-25 复审修复：以主库 `841763d` 为输入，Qwen 路由在时限内写出失败测试与部分实现，但任务超时；Codex 接续补完、审查并在项目 Vitest 2.1.9 下复测 **56/56 通过**。新增测试先有 17 项失败，覆盖迁移中断残留、加密不可用分类、临时明文删除重试和原子写故障；Codex 再补“密文丢失时旧 registry 条目不可剔除”。`tsc --noEmit` 仍只有既有 Remotion `width` 参数错误，待 P0-1 发行分支合入统一复测。该证据仍只属于离线账号核心。
+2026-09-25 复审修复：以主库 `841763d` 为输入，Qwen 路由在时限内写出失败测试与部分实现，但任务超时；Codex 接续补完、审查并在项目 Vitest 2.1.9 下复测 **56/56 通过**。新增测试先有 17 项失败，覆盖迁移中断残留、加密不可用分类、临时明文删除重试和原子写故障；Codex 再补“密文丢失时旧 registry 条目不可剔除”。P0-1 发行修复合入后，主库 `tsc --noEmit` 已通过。该证据仍只属于离线账号核心。
+
+2026-09-25 GLM 第二轮只读复审指出：崩溃遗留的旧明文若随后发生会话轮换、账号删除或加密不可用，逐字节核验可能永久失效，而原报告静默。Codex 用 4 项失败测试先定位，再增加 `retainedResiduals` 报告；本轮账号核心 **58/58 通过**，`tsc --noEmit` 通过。无法核验的文件继续保留，必须人工处置，不能声称已自动清理。
 
 ## 证据分级（按根 AGENTS.md）
 
 | 层级 | 状态 |
 | --- | --- |
 | 源码可见 | ✅ `app/electron/publish/accounts-v2.ts`、`app/electron/publish/session-cipher-electron.ts`、`app/tests/publish/accounts-v2.test.ts` |
-| 自动化测试通过 | ✅ 初版 35/35；本轮 Codex 在共享依赖的独立工作树运行项目 Vitest 2.1.9，56/56 通过。完整 `tsc --noEmit` 仅剩上游 `render-video-headless.ts` 的 `width` 旧错误，已由 P0-1 打包分支修复，待合并后统一复测。 |
+| 自动化测试通过 | ✅ 初版 35/35；第一轮修复 56/56；本轮主库项目 Vitest 2.1.9 **58/58**、`tsc --noEmit` 通过。 |
 | 真实账号验证 | ❌ 未发生。本 job 不读取真实用户账号目录 / Cookie，不做平台登录或发布。 |
 | 平台最终状态验证 | ❌ 未发生。 |
 
@@ -23,7 +25,7 @@ npm exec vitest run tests/publish/accounts-v2.test.ts
 npm exec vitest run tests/publish/accounts.test.ts tests/publish/account-id.test.ts
 ```
 
-实际退出码：账号核心初版 **0**（35/35），本轮复审修复 **0**（56/56）。一起运行的旧 `accounts.test.ts` 有 1 项 Windows 路径分隔符断言失败（测试硬编码 `/`，并非本模块回归）；`account-id.test.ts` 3/3 通过。
+实际退出码：账号核心初版 **0**（35/35），第一轮复审修复 **0**（56/56），本轮旧明文残留报告修复 **0**（58/58）。一起运行的旧 `accounts.test.ts` 有 1 项 Windows 路径分隔符断言失败（测试硬编码 `/`，并非本模块回归）；`account-id.test.ts` 3/3 通过。
 
 Codex 审查时新增 3 项先失败后修复的边界测试：损坏 `sessionRef` 不得跳出会话目录、非法 `storageState` 不得落库、旧账号名中的路径分隔符不得触发越界迁移。`AccountVaultError.cause` 只保留安全的系统错误码，不暴露原始异常文本。
 
@@ -75,7 +77,7 @@ fail-closed 行为；单元/边界测试使用测试内假加密器（`FakeCiphe
 ### 迁移语义（`migrateFromLegacy`）
 
 - 逐条迁移旧 `AccountStore` 数据目录：新 UUID 账号 + 明文 storageState 加密入新仓；
-  原子重写旧 registry 剔除已消费条目后，**仅在新密文可再次解密且与旧明文逐字节一致时才删除旧明文**。中断于两步之间时，下次显式迁移会续清理。
+  原子重写旧 registry 剔除已消费条目后，**仅在新密文可再次解密且与旧明文逐字节一致时才删除旧明文**。中断于两步之间、旧密文尚未轮换或删除且加密可用时，下次显式迁移可续清理。
 - fail closed：加密不可用且存在待迁移明文 → 整体抛 `cipher_unavailable`，不触碰旧数据。
 - 单条失败（读取 / 加密 / 核验）记入 `report.failed` 并**完整保留该条旧数据**，
   不阻断其他条目；失败原因只记机器可读码，不含会话内容。
@@ -83,13 +85,14 @@ fail-closed 行为；单元/边界测试使用测试内假加密器（`FakeCiphe
 - 幂等：新账号带 `migratedFrom` 溯源标记；崩溃后重跑对已迁移条目
   `already_migrated` 跳过，并继续完成旧 registry / 旧明文的清理。只有 marker 属于同平台唯一账号、路径未越界、密文存在且与旧明文逐字节相同时才删残留；密文缺失、失配或加密服务不可用时保留旧明文。
 - 旧 registry 损坏显式抛 `legacy_registry_corrupt`，不做任何迁移；旧 registry
-  不存在时仍会扫描**已知 marker 对应**的残留文件并做同样核验，无可恢复项时报告为空。
+  不存在时仍会扫描**已知 marker 对应**的残留文件并做同样核验。清理后扫描四平台旧 JSON 文件；无法核验但仍存在的文件通过 `report.retainedResiduals` 逐项列出（含已删除账号留下的无 marker 文件），不自动删除。旧目录无法扫描时抛 `legacy_scan_failed`，不返回虚假的空报告。
 
 ## 风险与限制
 
 - **短时明文窗口**：`withDecryptedStorageState` 期间明文 storageState 存在于独立
   临时目录（0600、`finally` 清理）。进程崩溃可能遗留临时目录，位于 OS tmp，
   由系统清理策略兜底；正常退出的 EPERM/EBUSY 已有有界重试，耗尽会报错但仍可能遗留文件。后续接线时应确保平台适配器不将该路径写入日志。
+- **旧明文残留**：若会话轮换、账号删除或 cipher 不可用使旧副本无法逐字节核验，旧文件会保留并列在 `retainedResiduals`；该报告不是自动清理。接线时必须把报告展示给用户并制定有证据的人工清理流程，不能静默忽略。
 - **未接线**：本模块没有被任何 IPC、runner、platforms、UI 引用；`accounts.ts` /
   `account-id.ts` / `ipc.ts` / `runner.ts` / 契约 / 锁文件均未改动。旧发布链路行为
   不变（仍走明文 `platform_accountName.json`），直到 Codex 完成适配层接线。

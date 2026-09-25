@@ -702,6 +702,7 @@ describe('AccountVault：旧 registry 显式迁移', () => {
       skipped: [],
       failed: [],
       recovered: [],
+      retainedResiduals: [],
     });
   });
 
@@ -883,6 +884,41 @@ describe('AccountVault：崩溃恢复的旧明文核验清理（边界修复）'
       storageStateFixture('locked'),
     );
     expect(second.recovered).toHaveLength(0);
+    expect(second.retainedResiduals).toEqual([
+      { legacyId: 'tencent_锁密钥', accountId: ctx.vault.listAccounts()[0].id, reason: 'cannot_verify' },
+    ]);
+  });
+
+  it('旧会话轮换后仍报告无法核验的旧明文，不把它静默当作已清理', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '轮换号', status: 'valid', storageState: storageStateFixture('before') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    const accountId = first.migrated[0].accountId;
+    writeFileSync(residualPath(legacyRoot, 'douyin_轮换号'), storageStateFixture('before'));
+    ctx.vault.saveStorageState(accountId, storageStateFixture('after'));
+
+    const report = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(report.recovered).toHaveLength(0);
+    expect(report.retainedResiduals).toEqual([
+      { legacyId: 'douyin_轮换号', accountId, reason: 'cannot_verify' },
+    ]);
+    expect(readFileSync(residualPath(legacyRoot, 'douyin_轮换号'), 'utf-8')).toBe(storageStateFixture('before'));
+  });
+
+  it('已迁移账号删除后仍报告无 marker 的旧明文，不能静默丢失清理线索', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'kuaishou', accountName: '已删除号', status: 'valid', storageState: storageStateFixture('before') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    writeFileSync(residualPath(legacyRoot, 'kuaishou_已删除号'), storageStateFixture('before'));
+    ctx.vault.removeAccount(first.migrated[0].accountId);
+
+    const report = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(report.retainedResiduals).toEqual([
+      { legacyId: 'kuaishou_已删除号', accountId: null, reason: 'untracked' },
+    ]);
+    expect(existsSync(residualPath(legacyRoot, 'kuaishou_已删除号'))).toBe(true);
   });
 
   it('fail closed：sessionRef 为 null 的账号（无会话迁移）不因 marker 存在而删除残留旧明文', () => {

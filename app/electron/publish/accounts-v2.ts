@@ -35,6 +35,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -128,7 +129,8 @@ export type AccountVaultErrorCode =
   | 'cipher_unavailable'
   | 'temp_cleanup_failed'
   | 'legacy_registry_corrupt'
-  | 'legacy_registry_write_failed';
+  | 'legacy_registry_write_failed'
+  | 'legacy_scan_failed';
 
 export interface AccountVaultErrorOptions {
   accountId?: string;
@@ -185,6 +187,15 @@ export interface LegacyMigrationReport {
    * 的记录。不含本轮新迁移的条目（它们已在 migrated / migratedWithoutSession）。
    */
   recovered: LegacyMigrationResult[];
+  /**
+   * 迁移调用结束后仍在旧 accounts 目录中的四平台明文文件。此列表仅用于提示
+   * 人工处置；无法核验旧密文副本时绝不自动删除。旧账号已删除也会列出文件名。
+   */
+  retainedResiduals: Array<{
+    legacyId: string;
+    accountId: string | null;
+    reason: 'cannot_verify' | 'untracked';
+  }>;
 }
 
 export interface AccountVaultDeps {
@@ -537,6 +548,7 @@ export class AccountVault {
       skipped: [],
       failed: [],
       recovered: [],
+      retainedResiduals: [],
     };
     const legacyRegistryPath = join(legacyRoot, 'registry.json');
     if (!existsSync(legacyRegistryPath)) {
@@ -764,6 +776,37 @@ export class AccountVault {
       } catch {
         // 保留旧明文供下一次迁移重试；不能仅凭 marker 报告已清理。
       }
+    }
+
+    // 清理后的残留也必须可见。会话轮换、账号删除或 cipher 不可用时，旧明文
+    // 不能再通过当前密文核验；保守保留文件，并把线索交给调用者人工处置。
+    const accountsRoot = resolve(legacyRoot, 'accounts');
+    let filenames: string[];
+    try {
+      filenames = readdirSync(accountsRoot);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new AccountVaultError(
+        'legacy_scan_failed',
+        'failed to scan legacy account session files',
+        { cause: err },
+      );
+    }
+    for (const filename of filenames) {
+      if (!filename.endsWith('.json')) continue;
+      const legacyId = filename.slice(0, -'.json'.length);
+      const platform = ACCOUNT_VAULT_PLATFORMS.find((value) =>
+        legacyId.startsWith(`${value}_`) && legacyId.length > value.length + 1,
+      );
+      if (!platform) continue;
+      const matches = accounts.filter(
+        (account) => account.platform === platform && account.migratedFrom === legacyId,
+      );
+      report.retainedResiduals.push({
+        legacyId,
+        accountId: matches.length === 1 ? matches[0].id : null,
+        reason: matches.length === 1 ? 'cannot_verify' : 'untracked',
+      });
     }
   }
 
