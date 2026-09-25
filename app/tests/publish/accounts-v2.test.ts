@@ -6,9 +6,50 @@ import {
   AccountVault,
   AccountVaultError,
   SESSION_FILE_EXT,
+  type AccountVaultDeps,
   type SessionCipher,
 } from '../../electron/publish/accounts-v2';
 import { createSafeStorageCipher } from '../../electron/publish/session-cipher-electron';
+
+// ─── node:fs 观测 / 故障注入 ──────────────────────────────────────────────────
+// 透传真实实现，只额外记录 fsync / rename 的调用顺序（验证 rename 前 fsync），
+// 并可按需注入一次性错误码（验证失败时原文件不被清空、tmp 被清理）。
+const fsHooks = vi.hoisted(() => ({
+  order: [] as string[],
+  failFsyncCode: null as string | null,
+  failRenameCode: null as string | null,
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const injected = (code: string, op: string): NodeJS.ErrnoException => {
+    const err = new Error(`INJECTED-${op}-FAILURE-RAW-TEXT`) as NodeJS.ErrnoException;
+    err.code = code;
+    return err;
+  };
+  return {
+    ...actual,
+    fsyncSync: (fd: number) => {
+      fsHooks.order.push('fsync');
+      if (fsHooks.failFsyncCode) throw injected(fsHooks.failFsyncCode, 'fsync');
+      return actual.fsyncSync(fd);
+    },
+    renameSync: (
+      from: Parameters<typeof actual.renameSync>[0],
+      to: Parameters<typeof actual.renameSync>[1],
+    ) => {
+      fsHooks.order.push('rename');
+      if (fsHooks.failRenameCode) throw injected(fsHooks.failRenameCode, 'rename');
+      return actual.renameSync(from, to);
+    },
+  };
+});
+
+beforeEach(() => {
+  fsHooks.order.length = 0;
+  fsHooks.failFsyncCode = null;
+  fsHooks.failRenameCode = null;
+});
 
 // ⚠️ 测试专用假加密器：只做可逆编码，没有任何安全性。
 // 仅用于验证 AccountVault 的边界行为（fail closed、原子写、迁移核验），
@@ -48,7 +89,7 @@ function storageStateFixture(tag: string): string {
   });
 }
 
-function makeVault(nowStart = 1_700_000_000_000) {
+function makeVault(nowStart = 1_700_000_000_000, extraDeps: AccountVaultDeps = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accounts-v2-'));
   const tmpBase = mkdtempSync(join(tmpdir(), 'accounts-v2-tmp-'));
   const cipher = new FakeCipher();
@@ -56,6 +97,7 @@ function makeVault(nowStart = 1_700_000_000_000) {
   const vault = new AccountVault(root, cipher, {
     now: () => clock,
     tmpBaseDir: tmpBase,
+    ...extraDeps,
   });
   return {
     root,
@@ -654,7 +696,13 @@ describe('AccountVault：旧 registry 显式迁移', () => {
   it('旧 registry 不存在：返回空报告，不抛错', () => {
     const emptyRoot = mkdtempSync(join(tmpdir(), 'legacy-empty-'));
     const report = ctx.vault.migrateFromLegacy(emptyRoot);
-    expect(report).toEqual({ migrated: [], migratedWithoutSession: [], skipped: [], failed: [] });
+    expect(report).toEqual({
+      migrated: [],
+      migratedWithoutSession: [],
+      skipped: [],
+      failed: [],
+      recovered: [],
+    });
   });
 
   it('单条失败不阻断其他条目迁移', () => {
@@ -679,6 +727,462 @@ describe('AccountVault：旧 registry 显式迁移', () => {
     expect(readFileSync(join(legacyRoot, 'accounts', 'kuaishou_bad.json'), 'utf-8')).toBe(storageStateFixture('bad'));
     // 成功条目的旧明文已删
     expect(existsSync(join(legacyRoot, 'accounts', 'douyin_good.json'))).toBe(false);
+  });
+});
+
+// ─── GLM 复审边界修复（P1-1 account-repair，输入 SHA 841763d） ─────────────────
+
+describe('AccountVault：崩溃恢复的旧明文核验清理（边界修复）', () => {
+  let ctx: ReturnType<typeof makeVault>;
+  beforeEach(() => {
+    ctx = makeVault();
+  });
+
+  function residualPath(legacyRoot: string, legacyId: string): string {
+    return join(legacyRoot, 'accounts', `${legacyId}.json`);
+  }
+
+  it('崩溃续清理：旧 registry 条目已剔除但明文残留，重跑经新密文逐字节核验后才删除', async () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '崩溃号', status: 'valid', storageState: storageStateFixture('crash') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(first.migrated).toHaveLength(1);
+    const accountId = first.migrated[0].accountId;
+    expect(legacyRegistryEntries(legacyRoot)).toHaveLength(0);
+
+    // 模拟崩溃：registry 重写已完成（条目已剔除），但旧明文删除前进程退出
+    writeFileSync(residualPath(legacyRoot, 'douyin_崩溃号'), storageStateFixture('crash'));
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(existsSync(residualPath(legacyRoot, 'douyin_崩溃号'))).toBe(false);
+    expect(second.recovered).toEqual([{ legacyId: 'douyin_崩溃号', accountId }]);
+    expect(second.migrated).toHaveLength(0);
+    // 不产生重复账号
+    expect(ctx.vault.listAccounts()).toHaveLength(1);
+
+    // 新仓会话不受影响，仍可解密回读
+    let content = '';
+    await ctx.vault.withDecryptedStorageState(accountId, (p) => {
+      content = readFileSync(p, 'utf-8');
+    });
+    expect(content).toBe(storageStateFixture('crash'));
+  });
+
+  it('崩溃续清理：旧 registry 文件整体缺失时仍执行恢复清理', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'kuaishou', accountName: '丢表号', status: 'valid', storageState: storageStateFixture('lostreg') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(first.migrated).toHaveLength(1);
+    rmSync(join(legacyRoot, 'registry.json'));
+    writeFileSync(residualPath(legacyRoot, 'kuaishou_丢表号'), storageStateFixture('lostreg'));
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(existsSync(residualPath(legacyRoot, 'kuaishou_丢表号'))).toBe(false);
+    expect(second.recovered).toEqual([
+      { legacyId: 'kuaishou_丢表号', accountId: first.migrated[0].accountId },
+    ]);
+    expect(ctx.vault.listAccounts()).toHaveLength(1);
+  });
+
+  it('崩溃续清理：旧 registry 条目残留（already_migrated）且明文残留时，核验后才删除并计入 recovered', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '重跑号', status: 'valid', storageState: storageStateFixture('rerun') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(first.migrated).toHaveLength(1);
+
+    // 模拟崩溃在任何清理之前：条目塞回旧 registry，明文也恢复
+    writeFileSync(
+      join(legacyRoot, 'registry.json'),
+      JSON.stringify([{ platform: 'douyin', accountName: '重跑号', status: 'valid' }]),
+    );
+    writeFileSync(residualPath(legacyRoot, 'douyin_重跑号'), storageStateFixture('rerun'));
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(second.skipped).toEqual([{ legacyId: 'douyin_重跑号', reason: 'already_migrated' }]);
+    expect(existsSync(residualPath(legacyRoot, 'douyin_重跑号'))).toBe(false);
+    expect(second.recovered).toEqual([
+      { legacyId: 'douyin_重跑号', accountId: first.migrated[0].accountId },
+    ]);
+    expect(legacyRegistryEntries(legacyRoot)).toHaveLength(0);
+  });
+
+  it('fail closed：新仓密文文件缺失时绝不删除残留旧明文', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '丢密文', status: 'valid', storageState: storageStateFixture('nospher') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    const acc = ctx.vault.getAccount(first.migrated[0].accountId);
+    rmSync(join(ctx.root, 'sessions', `${acc.sessionRef}${SESSION_FILE_EXT}`)); // 模拟密文丢失
+    writeFileSync(residualPath(legacyRoot, 'douyin_丢密文'), storageStateFixture('nospher'));
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(readFileSync(residualPath(legacyRoot, 'douyin_丢密文'), 'utf-8')).toBe(
+      storageStateFixture('nospher'),
+    );
+    expect(second.recovered).toHaveLength(0);
+  });
+
+  it('旧 registry 条目仍在而新密文丢失时，不剔除旧条目也不删除旧明文', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '保留旧表', status: 'valid', storageState: storageStateFixture('keep-legacy') },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    const acc = ctx.vault.getAccount(first.migrated[0].accountId);
+    rmSync(join(ctx.root, 'sessions', `${acc.sessionRef}${SESSION_FILE_EXT}`));
+    writeFileSync(
+      join(legacyRoot, 'registry.json'),
+      JSON.stringify([{ platform: 'douyin', accountName: '保留旧表', status: 'valid' }]),
+    );
+    writeFileSync(residualPath(legacyRoot, 'douyin_保留旧表'), storageStateFixture('keep-legacy'));
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(second.skipped).toEqual([{ legacyId: 'douyin_保留旧表', reason: 'already_migrated' }]);
+    expect(second.recovered).toHaveLength(0);
+    expect(legacyRegistryEntries(legacyRoot)).toHaveLength(1);
+    expect(readFileSync(residualPath(legacyRoot, 'douyin_保留旧表'), 'utf-8')).toBe(
+      storageStateFixture('keep-legacy'),
+    );
+  });
+
+  it('fail closed：残留旧明文与新密文内容不一致（篡改/过期）时绝不删除', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'douyin', accountName: '不匹配', status: 'valid', storageState: storageStateFixture('match-a') },
+    ]);
+    ctx.vault.migrateFromLegacy(legacyRoot);
+    writeFileSync(
+      residualPath(legacyRoot, 'douyin_不匹配'),
+      storageStateFixture('match-B-different'),
+    );
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(readFileSync(residualPath(legacyRoot, 'douyin_不匹配'), 'utf-8')).toBe(
+      storageStateFixture('match-B-different'),
+    );
+    expect(second.recovered).toHaveLength(0);
+  });
+
+  it('fail closed：加密子系统不可用（无法核验）时绝不删除残留旧明文', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'tencent', accountName: '锁密钥', status: 'valid', storageState: storageStateFixture('locked') },
+    ]);
+    ctx.vault.migrateFromLegacy(legacyRoot);
+    writeFileSync(residualPath(legacyRoot, 'tencent_锁密钥'), storageStateFixture('locked'));
+    ctx.cipher.available = false;
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(readFileSync(residualPath(legacyRoot, 'tencent_锁密钥'), 'utf-8')).toBe(
+      storageStateFixture('locked'),
+    );
+    expect(second.recovered).toHaveLength(0);
+  });
+
+  it('fail closed：sessionRef 为 null 的账号（无会话迁移）不因 marker 存在而删除残留旧明文', () => {
+    const legacyRoot = seedLegacyRoot([
+      { platform: 'xiaohongshu', accountName: '无会话', status: 'unknown' },
+    ]);
+    const first = ctx.vault.migrateFromLegacy(legacyRoot);
+    expect(first.migratedWithoutSession).toHaveLength(1);
+    // 迁移后旧明文“重新出现”：新仓没有已核验副本，必须保留
+    writeFileSync(
+      residualPath(legacyRoot, 'xiaohongshu_无会话'),
+      storageStateFixture('reappeared'),
+    );
+
+    const second = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(readFileSync(residualPath(legacyRoot, 'xiaohongshu_无会话'), 'utf-8')).toBe(
+      storageStateFixture('reappeared'),
+    );
+    expect(second.recovered).toHaveLength(0);
+  });
+
+  it('marker 含路径穿越时不读取、不删除旧目录之外的文件', () => {
+    const legacyRoot = seedLegacyRoot([]);
+    const canary = join(legacyRoot, 'evil.json'); // accounts/../evil.json 的落点
+    writeFileSync(canary, 'CANARY');
+
+    // 构造被篡改的新仓 marker '../evil'，并配一份解密结果恰好等于 CANARY 的密文，
+    // 证明阻止删除的是路径边界校验，而不是内容不匹配。
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '越界标记' });
+    const ref = `s1-${'ab'.repeat(16)}`;
+    writeFileSync(
+      join(ctx.root, 'sessions', `${ref}${SESSION_FILE_EXT}`),
+      ctx.cipher.encrypt(Buffer.from('CANARY', 'utf-8')),
+    );
+    const registry = JSON.parse(ctx.registryText());
+    registry.accounts[0].migratedFrom = '../evil';
+    registry.accounts[0].sessionRef = ref;
+    writeFileSync(join(ctx.root, 'registry.json'), JSON.stringify(registry, null, 2));
+
+    const report = ctx.vault.migrateFromLegacy(legacyRoot);
+
+    expect(readFileSync(canary, 'utf-8')).toBe('CANARY');
+    expect(report.recovered).toHaveLength(0);
+    // registry 本身不被清理逻辑改写
+    expect(ctx.vault.getAccount(acc.id).migratedFrom).toBe('../evil');
+  });
+});
+
+describe('AccountVault：加密不可用的错误分类（边界修复）', () => {
+  let ctx: ReturnType<typeof makeVault>;
+  beforeEach(() => {
+    ctx = makeVault();
+  });
+
+  it('保存后加密子系统不可用：解密入口抛 cipher_unavailable，不误报 session_decrypt_failed', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '钥匙串被锁' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('cipherdown'));
+    ctx.cipher.available = false;
+
+    let caught: unknown;
+    try {
+      await ctx.vault.withDecryptedStorageState(acc.id, async () => undefined);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    expect((caught as AccountVaultError).code).toBe('cipher_unavailable');
+    expect((caught as Error).message).not.toContain(SECRET_COOKIE_VALUE);
+    // 不应生成任何临时明文目录
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('cipher.decrypt 抛 cipher_unavailable（可用性竞态）：分类保持，不被包装为 session_decrypt_failed', async () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '竞态解密' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('race-dec'));
+    ctx.cipher.decrypt = (): Buffer => {
+      throw new AccountVaultError('cipher_unavailable', 'safeStorage went down mid-call');
+    };
+
+    await expect(
+      ctx.vault.withDecryptedStorageState(acc.id, async () => undefined),
+    ).rejects.toMatchObject({ code: 'cipher_unavailable' });
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('cipher.encrypt 抛 cipher_unavailable（可用性竞态）：saveStorageState 分类保持，不误报 session_encrypt_failed', () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '竞态加密' });
+    ctx.cipher.encrypt = (): Buffer => {
+      throw new AccountVaultError('cipher_unavailable', 'safeStorage went down mid-call');
+    };
+
+    expectVaultError(
+      () => ctx.vault.saveStorageState(acc.id, storageStateFixture('race-enc')),
+      'cipher_unavailable',
+    );
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
+  });
+
+  it('回读核验期 cipher_unavailable：不误报 session_verify_failed，未核验密文被清理', () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '核验期竞态' });
+    // 加密成功，但回读解密（核验）时加密子系统失效
+    ctx.cipher.decrypt = (): Buffer => {
+      throw new AccountVaultError('cipher_unavailable', 'safeStorage went down during verify');
+    };
+
+    expectVaultError(
+      () => ctx.vault.saveStorageState(acc.id, storageStateFixture('race-verify')),
+      'cipher_unavailable',
+    );
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
+  });
+});
+
+describe('AccountVault：临时明文目录删除的有界重试（边界修复）', () => {
+  function errnoError(message: string, code = 'EBUSY'): NodeJS.ErrnoException {
+    const err = new Error(message) as NodeJS.ErrnoException;
+    err.code = code;
+    return err;
+  }
+
+  it('首次 EBUSY 后重试成功：回调结果正常返回，目录被清理', async () => {
+    let calls = 0;
+    const ctx = makeVault(1_700_000_000_000, {
+      removeDirSync: (dir) => {
+        calls += 1;
+        if (calls === 1) throw errnoError('INJECTED-RAW-TEXT resource busy or locked');
+        rmSync(dir, { recursive: true, force: true });
+      },
+    });
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '重试清理' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('retry-ok'));
+
+    let seenDir = '';
+    const result = await ctx.vault.withDecryptedStorageState(acc.id, (p) => {
+      seenDir = dirname(p);
+      return 'ok';
+    });
+
+    expect(result).toBe('ok');
+    expect(calls).toBe(2);
+    expect(existsSync(seenDir)).toBe(false);
+    expect(readdirSync(ctx.tmpBase)).toHaveLength(0);
+  });
+
+  it('重试耗尽：回调成功也显式抛 temp_cleanup_failed，不静默返回成功，错误不含路径/Cookie/原始异常文本', async () => {
+    const attempted: string[] = [];
+    const ctx = makeVault(1_700_000_000_000, {
+      removeDirSync: (dir) => {
+        attempted.push(dir);
+        throw errnoError(`RAW-SYSTEM-DETAIL cookie=${SECRET_COOKIE_VALUE}`);
+      },
+    });
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '清理耗尽' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('retry-exhaust'));
+
+    let seenDir = '';
+    let caught: unknown;
+    try {
+      await ctx.vault.withDecryptedStorageState(acc.id, (p) => {
+        seenDir = dirname(p);
+        return 'ok';
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    const vaultErr = caught as AccountVaultError;
+    expect(vaultErr.code).toBe('temp_cleanup_failed');
+    expect(vaultErr.accountId).toBe(acc.id);
+    // 有界重试：不无限放大，也不止尝试一次
+    expect(attempted.length).toBe(5);
+    // 错误信息不含 Cookie、临时明文路径与原始异常文本；cause 只保留安全系统错误码
+    expect(vaultErr.message).not.toContain(SECRET_COOKIE_VALUE);
+    expect(vaultErr.message).not.toContain(seenDir);
+    expect(vaultErr.message).not.toContain('RAW-SYSTEM-DETAIL');
+    expect(vaultErr.cause).toEqual({ code: 'EBUSY' });
+
+    rmSync(seenDir, { recursive: true, force: true }); // 清理测试产物
+  });
+
+  it('不可重试错误（EACCES）：立即显式报告 temp_cleanup_failed，不做无谓退避', async () => {
+    let calls = 0;
+    const ctx = makeVault(1_700_000_000_000, {
+      removeDirSync: () => {
+        calls += 1;
+        throw errnoError('INJECTED permission denied', 'EACCES');
+      },
+    });
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '不可重试' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('nonretryable'));
+
+    await expect(
+      ctx.vault.withDecryptedStorageState(acc.id, async () => 'ok'),
+    ).rejects.toMatchObject({ code: 'temp_cleanup_failed' });
+    expect(calls).toBe(1);
+    rmSync(ctx.tmpBase, { recursive: true, force: true }); // 清理测试产物（含残留临时目录）
+  });
+
+  it('回调抛错且清理耗尽：残留明文清理失败优先显式上报（fail closed）', async () => {
+    const ctx = makeVault(1_700_000_000_000, {
+      removeDirSync: () => {
+        throw errnoError('INJECTED still busy');
+      },
+    });
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '双重失败' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('double-fail'));
+
+    await expect(
+      ctx.vault.withDecryptedStorageState(acc.id, () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toMatchObject({ code: 'temp_cleanup_failed' });
+    rmSync(ctx.tmpBase, { recursive: true, force: true });
+  });
+});
+
+describe('AccountVault：原子写持久性 fsync 先于 rename（边界修复）', () => {
+  let ctx: ReturnType<typeof makeVault>;
+  beforeEach(() => {
+    ctx = makeVault();
+  });
+
+  function tmpLeftovers(): string[] {
+    return [
+      ...readdirSync(ctx.root).filter((n) => n.includes('.tmp-')),
+      ...ctx.sessionsDirEntries().filter((n) => n.includes('.tmp-')),
+    ];
+  }
+
+  it('registry 与密文写入都在 rename 前对 tmp 文件 fsync', () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '持久性' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('fsync-order'));
+
+    // 每次原子写产生一对 fsync→rename，且 fsync 必须先于 rename
+    expect(fsHooks.order.length).toBeGreaterThanOrEqual(2);
+    expect(fsHooks.order.length % 2).toBe(0);
+    for (let i = 0; i < fsHooks.order.length; i += 2) {
+      expect(fsHooks.order[i]).toBe('fsync');
+      expect(fsHooks.order[i + 1]).toBe('rename');
+    }
+  });
+
+  it('fsync 失败：显式报错，原 registry 不被清空且内容不变，无 tmp 残留', () => {
+    const acc = ctx.vault.createAccount({ platform: 'douyin', displayName: '刷盘失败' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('fsync-fail'));
+    const registryBefore = ctx.registryText();
+
+    fsHooks.failFsyncCode = 'EIO';
+    expectVaultError(() => ctx.vault.updateStatusFromProbe(acc.id, false), 'registry_write_failed');
+    fsHooks.failFsyncCode = null;
+
+    expect(ctx.registryText()).toBe(registryBefore); // 原文件完好，未被清空
+    expect(tmpLeftovers()).toHaveLength(0);
+    // 状态仍是写入前的值
+    expect(ctx.vault.listAccounts()[0].status).toBe('valid');
+  });
+
+  it('rename 失败：显式报错，原 registry 不被清空，tmp 清理，错误不泄露原始异常文本', () => {
+    const acc = ctx.vault.createAccount({ platform: 'kuaishou', displayName: '改名失败' });
+    ctx.vault.saveStorageState(acc.id, storageStateFixture('rename-fail'));
+    const registryBefore = ctx.registryText();
+
+    fsHooks.failRenameCode = 'EACCES'; // 不可重试，立即失败
+    let caught: unknown;
+    try {
+      ctx.vault.createAccount({ platform: 'douyin', displayName: 'second' });
+    } catch (err) {
+      caught = err;
+    }
+    fsHooks.failRenameCode = null;
+
+    expect(caught).toBeInstanceOf(AccountVaultError);
+    expect((caught as AccountVaultError).code).toBe('registry_write_failed');
+    expect((caught as Error).message).not.toContain('INJECTED-rename-FAILURE-RAW-TEXT');
+    expect((caught as AccountVaultError).cause).toEqual({ code: 'EACCES' });
+    expect(ctx.registryText()).toBe(registryBefore);
+    expect(tmpLeftovers()).toHaveLength(0);
+    expect(ctx.vault.listAccounts()).toHaveLength(1);
+    expect(ctx.vault.listAccounts()[0].id).toBe(acc.id);
+  });
+
+  it('密文写入 fsync 失败：报 session_verify_failed，会话目录无半成品，registry 不更新', () => {
+    const acc = ctx.vault.createAccount({ platform: 'tencent', displayName: '密文刷盘' });
+    const registryBefore = ctx.registryText();
+
+    fsHooks.failFsyncCode = 'EIO';
+    expectVaultError(
+      () => ctx.vault.saveStorageState(acc.id, storageStateFixture('session-fsync-fail')),
+      'session_verify_failed',
+    );
+    fsHooks.failFsyncCode = null;
+
+    expect(ctx.sessionsDirEntries()).toHaveLength(0);
+    expect(tmpLeftovers()).toHaveLength(0);
+    expect(ctx.registryText()).toBe(registryBefore);
+    expect(ctx.vault.getAccount(acc.id).sessionRef).toBeNull();
   });
 });
 

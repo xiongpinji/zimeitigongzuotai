@@ -9,11 +9,17 @@
  *   Playwright storageState 内容一律不进 registry。
  * - 会话内容经注入的 SessionCipher 加密后写入 sessions/<sessionRef>.bin，
  *   sessionRef 为随机生成的不可预测引用（s1-<32 hex>），不含昵称或路径信息。
- * - 加密不可用时 fail closed：不存在任何明文回退路径。
- * - 所有磁盘写入原子替换（tmp + rename）；读取 / 解密失败显式抛
- *   AccountVaultError，绝不吞错后当作空账号。
+ * - 加密不可用时 fail closed：不存在任何明文回退路径；加密子系统不可用一律
+ *   分类为 cipher_unavailable，与密文损坏（session_decrypt_failed）严格区分。
+ * - 所有磁盘写入原子替换（tmp + fsync + rename）：rename 前对 tmp 文件 fsync，
+ *   降低异常退出造成的目标文件损坏风险；读取 /
+ *   解密失败显式抛 AccountVaultError，绝不吞错后当作空账号。
  * - 平台调用只能通过 withDecryptedStorageState 拿到**短时明文**：明文只存在
- *   于每次调用独立创建的临时目录，finally 中连同目录一并删除。
+ *   于每次调用独立创建的临时目录，回调结束（含抛错）后连同目录一并删除；
+ *   删除对 Windows 常见 EPERM/EBUSY 做有界退避重试，重试耗尽显式抛
+ *   temp_cleanup_failed，绝不静默当作成功。
+ * - 旧数据迁移崩溃后可安全续清理：只有新仓 marker 对应账号存在、密文文件
+ *   存在且解密结果与旧明文逐字节一致时才删除旧明文；任何核验失败一律保留。
  * - 错误与日志只包含 accountId / sessionRef / 错误码，不包含会话内容。
  *
  * 平台范围：阶段一仅抖音 / 快手 / 视频号（上游 tencent）/ 小红书；
@@ -22,16 +28,20 @@
  * 本模块不接 IPC、不做平台登录 / 发布；接线由后续任务完成。
  */
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { PublishPlatform } from './types';
 import { buildAccountId } from './account-id';
@@ -42,6 +52,14 @@ export const ACCOUNT_VAULT_SCHEMA_VERSION = 1;
 
 /** 加密会话文件扩展名；文件名为不可预测的 sessionRef。 */
 export const SESSION_FILE_EXT = '.bin';
+
+/**
+ * 临时明文目录删除的有界重试次数与退避基数（ms）。
+ * Windows 上杀毒 / 索引器 / 文件监听器可能短暂占用刚写入的明文文件
+ * （EPERM/EBUSY），一次失败就放弃会遗留明文；重试耗尽必须显式报错。
+ */
+const TEMP_DIR_REMOVE_ATTEMPTS = 5;
+const TEMP_DIR_REMOVE_BACKOFF_MS = 25;
 
 /** 阶段一账号核心支持的四平台（上游 tencent 即微信视频号）。 */
 export const ACCOUNT_VAULT_PLATFORMS: readonly PublishPlatform[] = [
@@ -108,6 +126,7 @@ export type AccountVaultErrorCode =
   | 'session_encrypt_failed'
   | 'session_verify_failed'
   | 'cipher_unavailable'
+  | 'temp_cleanup_failed'
   | 'legacy_registry_corrupt'
   | 'legacy_registry_write_failed';
 
@@ -160,6 +179,12 @@ export interface LegacyMigrationReport {
   migratedWithoutSession: LegacyMigrationResult[];
   skipped: LegacyMigrationSkip[];
   failed: LegacyMigrationFailure[];
+  /**
+   * 崩溃续清理：上次迁移在“旧 registry 已剔除条目（或整个文件缺失）”之后、
+   * 删除旧明文之前中断，本次重跑经新仓密文逐字节核验一致后删除残留旧明文
+   * 的记录。不含本轮新迁移的条目（它们已在 migrated / migratedWithoutSession）。
+   */
+  recovered: LegacyMigrationResult[];
 }
 
 export interface AccountVaultDeps {
@@ -169,6 +194,12 @@ export interface AccountVaultDeps {
   now?: () => number;
   /** 短时明文临时目录的基目录，默认 os.tmpdir()。 */
   tmpBaseDir?: string;
+  /**
+   * 临时明文目录的删除函数，默认 rmSync(recursive, force)。
+   * 仅作为故障注入测试点（模拟 Windows EPERM/EBUSY）；生产路径不得注入
+   * 弱化或删除该行为的实现，否则短时明文会失去清理保证。
+   */
+  removeDirSync?: (dir: string) => void;
 }
 
 interface RegistryFile {
@@ -201,14 +232,33 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * 原子写：先写同目录 tmp 文件再 rename。Windows 上目标被索引器 / 监听器
- * 短暂占用时（EPERM/EBUSY 等）做短退避重试，与 project-file.ts 的语义一致；
- * 重试耗尽或不可重试错误时清理 tmp 并抛出原始错误。
+ * 原子写：先写同目录 tmp 文件，**rename 前对 tmp 文件 fsync**；失败时保留
+ * 既有目标文件。掉电持久性还取决于文件系统及目录元数据提交，不能在这里保证。
+ * Windows 上目标被索引器 / 监听器短暂占用时（EPERM/EBUSY 等）做短退避重试，
+ * 与 project-file.ts 的语义一致；写入 / fsync / rename 失败一律清理 tmp 并
+ * 抛出原始错误（目标文件不被触碰）。有意不引入备份 / 回滚文件：崩溃时旧
+ * registry 指向的旧密文尚未删除，天然一致；孤儿密文 GC 留给后续任务。
  */
 function atomicWriteFileSync(targetPath: string, data: string | Buffer): void {
   mkdirSync(dirname(targetPath), { recursive: true });
   const tmpPath = `${targetPath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-  writeFileSync(tmpPath, data);
+  const fd = openSync(tmpPath, 'w');
+  let writeError: unknown;
+  try {
+    writeFileSync(fd, data);
+    fsyncSync(fd);
+  } catch (err) {
+    writeError = err;
+  }
+  try {
+    closeSync(fd);
+  } catch (err) {
+    writeError ??= err;
+  }
+  if (writeError) {
+    rmSync(tmpPath, { force: true });
+    throw writeError;
+  }
   let lastErr: unknown;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -239,6 +289,7 @@ export class AccountVault {
   private readonly tmpBaseDir: string;
   private readonly randomUUIDFn: () => string;
   private readonly nowFn: () => number;
+  private readonly removeDirSync: (dir: string) => void;
 
   // 显式字段赋值（不用 TS parameter properties），保持 Node type-stripping
   // 与 esbuild 等“仅擦除”工具链的兼容性。
@@ -250,6 +301,7 @@ export class AccountVault {
     this.tmpBaseDir = deps.tmpBaseDir ?? tmpdir();
     this.randomUUIDFn = deps.randomUUID ?? (() => randomUUID());
     this.nowFn = deps.now ?? (() => Date.now());
+    this.removeDirSync = deps.removeDirSync ?? ((dir) => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(this.sessionsDir, { recursive: true });
     mkdirSync(this.tmpBaseDir, { recursive: true });
   }
@@ -367,6 +419,7 @@ export class AccountVault {
     try {
       encrypted = this.cipher.encrypt(Buffer.from(storageStateJson, 'utf-8'));
     } catch (err) {
+      if (err instanceof AccountVaultError && err.code === 'cipher_unavailable') throw err;
       throw new AccountVaultError(
         'session_encrypt_failed',
         `failed to encrypt session for account ${accountId}`,
@@ -417,10 +470,16 @@ export class AccountVault {
         { accountId },
       );
     }
+    if (!this.cipher.isAvailable()) {
+      throw new AccountVaultError('cipher_unavailable', `session cipher unavailable for account ${accountId}`, {
+        accountId,
+      });
+    }
     let plaintext: Buffer;
     try {
       plaintext = this.cipher.decrypt(readFileSync(sessionPath));
     } catch (err) {
+      if (err instanceof AccountVaultError && err.code === 'cipher_unavailable') throw err;
       throw new AccountVaultError(
         'session_decrypt_failed',
         `failed to decrypt session for account ${accountId} (ref ${account.sessionRef})`,
@@ -434,7 +493,28 @@ export class AccountVault {
       writeFileSync(plaintextPath, plaintext, { mode: 0o600 });
       return await use(plaintextPath);
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
+      this.removeTempDir(accountId, tempDir);
+    }
+  }
+
+  private removeTempDir(accountId: string, tempDir: string): void {
+    for (let attempt = 0; attempt < TEMP_DIR_REMOVE_ATTEMPTS; attempt += 1) {
+      try {
+        this.removeDirSync(tempDir);
+        return;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        const retryable = code === 'EBUSY' || code === 'EPERM';
+        if (retryable && attempt + 1 < TEMP_DIR_REMOVE_ATTEMPTS) {
+          sleepSync(TEMP_DIR_REMOVE_BACKOFF_MS * (attempt + 1));
+          continue;
+        }
+        throw new AccountVaultError(
+          'temp_cleanup_failed',
+          `temporary session cleanup failed for account ${accountId}`,
+          { accountId, cause: err },
+        );
+      }
     }
   }
 
@@ -456,9 +536,13 @@ export class AccountVault {
       migratedWithoutSession: [],
       skipped: [],
       failed: [],
+      recovered: [],
     };
     const legacyRegistryPath = join(legacyRoot, 'registry.json');
-    if (!existsSync(legacyRegistryPath)) return report;
+    if (!existsSync(legacyRegistryPath)) {
+      this.cleanupVerifiedLegacyResiduals(legacyRoot, report, new Set());
+      return report;
+    }
 
     let rawEntries: unknown;
     try {
@@ -483,8 +567,9 @@ export class AccountVault {
     const legacyIdFor = (entry: LegacyRegistryEntry): string =>
       buildAccountId(entry.platform as PublishPlatform, entry.accountName);
 
+    const existingAccounts = this.readAccounts();
     const existingMarkers = new Set(
-      this.readAccounts()
+      existingAccounts
         .map((a) => a.migratedFrom)
         .filter((v): v is string => v != null),
     );
@@ -515,7 +600,15 @@ export class AccountVault {
       }
       if (existingMarkers.has(legacyId)) {
         report.skipped.push({ legacyId, reason: 'already_migrated' });
-        consumedLegacyIds.add(legacyId);
+        const matches = existingAccounts.filter(
+          (account) => account.migratedFrom === legacyId && account.platform === entry.platform,
+        );
+        const oldPath = legacyStatePathFor(legacyId);
+        if (matches.length === 1 && (
+          !existsSync(oldPath) || this.hasVerifiedLegacyCopy(legacyRoot, matches[0])
+        )) {
+          consumedLegacyIds.add(legacyId);
+        }
         continue;
       }
 
@@ -580,7 +673,10 @@ export class AccountVault {
       else report.migratedWithoutSession.push({ legacyId, accountId: account.id });
     }
 
-    if (consumedLegacyIds.size === 0) return report;
+    if (consumedLegacyIds.size === 0) {
+      this.cleanupVerifiedLegacyResiduals(legacyRoot, report, new Set());
+      return report;
+    }
 
     // 清理旧侧：原子重写旧 registry（剔除已消费条目），随后仅对
     // “新仓中确有已核验密文副本”的条目删除旧明文文件。
@@ -597,21 +693,78 @@ export class AccountVault {
       );
     }
 
-    const accountsByMarker = new Map(
-      this.readAccounts()
-        .filter((a) => a.migratedFrom != null)
-        .map((a) => [a.migratedFrom as string, a]),
+    this.cleanupVerifiedLegacyResiduals(
+      legacyRoot,
+      report,
+      new Set(report.migrated.map((item) => item.legacyId)),
     );
-    for (const legacyId of consumedLegacyIds) {
-      const account = accountsByMarker.get(legacyId);
-      const hasVerifiedCipherCopy =
-        account?.sessionRef != null && existsSync(this.sessionPathFor(account.sessionRef));
-      if (account && (hasVerifiedCipherCopy || account.sessionRef === null)) {
-        rmSync(legacyStatePathFor(legacyId), { force: true });
-      }
-    }
 
     return report;
+  }
+
+  private legacyResidualPath(legacyRoot: string, account: AccountV2): string | null {
+    const marker = account.migratedFrom;
+    const prefix = `${account.platform}_`;
+    if (!marker?.startsWith(prefix)) return null;
+    const accountName = marker.slice(prefix.length);
+    if (!accountName || /[\\/\0]/.test(accountName)) return null;
+    const accountsRoot = resolve(legacyRoot, 'accounts');
+    const candidate = resolve(accountsRoot, `${marker}.json`);
+    const candidateRelative = relative(accountsRoot, candidate);
+    if (!candidateRelative || candidateRelative.startsWith('..') || isAbsolute(candidateRelative)) {
+      return null;
+    }
+    if (!existsSync(candidate)) return candidate;
+    try {
+      const realRoot = realpathSync(accountsRoot);
+      const realCandidate = realpathSync(candidate);
+      const realRelative = relative(realRoot, realCandidate);
+      if (!realRelative || realRelative.startsWith('..') || isAbsolute(realRelative)) return null;
+    } catch {
+      return null;
+    }
+    return candidate;
+  }
+
+  private hasVerifiedLegacyCopy(legacyRoot: string, account: AccountV2): boolean {
+    const legacyPath = this.legacyResidualPath(legacyRoot, account);
+    if (!legacyPath || !existsSync(legacyPath) || !account.sessionRef || !this.cipher.isAvailable()) {
+      return false;
+    }
+    try {
+      const oldPlaintext = readFileSync(legacyPath);
+      const newPlaintext = this.cipher.decrypt(readFileSync(this.sessionPathFor(account.sessionRef)));
+      return oldPlaintext.equals(newPlaintext);
+    } catch {
+      return false;
+    }
+  }
+
+  private cleanupVerifiedLegacyResiduals(
+    legacyRoot: string,
+    report: LegacyMigrationReport,
+    migratedNow: ReadonlySet<string>,
+  ): void {
+    const accounts = this.readAccounts().filter((account) => account.migratedFrom !== null);
+    const markerCounts = new Map<string, number>();
+    for (const account of accounts) {
+      const marker = account.migratedFrom as string;
+      markerCounts.set(marker, (markerCounts.get(marker) ?? 0) + 1);
+    }
+    for (const account of accounts) {
+      const marker = account.migratedFrom as string;
+      if (markerCounts.get(marker) !== 1 || !this.hasVerifiedLegacyCopy(legacyRoot, account)) {
+        continue;
+      }
+      const oldPath = this.legacyResidualPath(legacyRoot, account);
+      if (!oldPath) continue;
+      try {
+        rmSync(oldPath, { force: true });
+        if (!migratedNow.has(marker)) report.recovered.push({ legacyId: marker, accountId: account.id });
+      } catch {
+        // 保留旧明文供下一次迁移重试；不能仅凭 marker 报告已清理。
+      }
+    }
   }
 
   // ── 内部实现 ────────────────────────────────────────────────────────────────
@@ -652,6 +805,7 @@ export class AccountVault {
       }
     } catch (err) {
       rmSync(sessionPath, { force: true });
+      if (err instanceof AccountVaultError && err.code === 'cipher_unavailable') throw err;
       throw new AccountVaultError(
         'session_verify_failed',
         `session write verification failed (${contextId})`,
