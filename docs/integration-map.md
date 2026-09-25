@@ -27,4 +27,17 @@
 
 `Recording/Asset → Highlight/CompositionPlan → VideoVariant → PublishJob → PlatformResult` 是唯一主链。CLI、MCP 和 Skill 只是调用形式：它们都通过版本化对象、任务 ID 和审计事件连接，不直接共享任意文件路径或账号 Cookie。桌面 UI 和 Agent 看到同一任务状态；高光、素材索引及渲染进程不拿发布会话；平台适配器不拿原始素材库全量权限。账号状态与本地队列始终由本项目管理。
 
+## 灵剪发布源码缺口（固定快照 `59a2fc9`）
+
+下表依据固定 SHA 的实现，而不是上游功能介绍。它决定哪些代码可以复用、哪些必须重做或加适配层；导入时需对当前上游重新核查。
+
+| 已见源码证据 | 对本项目的含义 |
+| --- | --- |
+| [`account-id.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/account-id.ts) 以 `platform + accountName` 组成 ID；[`accounts.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/accounts.ts) 将注册表和 Playwright `storageState` 保存为本地 JSON。 | 不能直接把昵称当永久主键或把 JSON 会话文件当加密仓。需内部 UUID、显示名与会话引用分离、账号名/导入路径校验、加密与迁移测试，并验证同平台账号互不覆盖。 |
+| [`runner.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/runner.ts) 以 `for ... await` 逐个目标上传；[`ipc.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/ipc.ts) 使用一个模块级 `cancelled` 标志。 | 现有一次多账号派发不等于跨账号并发，更不能承诺重启恢复。须以本项目持久任务队列取代串行派发和全局取消：每个 `PublishJob` 独立状态/取消、同账号互斥、跨账号按预算调度。 |
+| [`types.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/types.ts) 的一个 `PublishJob` 只有一个 `filePath`，目标只覆盖文案；`PlatformModule.uploadVideo` 返回 `Promise<void>`。 | “每账号选择不同视频版本”与“远端作品 ID/最终状态”需要新契约：任务固定 `videoVariantId`，平台适配器返回可核对的提交引用，并独立查询最终状态。页面点击成功或 `Promise<void>` 返回不能算发布验收。 |
+| [`engine.ts`](https://github.com/yoqu/lingji-cut/blob/59a2fc9f8bd00ca243b2b0d4c4e31b67eb6387d1/electron/publish/engine.ts) 每次上传启动一个 Chromium 进程/上下文。 | 并发度首先受本机 RAM、CPU、磁盘和网络约束，再受平台速率/权限约束。模拟 8 worker 是调度器容量目标；真实账号并发需资源准入、平台预算、动态降速和逐平台测量。 |
+
+产品运行时的 AI 推理费用与 Agent Orchestrator 的**开发 Credits 预算分开**。[HotClip Skill](https://github.com/xixihhhh/hotclip/blob/62aef3919fdd7d8a974f80a9b721e0177eb408c2/skills/hotclip/SKILL.md)要求为高光检测配置本地或云端 LLM 入口，首次端侧 ASR 可能下载约 1 GB 模型；使用云端入口时会向其发送转写文本，不能把“视频文件留在本机”误解为“内容完全不出本机”。语义匹配与多叙事规划也可能调用模型。接入前记录每条流程的模型来源、模型/依赖下载大小、每小时录屏的运行时间、上传数据范围和可计费调用上限；未经用户配置和启用，不应静默调用付费推理端点。第三方 Skill/MCP 包要固定版本并审查其可执行脚本和工具权限，不能仅凭 Skill 文本给予账号会话或任意文件访问权。
+
 每项第三方能力按四层证据标记：`upstream_claim`（上游说明）、`source_seen`（源码入口）、`local_tested`（本机可重复测试）、`real_platform_verified`（真实账号及平台最终状态）。上表至多证明前两层，不能从插件名、Skill 文本或可配置线程数推断生产可用性。组件接入前需记录固定 SHA、许可证、NOTICE、依赖和 Windows 运行验证；独立 AGPL 进程的分发方式需专门审查。
