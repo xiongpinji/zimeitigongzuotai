@@ -1,0 +1,187 @@
+@import "tailwindcss";
+
+/* Configure Tailwind v4 to use class-based dark mode */
+@variant dark (&:where(.dark, .dark *));
+
+/* ============================================
+   Darwin UI — Tailwind Bridge to tokens.css
+   ============================================
+   All color values come from tokens.css (macOS dark palette).
+   This file only bridges them into Tailwind's variable system.
+   ============================================ */
+
+:root {
+  /* Tailwind semantic colors — bridged from tokens.css */
+  --background: var(--color-window-bg);
+  --foreground: var(--color-text-primary);
+  --card: var(--color-panel-elevated);
+  --card-foreground: var(--color-text-primary);
+  --popover: var(--color-panel-elevated);
+  --popover-foreground: var(--color-text-primary);
+  --primary: var(--color-text-primary);
+  --primary-foreground: var(--color-window-bg);
+  --secondary: var(--color-control-bg);
+  --secondary-foreground: var(--color-text-primary);
+  --muted: var(--color-control-bg);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-control-bg);
+  --accent-foreground: var(--color-text-primary);
+  --destructive: var(--color-danger);
+  --destructive-foreground: var(--color-text-primary);
+  --border: var(--color-border-subtle);
+  --input: var(--color-border-control);
+  --ring: var(--color-selection-blue);
+
+  /* Radius */
+  --radius: 10px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+}
+
+/* Tailwind v4 theme configuration — direct color values, no hsl() wrapper */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* macOS system colors for direct use in Tailwind */
+  --color-mac-blue: #0A84FF;
+  --color-mac-blue-hover: #409CFF;
+  --color-mac-red: #FF453A;
+  --color-mac-green: #32D74B;
+  --color-mac-yellow: #FFD60A;
+  --color-mac-orange: #FF9F0A;
+  --color-mac-control: #3A3A3C;
+  --color-mac-elevated: #2C2C2E;
+  --color-mac-panel: #1E1E20;
+  --color-mac-separator: #38383A;
+  --color-mac-border: #48484A;
+  --color-mac-text-sec: #EBEBF599;
+  --color-mac-text-muted: #EBEBF54D;
+
+  --radius-lg: var(--radius-lg);
+  --radius-md: var(--radius-md);
+  --radius-sm: var(--radius-sm);
+}
+
+/* Base body styles */
+body {
+  @apply bg-background text-foreground antialiased;
+}
+
+/* Fix Tailwind v4's default border-color */
+*,
+::before,
+::after {
+  border-color: var(--border);
+}
+
+/* Smooth transitions on form elements */
+input, select, textarea {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* ============================================
+   Core Animations
+   ============================================ */
+
+@layer utilities {
+  .animate-modal-enter {
+    animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .animate-toast-enter {
+    animation: slideUpToast 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .animate-progress {
+    animation: progress linear forwards;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slideUpToast {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes progress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 运行中标题的流光效果（工具卡 op-card / 流式态标题复用）。 */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-mac-text-sec, rgba(235, 235, 245, 0.6)) 0%,
+    var(--color-foreground, #fff) 50%,
+    var(--color-mac-text-sec, rgba(235, 235, 245, 0.6)) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}

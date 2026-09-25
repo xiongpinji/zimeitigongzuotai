@@ -1,0 +1,39 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.labelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--color-text-secondary);
+}
+
+.required {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+.control {
+  min-width: 0;
+}
+
+.hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-normal);
+}
+
+.error {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  line-height: var(--line-height-normal);
+}

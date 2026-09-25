@@ -1,0 +1,36 @@
+{
+  "tts": {
+    "url": "https://api.minimaxi.com/v1/t2a_v2",
+    "trace_id": "0655b60270a52474ca1707228e56ce68",
+    "extra_info": {
+      "audio_length": 32705,
+      "audio_sample_rate": 44100,
+      "audio_size": 524839,
+      "bitrate": 128000,
+      "word_count": 157,
+      "invisible_character_ratio": 0,
+      "usage_characters": 291,
+      "audio_format": "mp3",
+      "audio_channel": 1
+    },
+    "base_resp": {
+      "status_code": 0,
+      "status_msg": "success"
+    }
+  },
+  "music": {
+    "url": "https://api.minimaxi.com/v1/music_generation",
+    "trace_id": "0655b6042bf1dbd661ef0a2723560cc3",
+    "extra_info": {
+      "music_duration": 158380,
+      "music_sample_rate": 44100,
+      "music_channel": 2,
+      "bitrate": 128000,
+      "music_size": 2535643
+    },
+    "base_resp": {
+      "status_code": 0,
+      "status_msg": "success"
+    }
+  }
+}

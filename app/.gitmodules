@@ -1,0 +1,3 @@
+[submodule "lingji-cut-homepage"]
+	path = lingji-cut-homepage
+	url = git@github.com:yoqu/lingji-cut-homepage.git

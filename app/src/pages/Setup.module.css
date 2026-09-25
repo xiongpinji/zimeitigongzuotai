@@ -1,0 +1,396 @@
+.page {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--color-window-bg);
+  overflow: hidden;
+}
+
+.welcomeContent {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Hero Banner ── */
+
+.heroBanner {
+  position: relative;
+  height: 140px;
+  margin: var(--space-8) var(--space-8) 0 var(--space-8);
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.heroBannerImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 40%;
+}
+
+.heroBannerOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.15) 0%,
+    rgba(0, 0, 0, 0.35) 100%
+  );
+}
+
+.projectBadge {
+  position: absolute;
+  top: 14px;
+  left: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  color: color-mix(in srgb, var(--color-text-primary) 85%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  z-index: 2;
+}
+
+.donateBadge {
+  position: absolute;
+  top: 14px;
+  right: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: none;
+  color: color-mix(in srgb, var(--color-text-primary) 85%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  z-index: 3;
+  transition: background-color var(--motion-fast);
+}
+
+.donateBadge:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 22%, transparent);
+}
+
+.createButton {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5) 28px;
+  background: color-mix(in srgb, var(--color-text-primary) 15%, transparent);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 20%, transparent);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.createButton:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-primary) 35%, transparent);
+}
+
+.createButton:active {
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+
+/* ── 快捷功能行 ── */
+
+.quickBar {
+  display: flex;
+  gap: 24px;
+  padding: 20px 20px var(--space-8);
+  flex-shrink: 0;
+}
+
+.quickItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.quickItemIcon {
+  width: 56px;
+  height: 56px;
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-control-bg);
+  border-radius: var(--radius-2xl);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--color-text-primary) 80%, transparent);
+  transition: border-color var(--motion-fast), background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.quickItem:hover .quickItemIcon {
+  border-color: var(--color-system-blue);
+  background: color-mix(in srgb, var(--color-panel-elevated) 85%, var(--color-text-primary));
+  color: var(--color-system-blue);
+}
+
+.quickItemLabel {
+  color: var(--color-text-secondary-strong);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+}
+
+/* ── 本地草稿 ── */
+
+/* 工作区两栏容器：占满剩余高度，左右各自独立滚动。 */
+.workspaceRow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  padding: 0 20px 20px;
+  overflow: hidden;
+}
+
+.draftsSection {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: var(--space-2);
+}
+
+/* ── 导入弹窗内部样式 ── */
+
+.dirPickerButton {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) 14px;
+  background: var(--color-panel-elevated);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-xl);
+  color: color-mix(in srgb, var(--color-text-primary) 80%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+  text-align: left;
+}
+
+.dirPickerButton:hover {
+  border-color: var(--color-system-blue);
+  background: color-mix(in srgb, var(--color-panel-elevated) 85%, var(--color-text-primary));
+}
+
+.dirPickerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dirPickerText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scanResults {
+  margin-top: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scanGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scanGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.scanIconOk {
+  color: var(--color-success);
+}
+
+.scanIconWarn {
+  color: var(--color-brand-warm);
+}
+
+.scanGroupTitle {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text-primary) 80%, transparent);
+}
+
+.scanGroupCount {
+  font-weight: 400;
+  color: var(--color-text-secondary-strong);
+  margin-left: var(--space-2);
+}
+
+.scanFileList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: 20px;
+}
+
+.scanFileName {
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scanEmpty {
+  padding-left: 20px;
+  font-size: var(--font-size-md);
+  color: var(--color-text-muted);
+}
+
+/* ── 抖音导入弹窗样式 ── */
+
+.douyinUrlRow {
+  display: flex;
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.douyinResultCard {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  margin-top: 14px;
+  padding: var(--space-6) 14px;
+  background: var(--color-bg-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
+  border-radius: var(--radius-xl);
+}
+
+.douyinResultIcon {
+  color: var(--color-success);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.douyinResultBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.douyinResultLabel {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary-strong);
+  font-weight: 500;
+}
+
+.douyinResultTitle {
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.douyinProjectPath {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-bg-info);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinIcon {
+  animation: spin 1s linear infinite;
+}
+
+.supportBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  flex-shrink: 0;
+  margin: 0 20px 20px;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+
+.supportBarText {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  color: color-mix(in srgb, var(--color-text-primary) 60%, transparent);
+}
+
+.supportBarActions {
+  display: inline-flex;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.supportBarButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 15%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+
+.supportBarButton:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 14%, transparent);
+}

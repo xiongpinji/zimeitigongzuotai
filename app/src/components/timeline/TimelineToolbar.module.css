@@ -1,0 +1,115 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--space-4);
+  gap: var(--space-2);
+  background: var(--color-panel-bg);
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-panel-elevated);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btnActive {
+  background: color-mix(in srgb, var(--color-system-blue) 15%, transparent);
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-system-blue) 40%, transparent);
+}
+
+.btnActive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-system-blue) 22%, transparent);
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-system-blue) 50%, transparent);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.zoomResetLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.zoomControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoomPercentWrap {
+  position: relative;
+}
+
+.zoomMenu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  min-width: 84px;
+  padding: 4px;
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-md);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+}
+
+.zoomMenuItem {
+  padding: 4px 8px;
+  text-align: left;
+  background: transparent;
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.zoomMenuItem:hover {
+  background: var(--color-panel-bg);
+}

@@ -1,0 +1,464 @@
+.root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr) 76px;
+  background: var(--color-panel-bg);
+}
+
+/* ── Header ── */
+.header {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-separator);
+  background: var(--color-panel-bg);
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.resolutionPill {
+  gap: 4px;
+  background: var(--color-control-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.resolutionPill:hover {
+  background: var(--color-border-strong);
+}
+
+/* ── Stage ── */
+.stageArea {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-preview-bg);
+}
+
+.stageFrame {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  overflow: hidden;
+  background: var(--color-preview-bg);
+  border: 1px solid var(--color-separator);
+  position: relative;
+}
+
+.player {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--color-preview-bg);
+}
+
+/* ── Footer ── */
+.footer {
+  height: 76px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 16px 0;
+  border-top: 1px solid var(--color-separator);
+  background: var(--color-panel-bg);
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+/* 进度条 */
+.progressTrack {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+  flex-shrink: 0;
+}
+
+.progressTrack::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--color-control-bg);
+  transition: height 120ms ease;
+}
+
+.progressTrack:hover::before,
+.progressTrack:focus-visible::before {
+  height: 5px;
+}
+
+.progressFilled {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--color-system-blue);
+  pointer-events: none;
+  transition: height 120ms ease;
+}
+
+.progressTrack:hover .progressFilled,
+.progressTrack:focus-visible .progressFilled {
+  height: 5px;
+}
+
+.progressThumb {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 120ms ease;
+  pointer-events: none;
+}
+
+.progressTrack:hover .progressThumb,
+.progressTrack:focus-visible .progressThumb,
+.progressTrack:active .progressThumb {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 进度条悬浮时间提示 */
+.progressHoverTooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-separator);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.28),
+    0 2px 4px rgba(0, 0, 0, 0.18);
+  z-index: 5;
+}
+
+.progressHoverTooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  margin-top: -3px;
+  background: var(--color-panel-elevated);
+  border-right: 1px solid var(--color-separator);
+  border-bottom: 1px solid var(--color-separator);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+/* 控件行 */
+.footerRow {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 0;
+}
+
+/* 左段 — 音量 + 时间 */
+.footerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.volumeButton {
+  width: 24px;
+  height: 24px;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.volumeButton:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+
+.volumeIcon {
+  color: inherit;
+  flex-shrink: 0;
+}
+
+/* 音量悬浮 popover */
+.volumePopoverWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.volumePopover {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -2px);
+  padding-bottom: 8px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
+  z-index: 10;
+}
+
+.volumePopoverWrap:hover .volumePopover,
+.volumePopoverWrap:focus-within .volumePopover {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.volumePopoverCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 12px;
+  min-width: 32px;
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.volumePopoverValue {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* 音量滑块 — 纯 div 构建的竖向轨道 */
+.volumeSlider {
+  position: relative;
+  width: 14px;
+  height: 88px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: transparent;
+}
+
+.volumeSlider:focus {
+  outline: none;
+}
+
+.volumeSliderTrack {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--color-control-bg);
+  pointer-events: none;
+}
+
+.volumeSliderFilled {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--color-system-blue);
+  pointer-events: none;
+}
+
+.volumeSliderThumb {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-primary);
+  transform: translate(-50%, 50%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+  transition:
+    width 120ms ease,
+    height 120ms ease;
+}
+
+.volumeSlider:hover .volumeSliderThumb,
+.volumeSlider:active .volumeSliderThumb,
+.volumeSlider:focus-visible .volumeSliderThumb {
+  width: 12px;
+  height: 12px;
+}
+
+.timeCurrentLabel {
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.timeSeparator {
+  font-size: var(--font-size-md);
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+.timeTotalLabel {
+  font-size: var(--font-size-md);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+/* 中段 — 播放控件 */
+.footerCenter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.skipButton {
+  width: 32px;
+  height: 32px;
+  color: var(--color-text-primary);
+  border-radius: var(--radius-lg);
+  transition:
+    background var(--motion-fast, 120ms),
+    color var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.skipButton:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+}
+
+.skipButton:active {
+  transform: scale(0.9);
+}
+
+.playButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-primary);
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.1);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 80ms ease;
+}
+
+.playButton:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 94%, var(--color-panel-bg));
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.18);
+}
+
+.playButton:active {
+  transform: scale(0.95);
+}
+
+.playIcon {
+  color: var(--color-preview-bg);
+}
+
+/* 右段 — 辅助控件 */
+.footerRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.speedButton {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1;
+  border-radius: var(--radius-md);
+  transition:
+    background var(--motion-fast, 120ms),
+    color var(--motion-fast, 120ms);
+}
+
+.speedButton:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+
+.auxButton {
+  width: 32px;
+  height: 32px;
+  color: var(--color-text-primary);
+  border-radius: var(--radius-lg);
+  transition:
+    background var(--motion-fast, 120ms),
+    color var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.auxButton:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+}
+
+.auxButton:active {
+  transform: scale(0.9);
+}
+
+/* 全屏模式 */
+.root:fullscreen {
+  border-radius: 0;
+  width: 100vw;
+  height: 100vh;
+  grid-template-rows: 40px minmax(0, 1fr) 76px;
+}

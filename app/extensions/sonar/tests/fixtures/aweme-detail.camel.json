@@ -1,0 +1,29 @@
+{
+  "statusCode": 0,
+  "awemeDetail": {
+    "awemeId": "7300000000000000009",
+    "desc": "驼峰命名变体",
+    "createTime": 1718009999,
+    "author": {
+      "uid": "100000009",
+      "secUid": "MS4wLjABAAAAtestsecuid0009",
+      "nickname": "驼峰博主",
+      "followerCount": 999,
+      "awemeCount": 9
+    },
+    "statistics": {
+      "diggCount": 11,
+      "commentCount": 2
+    },
+    "video": {
+      "duration": 12000,
+      "cover": { "urlList": ["https://p3.douyinpic.com/aweme/cover9.jpeg"] },
+      "playAddr": {
+        "uri": "v0300fake0009",
+        "urlList": ["https://v3-web.douyinvod.com/fake/play9.mp4?sign=REDACTED"],
+        "width": 720,
+        "height": 1280
+      }
+    }
+  }
+}

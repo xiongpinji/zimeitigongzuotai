@@ -1,0 +1,149 @@
+"use client";
+
+import React from "react";
+import { cn } from "../lib/utils";
+import { Skeleton } from "./skeleton";
+
+interface TableProps {
+	children: React.ReactNode;
+	/** Enable frosted glass effect on header */
+	glass?: boolean;
+}
+
+interface TableContextValue {
+	glass: boolean;
+}
+
+const TableContext = React.createContext<TableContextValue>({ glass: false });
+
+export function Table({ children, glass = false }: TableProps) {
+	return (
+		<TableContext.Provider value={{ glass }}>
+			<div className="w-full border border-mac-separator rounded-(--radius-lg,0.75rem) overflow-x-auto md:overflow-visible">
+				<table className="w-full text-sm text-foreground">{children}</table>
+			</div>
+		</TableContext.Provider>
+	);
+}
+
+export function TableHead({ children }: { children: React.ReactNode }) {
+	const { glass } = React.useContext(TableContext);
+	return (
+		<thead
+			className={cn(
+				glass
+					? "bg-mac-elevated backdrop-blur-sm"
+					: "bg-mac-control"
+			)}
+		>
+			{children}
+		</thead>
+	);
+}
+
+export function TableBody({ children }: { children: React.ReactNode }) {
+	return <tbody>{children}</tbody>;
+}
+
+type TdProps = React.TdHTMLAttributes<HTMLTableCellElement> & {
+	children: React.ReactNode;
+	className?: string;
+};
+
+export function TableCell({ children, className = "", ...props }: TdProps) {
+	return (
+		<td className={`px-4 py-2 align-middle ${className}`} {...props}>
+			{children}
+		</td>
+	);
+}
+
+type ThProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
+	children: React.ReactNode;
+	className?: string;
+};
+
+export function TableHeaderCell({
+	children,
+	className = "",
+	...props
+}: ThProps) {
+	return (
+		<th
+			scope="col"
+			className={`px-4 py-2 text-left align-middle font-medium text-mac-text-sec ${className}`}
+			{...props}
+		>
+			{children}
+		</th>
+	);
+}
+
+export function TableRow({
+	children,
+	className = "",
+	fadeIn = false,
+}: {
+	children: React.ReactNode;
+	className?: string;
+	fadeIn?: boolean;
+}) {
+	const [visible, setVisible] = React.useState(!fadeIn);
+	React.useEffect(() => {
+		if (fadeIn) {
+			const id = requestAnimationFrame(() => setVisible(true));
+			return () => cancelAnimationFrame(id);
+		}
+	}, [fadeIn]);
+
+	return (
+		<tr
+			className={`border-b border-mac-separator transition-opacity duration-300 ${className}`}
+			style={{ opacity: visible ? 1 : 0 }}
+		>
+			{children}
+		</tr>
+	);
+}
+
+export function TableEmptyRow({
+	colSpan,
+	children,
+}: {
+	colSpan: number;
+	children: React.ReactNode;
+}) {
+	return (
+		<tr>
+			<td colSpan={colSpan} className="px-8 py-4 text-center">
+				<div className="flex flex-col items-center justify-center space-y-3">
+					{children}
+				</div>
+			</td>
+		</tr>
+	);
+}
+
+export function TableLoadingRows({
+	rows = 3,
+	colSkeletons,
+}: {
+	rows?: number;
+	colSkeletons: string[];
+}) {
+	const rowIds = Array.from({ length: rows }, (_, index) => `loading-${index}`);
+
+	return (
+		<>
+			{rowIds.map((rowId) => (
+				<TableRow key={rowId}>
+					{colSkeletons.map((cls) => (
+						<TableCell key={`${rowId}-${cls}`}>
+							<Skeleton className={cls} />
+						</TableCell>
+					))}
+				</TableRow>
+			))}
+		</>
+	);
+}

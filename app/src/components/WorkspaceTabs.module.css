@@ -1,0 +1,86 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 16px;
+  gap: 2px;
+  background: var(--color-panel-bg);
+  border-bottom: 1px solid var(--color-separator);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    background var(--motion-fast);
+  white-space: nowrap;
+}
+
+.tab:hover:not(.active) {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tab.active {
+  color: var(--color-text-primary);
+}
+
+.tabBg {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 0;
+}
+
+.tabUnderline {
+  position: absolute;
+  bottom: -3px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--color-brand-accent);
+  z-index: 0;
+}
+
+.tabContent {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.icon > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.separator {
+  width: 1px;
+  height: 14px;
+  margin: 0 4px;
+  background: var(--color-separator);
+  flex-shrink: 0;
+}

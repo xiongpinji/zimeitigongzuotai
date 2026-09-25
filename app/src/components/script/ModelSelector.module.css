@@ -1,0 +1,71 @@
+.trigger {
+  max-width: min(360px, 46vw);
+  border: 1px solid var(--color-border-subtle);
+  transition: border-color var(--motion-fast), color var(--motion-fast);
+}
+
+.triggerBound {
+  border-color: var(--color-system-blue);
+  color: var(--color-system-blue);
+}
+
+.headerLabel {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.resetItem {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+}
+
+.resetItem:hover {
+  color: var(--color-text-primary);
+}
+
+.triggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triggerArrow {
+  flex-shrink: 0;
+  opacity: 0.65;
+  font-size: 10px;
+}
+
+.menuContent {
+  min-width: 280px;
+  max-width: min(380px, calc(100vw - 24px));
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.emptyWrap {
+  padding: 2px;
+}
+
+.groupLabel {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.modelItem {
+  max-width: 100%;
+}
+
+.modelName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyModelRow {
+  padding: 6px 14px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}

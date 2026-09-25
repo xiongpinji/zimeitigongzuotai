@@ -1,0 +1,212 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.providerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.providerCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-panel-subtle) 80%, transparent);
+}
+
+.providerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.providerTitleGroup {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.providerName {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-tight);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.providerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.providerBaseUrl {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.providerModels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.providerHint {
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+}
+
+.addProviderButton {
+  align-self: flex-start;
+}
+
+.providerTypeLabel {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.providerCapsSummary {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-tight);
+}
+
+/* ── 测试按钮区域 ── */
+
+.testButtonWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.testButton {
+  flex-shrink: 0;
+}
+
+.testTip {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.testSuccess {
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.testError {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.testThumbnail {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+/* ── 弹窗：capabilities 摘要小字 ── */
+
+.capsSummaryText {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-tight);
+}
+
+.dialogContent {
+  max-width: min(640px, 96vw);
+  width: 100%;
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.hintText {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+}
+
+.modelList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modelItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel-muted) 70%, transparent);
+}
+
+.removeModelButton {
+  min-width: 48px;
+}
+
+.modelInputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.modelInput {
+  flex: 1;
+}
+
+.defaultCheckbox {
+  color: var(--color-text-secondary);
+}
+
+.footerError {
+  font-size: var(--font-size-md);
+  color: var(--color-system-red);
+}
+
+@media (max-width: 640px) {
+  .providerHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .providerActions {
+    justify-content: flex-end;
+  }
+
+  .modelInputRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .addProviderButton {
+    width: 100%;
+  }
+}

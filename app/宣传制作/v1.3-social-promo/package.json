@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "lint": "hyperframes lint",
+    "render": "hyperframes render --output renders/lingji-v1.3-social-promo-aligned.mp4 --quality high --fps 30"
+  },
+  "dependencies": {
+    "hyperframes": "0.7.14"
+  }
+}

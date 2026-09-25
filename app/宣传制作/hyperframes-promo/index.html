@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="zh-CN" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #08090b;
+        font-family: "SF Pro Text", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 110%, rgba(10, 132, 255, 0.16), rgba(10, 132, 255, 0) 36%),
+          radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 28%),
+          #08090b;
+        color: #f5f7fa;
+      }
+
+      audio {
+        display: none;
+      }
+
+      .film-grain {
+        position: absolute;
+        inset: 0;
+        z-index: 90;
+        pointer-events: none;
+        opacity: 0.11;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.05) 1px, rgba(255, 255, 255, 0) 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, rgba(255, 255, 255, 0) 1px);
+        background-size: 5px 5px, 7px 7px;
+        mix-blend-mode: overlay;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        opacity: 0;
+        background: #08090b;
+      }
+
+      .scene:first-of-type {
+        opacity: 1;
+      }
+
+      .scene-content {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        padding: 86px 104px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 64px;
+      }
+
+      .copy-stack {
+        width: 650px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 18px;
+        z-index: 4;
+      }
+
+      .eyebrow {
+        color: #8fbfff;
+        font-size: 24px;
+        line-height: 1.25;
+        font-weight: 600;
+      }
+
+      .headline {
+        font-family: "SF Pro Display", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+        max-width: 720px;
+        color: #f5f7fa;
+        font-size: 82px;
+        line-height: 1.05;
+        font-weight: 720;
+        letter-spacing: 0.01em;
+      }
+
+      .headline.compact {
+        max-width: 680px;
+        font-size: 70px;
+      }
+
+      .body {
+        max-width: 820px;
+        color: #d8dee8;
+        font-size: 30px;
+        line-height: 1.46;
+        font-weight: 360;
+      }
+
+      .hero-copy {
+        width: 700px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .product-name {
+        font-family: "SF Pro Display", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 132px;
+        line-height: 1;
+        font-weight: 780;
+        color: #f5f7fa;
+        letter-spacing: 0.01em;
+      }
+
+      .tagline {
+        color: #c9d7e8;
+        font-size: 36px;
+        line-height: 1.42;
+        font-weight: 380;
+      }
+
+      .subtitle-rail {
+        width: 100%;
+        max-width: 680px;
+        padding: 16px 22px;
+        border-radius: 20px;
+        background: rgba(8, 9, 11, 0.52);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(24px);
+        font-size: 28px;
+        line-height: 1.34;
+        color: #f5f7fa;
+        font-weight: 520;
+      }
+
+      .scene--hero .subtitle-rail {
+        max-width: 1260px;
+      }
+
+      .scene--hero .scene-content {
+        justify-content: flex-end;
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 0 0 82px 104px;
+      }
+
+      .scene--hero .hero-copy,
+      .scene--hero .subtitle-rail {
+        margin-left: 0;
+      }
+
+      .cover-image {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: 78% center;
+        filter: saturate(1.02) contrast(1.02);
+        transform: scale(1.18) translateX(-70px);
+        transform-origin: 82% center;
+      }
+
+      .cover-dim {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(8, 9, 11, 0.9) 0%, rgba(8, 9, 11, 0.58) 36%, rgba(8, 9, 11, 0.24) 70%, rgba(8, 9, 11, 0.62) 100%),
+          linear-gradient(180deg, rgba(8, 9, 11, 0.08) 0%, rgba(8, 9, 11, 0.48) 100%);
+      }
+
+      .shot-stage {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        height: 760px;
+        perspective: 1600px;
+        z-index: 3;
+      }
+
+      .device-wall {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+
+      .shot {
+        position: absolute;
+        border-radius: 26px;
+        overflow: hidden;
+        background: #1c1c1e;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 54px 150px rgba(0, 0, 0, 0.68), 0 0 90px rgba(10, 132, 255, 0.12);
+      }
+
+      .shot img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .shot.hero {
+        width: 1050px;
+        height: 675px;
+        right: 0;
+        top: 22px;
+      }
+
+      .shot.secondary {
+        width: 480px;
+        height: 309px;
+        left: 0;
+        bottom: 4px;
+      }
+
+      .shot.float-a {
+        transform: rotateY(-9deg) rotateX(3deg);
+      }
+
+      .shot.float-b {
+        transform: rotateY(10deg) rotateX(-2deg);
+      }
+
+      .shot.hero-shift {
+        width: 700px;
+        height: 450px;
+        right: 0;
+        top: 6px;
+      }
+
+      .shot.hero-shift-2 {
+        width: 520px;
+        height: 334px;
+        left: 0;
+        bottom: 8px;
+      }
+
+      .workflow {
+        width: 100%;
+        max-width: 650px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      .step {
+        min-width: 166px;
+        padding: 17px 22px;
+        border-radius: 999px;
+        color: #f5f7fa;
+        font-size: 25px;
+        font-weight: 550;
+        text-align: center;
+        background: rgba(255, 255, 255, 0.065);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(20px);
+      }
+
+      .arrow {
+        width: 48px;
+        height: 1px;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.16), #0a84ff);
+      }
+
+      .scene--closing {
+        text-align: center;
+      }
+
+      .scene--closing .scene-content {
+        align-items: center;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .scene--closing .subtitle-rail {
+        max-width: 920px;
+        text-align: center;
+      }
+
+      .orbital {
+        position: absolute;
+        width: 860px;
+        height: 860px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        left: 50%;
+        bottom: -590px;
+        transform: translateX(-50%);
+      }
+
+      .blue-glow {
+        position: absolute;
+        width: 760px;
+        height: 760px;
+        border-radius: 50%;
+        right: 120px;
+        bottom: -360px;
+        background: radial-gradient(circle, rgba(10, 132, 255, 0.24), rgba(10, 132, 255, 0));
+      }
+
+      .transition {
+        position: absolute;
+        inset: 0;
+        z-index: 80;
+        pointer-events: none;
+        transform: none;
+        background:
+          linear-gradient(180deg, rgba(10, 132, 255, 0), rgba(10, 132, 255, 0.38), rgba(245, 247, 250, 0.92), rgba(10, 132, 255, 0.14), rgba(8, 9, 11, 0));
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="29.974989"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio id="voiceover" data-start="0" data-duration="29.974989" data-track-index="20" src="generated/voiceover-fallback.mp3" data-volume="1"></audio>
+      <audio id="bgm" data-start="0" data-duration="29.974989" data-track-index="21" src="generated/bgm.mp3" data-volume="0.16"></audio>
+
+      <section id="scene-1" class="scene scene--hero">
+        <img class="cover-image" src="assets/lingji-cut-hero.png" alt="灵机剪影封面图" data-layout-allow-overflow />
+        <div class="cover-dim"></div>
+        <div class="scene-content">
+          <div class="hero-copy">
+            <div class="eyebrow">Lingji Cut</div>
+            <div class="headline compact">从写稿到出片，一套工作台完成。</div>
+          </div>
+          <div class="subtitle-rail">做一条口播视频，过去要在写稿、配音、字幕、剪辑和封面之间反复切换。</div>
+        </div>
+      </section>
+
+      <section id="scene-2" class="scene">
+        <div class="blue-glow" data-layout-allow-overflow></div>
+        <div class="scene-content">
+          <div class="copy-stack">
+            <div class="eyebrow">Introducing</div>
+            <div class="product-name">灵机剪影</div>
+            <div class="tagline">把这些步骤，收进一个本地桌面工作台。</div>
+            <div class="subtitle-rail">灵机剪影，把这些步骤收进一个本地桌面工作台。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="device-wall">
+              <div class="shot hero float-a"><img src="assets/welcome.png" alt="灵机剪影欢迎页" /></div>
+              <div class="shot secondary float-b"><img src="assets/welcome-douyin-import.png" alt="抖音导入" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-3" class="scene">
+        <div class="scene-content">
+          <div class="copy-stack">
+            <div class="eyebrow">从原稿开始</div>
+            <div class="headline">AI 写稿，审稿，批注，迭代。</div>
+            <div class="body">从文稿、声音到视觉编排，创作链路在同一个空间里持续推进。</div>
+            <div class="subtitle-rail">从原稿导入，到 AI 写稿和审稿；从 MiniMax 口播、字幕生成，到视觉卡片、封面和时间线编排。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="device-wall">
+              <div class="shot hero float-a"><img src="assets/写稿工作台.png" alt="写稿工作台" /></div>
+              <div class="shot secondary float-b"><img src="assets/提示词配置.png" alt="提示词配置" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-4" class="scene">
+        <div class="scene-content">
+          <div class="copy-stack">
+            <div class="eyebrow">自动串联</div>
+            <div class="headline compact">口播、字幕、节奏，进入时间线。</div>
+            <div class="body">一条完整的创作链路，被安静地串联起来。</div>
+            <div class="workflow">
+              <div class="step">原稿</div><div class="arrow"></div>
+              <div class="step">口播</div><div class="arrow"></div>
+              <div class="step">字幕</div><div class="arrow"></div>
+              <div class="step">卡片</div><div class="arrow"></div>
+              <div class="step">导出</div>
+            </div>
+            <div class="subtitle-rail">一条完整的创作链路，被安静地串联起来。少一点搬运，多一点表达。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="device-wall">
+              <div class="shot hero float-b"><img src="assets/视频工作台.png" alt="视频工作台" /></div>
+              <div class="shot secondary float-a"><img src="assets/AI 基础配置.png" alt="AI 基础配置" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-5" class="scene scene--closing">
+        <div class="orbital" data-layout-allow-overflow></div>
+        <div class="scene-content">
+          <div class="eyebrow">从想法，更快抵达成片</div>
+          <div class="product-name">灵机剪影</div>
+          <div class="tagline">本地优先的 AI 视频创作工作台。</div>
+          <div class="subtitle-rail">灵机剪影，让知识视频，从想法更快抵达成片。</div>
+        </div>
+      </section>
+
+      <div class="transition"></div>
+      <div class="film-grain"></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const durations = [7.078617, 4.339841, 8.082721, 5.920522, 4.553288];
+      const sceneStarts = [0];
+      for (let i = 0; i < durations.length - 1; i += 1) {
+        sceneStarts.push(sceneStarts[i] + durations[i]);
+      }
+      const totalDuration = durations.reduce((sum, value) => sum + value, 0);
+      const scenes = ["#scene-1", "#scene-2", "#scene-3", "#scene-4", "#scene-5"];
+
+      tl.set(".transition", { yPercent: 100 }, 0);
+
+      function fromIfAny(selector, vars, at) {
+        const targets = gsap.utils.toArray(selector);
+        if (targets.length > 0) {
+          tl.from(targets, vars, at);
+        }
+      }
+
+      function enterScene(scene, at) {
+        tl.set(scene, { opacity: 1, zIndex: 10 }, at);
+        fromIfAny(`${scene} .eyebrow`, { opacity: 0, y: 34, duration: 0.55, ease: "power3.out" }, at + 0.16);
+        fromIfAny(`${scene} .headline, ${scene} .product-name`, { opacity: 0, y: 58, scale: 0.985, duration: 0.72, ease: "expo.out" }, at + 0.3);
+        fromIfAny(`${scene} .body, ${scene} .tagline, ${scene} .subtitle-rail`, { opacity: 0, y: 26, duration: 0.6, ease: "sine.out" }, at + 0.66);
+        fromIfAny(`${scene} .shot`, { opacity: 0, y: 68, rotationX: -6, scale: 0.93, duration: 0.76, stagger: 0.16, ease: "back.out(1.15)" }, at + 0.36);
+        fromIfAny(`${scene} .step`, { opacity: 0, y: 26, scale: 0.92, duration: 0.38, stagger: 0.11, ease: "power4.out" }, at + 0.92);
+        fromIfAny(`${scene} .arrow`, { opacity: 0, scaleX: 0, transformOrigin: "left center", duration: 0.34, stagger: 0.11, ease: "power2.out" }, at + 0.98);
+        fromIfAny(`${scene} .cover-image`, { opacity: 0, scale: 1.07, duration: 0.9, ease: "sine.out" }, at);
+        fromIfAny(`${scene} .cover-dim`, { opacity: 0, duration: 0.7, ease: "sine.out" }, at);
+        fromIfAny(`${scene} .orbital`, { opacity: 0, scale: 0.9, duration: 1, ease: "power1.out" }, at + 0.08);
+        fromIfAny(`${scene} .blue-glow`, { opacity: 0, scale: 0.72, duration: 1.2, ease: "sine.out" }, at + 0.16);
+      }
+
+      function transition(at, previousScene, nextScene) {
+        tl.to(".transition", { yPercent: -105, duration: 0.58, ease: "power2.inOut" }, at);
+        tl.set(nextScene, { opacity: 1, zIndex: 12 }, at);
+        tl.set(previousScene, { opacity: 0, zIndex: 1 }, at + 0.58);
+        tl.set(".transition", { yPercent: 100 }, at + 0.6);
+      }
+
+      scenes.forEach((scene, index) => enterScene(scene, sceneStarts[index]));
+      transition(sceneStarts[1], "#scene-1", "#scene-2");
+      transition(sceneStarts[2], "#scene-2", "#scene-3");
+      transition(sceneStarts[3], "#scene-3", "#scene-4");
+      transition(sceneStarts[4], "#scene-4", "#scene-5");
+
+      tl.to(".shot.hero", { y: -14, scale: 1.012, duration: 5.2, ease: "sine.inOut", stagger: 0.24 }, 0.6);
+      tl.to(".shot.secondary", { y: 12, scale: 0.988, duration: 5.2, ease: "sine.inOut", stagger: 0.18 }, 1.0);
+      tl.to(".orbital", { rotation: 4, scale: 1.035, duration: 10, ease: "sine.inOut" }, sceneStarts[1]);
+      tl.to("#scene-5 .scene-content", { opacity: 0, y: -20, duration: 0.7, ease: "sine.in" }, totalDuration - 0.7);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

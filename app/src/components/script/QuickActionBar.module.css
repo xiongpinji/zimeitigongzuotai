@@ -1,0 +1,119 @@
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-8);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-panel-bg) 60%, var(--color-window-bg));
+  min-height: 36px;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-selection-blue);
+  color: var(--color-text-primary);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.primaryBtn {
+  background: var(--color-selection-blue);
+  border-color: var(--color-selection-blue);
+  color: var(--color-text-primary);
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-selection-blue) 85%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-selection-blue) 85%, var(--color-text-primary));
+  color: var(--color-text-primary);
+}
+
+.dangerBtn {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: transparent;
+}
+
+.dangerBtn:hover {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
+/* 角色选择器 */
+
+.roleSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.roleIcon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.roleSelectWrap {
+  max-width: 120px;
+}
+
+/* 紧凑控件样式：用于工具栏内的 Select 组件 */
+.compactControl {
+  height: auto;
+  min-height: 0;
+  padding: 3px var(--space-4) 3px var(--space-3);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+}
+
+.stageControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.stageMeta {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.stageSelectWrap {
+  max-width: 140px;
+}

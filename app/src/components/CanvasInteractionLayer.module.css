@@ -1,0 +1,40 @@
+.root {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.overlayBox {
+  position: absolute;
+  cursor: move;
+  border: 2px solid transparent;
+  box-sizing: border-box;
+}
+
+.overlayBox.hovered {
+  border: 1px dashed color-mix(in srgb, var(--color-text-primary) 30%, transparent);
+}
+
+.overlayBox.selected {
+  border: 2px solid var(--color-selection-blue);
+}
+
+.handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--color-text-primary);
+  border: 2px solid var(--color-selection-blue);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+
+.handle_nw { top: -5px; left: -5px; cursor: nw-resize; }
+.handle_n  { top: -5px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+.handle_ne { top: -5px; right: -5px; cursor: ne-resize; }
+.handle_w  { top: 50%; left: -5px; transform: translateY(-50%); cursor: w-resize; }
+.handle_e  { top: 50%; right: -5px; transform: translateY(-50%); cursor: e-resize; }
+.handle_sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+.handle_s  { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+.handle_se { bottom: -5px; right: -5px; cursor: se-resize; }

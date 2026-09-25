@@ -1,0 +1,185 @@
+.statusBar {
+  /* 铁律：AppStatusBar 高度必须保持 28px，不得修改 */
+  height: 28px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-bg);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  user-select: none;
+  -webkit-app-region: no-drag;
+  position: relative;
+  /* 提升到视频编辑器 timeline / 其他页面内容之上，避免点击摘要后面板被遮挡 */
+  z-index: 50;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* AI 编辑锁定指示（file-first：外部 agent 正在改项目文件） */
+.aiEditLock {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+  color: var(--color-system-blue);
+}
+
+.aiEditLockDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-system-blue);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* 上下文窗口用量 — 沿用 Button.Ghost 基础样式，仅调整布局与去除内边距 */
+.contextUsage {
+  gap: 4px !important;
+  padding: 0 !important;
+  margin: 0;
+  height: auto !important;
+  min-height: 0 !important;
+  color: inherit !important;
+  background: transparent !important;
+}
+
+.contextUsage:hover {
+  color: var(--color-text-secondary) !important;
+  background: transparent !important;
+}
+
+/* 连接状态 */
+.connectionStatus {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+  transition: color 0.15s;
+}
+
+.connectionStatus:hover {
+  color: var(--color-text-secondary);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDot[data-status="connected"],
+.statusDot[data-status="prompting"] {
+  background: var(--color-success);
+}
+
+.statusDot[data-status="connecting"] {
+  background: var(--color-warning);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.statusDot[data-status="disconnected"] {
+  background: var(--color-text-quaternary);
+}
+
+.statusDot[data-status="error"] {
+  background: var(--color-danger);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 弹出面板 */
+.popoverContent {
+  overflow: hidden;
+}
+
+.popover {
+  padding: 12px;
+  background: var(--color-panel-bg);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+.popoverTitle {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 8px;
+  font-size: var(--font-size-md);
+}
+
+.progressBar {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-border-subtle);
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.progressFill {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-text-secondary);
+  transition: width 0.3s ease;
+}
+
+.popoverRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.progressLine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 1;
+  pointer-events: none;
+  /* indeterminate 动画 translateX(388%) 会水平溢出，裁剪只作用于进度线本身 */
+  overflow: hidden;
+}
+
+.progressFillLine {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.progressFillLine[data-mode='indeterminate'],
+.progressFillLine[data-mode='streaming'] {
+  width: 35% !important;
+  animation: indeterminateSweep 1.2s ease-in-out infinite;
+}
+
+@keyframes indeterminateSweep {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(388%);
+  }
+}
+

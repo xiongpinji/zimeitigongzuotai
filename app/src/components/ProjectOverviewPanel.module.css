@@ -1,0 +1,43 @@
+.root {
+  display: grid;
+  gap: 16px;
+  padding: 18px 16px 20px;
+}
+
+.projectName {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.projectPath {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.6;
+}
+
+.pathValue {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.metrics {
+  gap: 12px;
+}
+
+.metricValue {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}

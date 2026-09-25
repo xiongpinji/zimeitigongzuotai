@@ -1,0 +1,228 @@
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.separator {
+  height: 1px;
+  background: var(--color-panel-elevated);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.statusCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel-elevated);
+}
+
+.statusIcon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.statusInfo {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.statusFile {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusState {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}
+
+.statusState[data-tone="success"] {
+  color: var(--color-success);
+}
+
+.statusState[data-tone="warning"] {
+  color: var(--color-brand-warm);
+}
+
+.errorBanner {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-error) 86%, var(--color-panel-bg));
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.primaryAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 28px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-selection-blue);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast), opacity var(--motion-fast);
+}
+
+.primaryAction:hover:not(:disabled) {
+  background: var(--color-selection-blue-hover);
+}
+
+.primaryAction:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.inlineRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inlineLabel {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+}
+
+.rowSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.switchControl {
+  gap: 0;
+}
+
+.dualRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.fieldStack {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldSpacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.compactColorField,
+.compactNumberField {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldCaption {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+
+.numberFieldControl {
+  width: 100%;
+}
+
+.selectControl {
+  min-width: 132px;
+  min-height: 28px;
+  padding-inline: 10px;
+  font-size: var(--font-size-sm);
+}
+
+.supportingLabel {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+
+.previewStage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: var(--radius-lg);
+  background: var(--color-preview-bg);
+}
+
+.previewChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.maxCharsSlider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-system-blue);
+}
+
+.maxCharsValue {
+  min-width: 2.2em;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.layoutActionRow {
+  display: flex;
+  gap: 6px;
+}
+
+.layoutActionButton {
+  flex: 1;
+}
+
+.layoutStatusText {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}

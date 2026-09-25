@@ -1,0 +1,58 @@
+.placeholder,
+.loading,
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--color-fill-tertiary);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  text-align: center;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  font-size: var(--font-size-sm);
+}
+
+.errorBox {
+  background: var(--color-fill-error, rgba(255, 69, 58, 0.1));
+  color: var(--color-text-error, #ff453a);
+}
+
+.errorTitle {
+  font-weight: 600;
+}
+
+.errorMsg {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.loadingLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--color-separator);
+  border-top-color: var(--color-system-blue);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.media {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: black;
+}

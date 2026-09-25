@@ -1,0 +1,107 @@
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding: 0 var(--space-6);
+  border-top: 1px solid var(--color-separator);
+  background: var(--color-window-bg);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+/* ─── 左侧统计区 ─── */
+.stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-sans);
+  color: var(--color-text-tertiary);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+
+.badgePending {
+  color: var(--color-brand-warm);
+  background: var(--color-bg-warning);
+}
+
+.badgeAccepted {
+  color: var(--color-success);
+  background: var(--color-bg-success);
+}
+
+.badgeDismissed {
+  color: var(--color-text-quaternary);
+}
+
+.sep {
+  color: var(--color-separator);
+  font-size: var(--font-size-xs);
+  margin: 0 var(--space-1);
+}
+
+.total {
+  color: var(--color-text-quaternary);
+  font-size: var(--font-size-xs);
+}
+
+/* ─── 右侧操作区 ─── */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.navGroup {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--color-separator);
+  margin-right: var(--space-1);
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  color: var(--color-text-primary);
+}
+
+.iconBtn:active:not(:disabled) {
+  opacity: 0.65;
+}
+
+.iconBtn:disabled {
+  color: var(--color-border-strong);
+  cursor: not-allowed;
+}
+
+.resolvedHint {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  color: var(--color-border-strong);
+}

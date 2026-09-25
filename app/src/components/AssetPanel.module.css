@@ -1,0 +1,279 @@
+/* 左侧素材面板 — design.pen */
+.root {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  background: var(--color-panel-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  transition: background var(--motion-fast, 120ms);
+}
+
+/* 文件拖入时整个面板高亮 */
+.dropTarget {
+  background: color-mix(in srgb, var(--color-selection-blue) 8%, var(--color-panel-bg));
+}
+
+.dropTarget::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1.5px dashed color-mix(in srgb, var(--color-selection-blue) 60%, transparent);
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* compact（横向 rail）模式下取消固定宽度，跟随父容器 */
+.compact {
+  width: auto;
+  flex: 1;
+}
+
+.regular {
+  width: 100%;
+}
+
+/* ── AI 一键剪辑按钮 ── */
+.aiClipCard {
+  margin: 10px 8px 6px;
+  flex-shrink: 0;
+}
+
+/* ── 口播资源区块 ── */
+.podcastSection {
+  flex-shrink: 0;
+  padding: 10px 8px 6px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.podcastSectionToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.podcastSectionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.podcastSectionChevron {
+  opacity: 0.78;
+}
+
+.podcastSectionSummary {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.podcastSectionBody {
+  margin-top: 6px;
+}
+
+.podcastRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.podcastRowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.podcastRowName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.podcastRowNameEmpty {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.compact .podcastSection {
+  padding: 8px;
+}
+
+/* ── 搜索栏 ── */
+.searchWrap {
+  margin: 8px 8px 0;
+  flex-shrink: 0;
+}
+
+.searchInputWrap {
+  width: 100%;
+}
+
+.searchInputWrap > span {
+  left: 10px;
+  width: 14px;
+  height: 14px;
+}
+
+.searchInput {
+  height: 30px !important;
+  border-radius: var(--radius-lg) !important;
+  border-color: var(--color-separator) !important;
+  background: var(--color-panel-elevated) !important;
+  padding-inline: 10px !important;
+  padding-left: 30px !important;
+  font-size: var(--font-size-md) !important;
+  color: var(--color-text-secondary) !important;
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-muted) !important;
+}
+
+.searchInput:hover {
+  filter: none;
+}
+
+.searchInput:focus {
+  border-color: var(--color-separator) !important;
+  box-shadow: none !important;
+}
+
+/* ── 筛选 pill 行 ── */
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 0;
+  flex-shrink: 0;
+}
+
+.filterGroup {
+  width: 100%;
+}
+
+.filterPill {
+  min-height: 22px !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 3px 8px !important;
+  font-size: var(--font-size-sm) !important;
+  font-weight: 400 !important;
+  color: var(--color-text-secondary) !important;
+  background: var(--color-control-bg) !important;
+  box-shadow: none !important;
+}
+
+.filterPill:hover {
+  filter: none;
+  color: var(--color-text-primary) !important;
+}
+
+.filterPill[aria-pressed='true'] {
+  color: var(--color-text-primary) !important;
+  background: var(--color-selection-blue) !important;
+  font-weight: 600 !important;
+}
+
+/* ── 内容网格 ── */
+.content {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 8px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 始终为滚动条预留槽位，避免出现/消失导致网格列数抖动 */
+  scrollbar-gutter: stable;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 96px);
+  gap: 6px;
+  align-content: start;
+  justify-content: start;
+}
+
+.assetSlot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.assetAction {
+  width: 96px;
+  min-height: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-selection-blue) 28%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-selection-blue) 12%, transparent);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  padding: 2px 4px;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast, 120ms),
+    border-color var(--motion-fast, 120ms);
+}
+
+.assetAction:hover {
+  background: color-mix(in srgb, var(--color-selection-blue) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-selection-blue) 40%, transparent);
+}
+
+/* compact（横向 rail）时改为横向滚动一行 */
+.contentCompact {
+  overflow-y: hidden;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.gridCompact {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/* compact 搜索栏隐藏 */
+.compact .searchWrap {
+  display: none;
+}
+
+/* compact 筛选行隐藏 */
+.compact .filterRow {
+  display: none;
+}
+
+/* compact 计数文字 */
+.compactSummary {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 8px;
+}
+

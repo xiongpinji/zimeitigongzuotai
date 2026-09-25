@@ -1,0 +1,16 @@
+.root {
+  display: grid;
+  grid-template-columns: repeat(var(--field-grid-columns, 2), minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
+}
+
+.root > * {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .root {
+    grid-template-columns: 1fr;
+  }
+}

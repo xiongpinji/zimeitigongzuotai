@@ -1,0 +1,30 @@
+<svg width="512" height="512" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+    <!-- 定义 CSS 变量以保持颜色一致性，如果你在项目中全局定义了这些，可以删除这块 -->
+    <style>
+        :root {
+            --color-system-blue: #0A84FF;
+            --color-panel-elevated: #2C2C2E;
+            --color-separator: #38383A;
+        }
+    </style>
+
+    <defs>
+        <!-- 遮罩：白色区域显示，黑色区域镂空透明 -->
+        <mask id="kite-cutout-app-icon">
+            <rect width="120" height="120" fill="white" />
+            <!-- 中间的播放键镂空，使用 stroke 增加圆角 -->
+            <polygon points="56,45 56,65 68,55" fill="black" stroke="black" stroke-width="4" stroke-linejoin="round" />
+            <!-- 翅膀的剪纸镂空细节，使用 stroke 增加圆角 -->
+            <path d="M 45 40 Q 30 45 25 50 Q 35 52 45 48 Z" fill="black" stroke="black" stroke-width="3" stroke-linejoin="round" />
+            <path d="M 75 40 Q 90 45 95 50 Q 85 52 75 48 Z" fill="black" stroke="black" stroke-width="3" stroke-linejoin="round" />
+        </mask>
+    </defs>
+    
+    <!-- 1:1 macOS 圆角图标底板 (Squircle) -->
+    <rect x="5" y="5" width="110" height="110" rx="26" fill="var(--color-panel-elevated)" stroke="var(--color-separator)" stroke-width="2"/>
+    
+    <!-- 内部的纸鸢主体，适当缩小以适应底板，并应用镂空遮罩。使用 stroke 圆滑外边缘 -->
+    <g transform="translate(60,60) scale(0.75) translate(-60,-60)">
+        <path d="M 60 15 C 85 40 105 45 110 50 C 95 60 85 85 80 105 C 70 85 65 75 60 70 C 55 75 50 85 40 105 C 35 85 25 60 10 50 C 15 45 35 40 60 15 Z" fill="var(--color-system-blue)" stroke="var(--color-system-blue)" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" mask="url(#kite-cutout-app-icon)" />
+    </g>
+</svg>

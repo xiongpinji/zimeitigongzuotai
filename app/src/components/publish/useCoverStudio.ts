@@ -1,0 +1,342 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { CoverCandidate, ImageAspectRatio } from '../../types/ai';
+import { coverAspectRatio } from '../../types/ai';
+import { loadAISettings, useAIStore } from '../../store/ai';
+import { getProjectDir } from '../../store/timeline';
+import { createPersistedAIState, parsePersistedAIState } from '../../lib/ai-persistence';
+
+export interface DiskCover {
+  path: string;
+  ratio: ImageAspectRatio;
+  mtimeMs: number;
+}
+
+const RATIO_TARGETS: { ratio: ImageAspectRatio; value: number }[] = [
+  { ratio: '16:9', value: 16 / 9 },
+  { ratio: '4:3', value: 4 / 3 },
+  { ratio: '3:4', value: 3 / 4 },
+];
+
+/** 把像素尺寸归类到 16:9 / 4:3 / 3:4；偏差超过容差（如 1:1、9:16）返回 null。 */
+export function classifyRatio(width: number, height: number): ImageAspectRatio | null {
+  if (!width || !height) return null;
+  const r = width / height;
+  let best: ImageAspectRatio | null = null;
+  let bestErr = Infinity;
+  for (const t of RATIO_TARGETS) {
+    const err = Math.abs(r - t.value) / t.value;
+    if (err < bestErr) {
+      bestErr = err;
+      best = t.ratio;
+    }
+  }
+  return bestErr <= 0.06 ? best : null;
+}
+
+/** 按比例合并 store 候选与磁盘封面；旧候选缺少比例时以磁盘真实尺寸为准。 */
+export function groupCoverCandidatesByRatio(
+  coverCandidates: CoverCandidate[],
+  diskCovers: DiskCover[],
+  basePrompt: string | null,
+): Record<string, CoverCandidate[]> {
+  const out: Record<string, CoverCandidate[]> = { '16:9': [], '4:3': [], '3:4': [] };
+  const diskByPath = new Map(diskCovers.map((cover) => [cover.path, cover]));
+  const storePaths = new Set(coverCandidates.map((candidate) => candidate.imageUrl).filter(Boolean));
+
+  for (const candidate of coverCandidates) {
+    const ratio = candidate.aspectRatio ?? diskByPath.get(candidate.imageUrl)?.ratio ?? coverAspectRatio(candidate);
+    if (out[ratio] && candidate.imageUrl) out[ratio].push(candidate);
+  }
+  for (const diskCover of diskCovers) {
+    if (storePaths.has(diskCover.path)) continue;
+    out[diskCover.ratio]?.push({
+      id: `disk:${diskCover.path}`,
+      imageUrl: diskCover.path,
+      prompt: basePrompt ?? '',
+      selected: false,
+      aspectRatio: diskCover.ratio,
+      createdAt: diskCover.mtimeMs,
+    });
+  }
+  for (const ratio of Object.keys(out)) {
+    out[ratio].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }
+  return out;
+}
+
+/** 需自动预填的比例：16:9 由编辑器整期封面专属逻辑填充，此处只补抖音/视频号所需的横竖比例。 */
+const AUTO_FILL_RATIOS: ImageAspectRatio[] = ['4:3', '3:4'];
+
+/** 为尚未选中的比例自动挑该比例第一张可用封面（groups 已按 createdAt 降序）。
+ *  只填补空槽，已选比例保持不变；无可填补时返回原引用（便于 setState 跳过更新）。 */
+export function autoFillCovers(
+  groups: Record<string, CoverCandidate[]>,
+  current: Record<string, string>,
+): Record<string, string> {
+  let next = current;
+  for (const ratio of AUTO_FILL_RATIOS) {
+    if (next[ratio]) continue;
+    const first = groups[ratio]?.find((c) => c.imageUrl)?.imageUrl;
+    if (first) next = next === current ? { ...current, [ratio]: first } : { ...next, [ratio]: first };
+  }
+  return next;
+}
+
+/** 发布选项卡展示的三种封面比例（编辑器封面为 16:9）。 */
+export const PUBLISH_RATIOS: { ratio: ImageAspectRatio; label: string; hint: string }[] = [
+  { ratio: '16:9', label: '16:9 横版', hint: '视频号 / B站 / 横屏（编辑器封面）' },
+  { ratio: '4:3', label: '4:3', hint: '通用横版' },
+  { ratio: '3:4', label: '3:4 竖版', hint: '抖音 / 小红书 / 快手' },
+];
+
+const PUBLISH_RATIO_VALUES = PUBLISH_RATIOS.map((r) => r.ratio);
+/** 每个比例一次生成的候选数 */
+const RATIO_BATCH = 2;
+
+function ratioOrientationHint(ratio: ImageAspectRatio): string {
+  switch (ratio) {
+    case '3:4':
+      return '画面为竖版 3:4 构图：主体垂直居中，上下预留安全区，文字标题适配竖屏封面，整体不要出现横版黑边。';
+    case '4:3':
+      return '画面为 4:3 构图：主体居中偏上，构图饱满，适配 4:3 封面。';
+    default:
+      return '';
+  }
+}
+
+/** 在基础封面提示词上拼接比例方向提示，引导模型按目标画幅构图。 */
+export function buildRatioPrompt(base: string, ratio: ImageAspectRatio): string {
+  const hint = ratioOrientationHint(ratio);
+  return hint ? `${base.trim()}\n${hint}` : base.trim();
+}
+
+export interface CoverStudio {
+  basePrompt: string | null;
+  groups: Record<string, CoverCandidate[]>;
+  /** 正在生成的比例集合 */
+  busyRatios: ImageAspectRatio[];
+  /** 单图重生中的候选 id 集合 */
+  busyCandidateIds: string[];
+  error: string | null;
+  /** 主进程封面扫描能力是否缺失（旧实例未重启时为 true） */
+  scanUnavailable: boolean;
+  /** 缺失（无候选）的比例 */
+  missingRatios: ImageAspectRatio[];
+  regenerateRatio: (ratio: ImageAspectRatio) => Promise<void>;
+  regenerateOne: (candidateId: string) => Promise<void>;
+  fillMissing: () => Promise<void>;
+  regenerateAll: () => Promise<void>;
+}
+
+export function useCoverStudio(projectDir?: string | null): CoverStudio {
+  const coverCandidates = useAIStore((s) => s.coverCandidates);
+  const analysisResult = useAIStore((s) => s.analysisResult);
+  const currentProjectDir = useAIStore((s) => s.currentProjectDir);
+  const [busyRatios, setBusyRatios] = useState<ImageAspectRatio[]>([]);
+  const [busyCandidateIds, setBusyCandidateIds] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [diskCovers, setDiskCovers] = useState<DiskCover[]>([]);
+  const [scanUnavailable, setScanUnavailable] = useState(false);
+
+  const basePrompt = analysisResult?.coverPrompts?.[0]?.trim() || null;
+  // 优先用调用方显式传入的 projectDir（发布选项卡的权威来源），回退到全局当前项目目录。
+  const resolveDir = useCallback(
+    () => projectDir || getProjectDir() || currentProjectDir || '',
+    [projectDir, currentProjectDir],
+  );
+
+  // 扫描项目 covers/ 目录，按真实像素尺寸归类已存在的合适比例图片。
+  const scanDisk = useCallback(async () => {
+    const dir = resolveDir();
+    // scanCoverImages 是新增的主进程能力；旧的运行实例（未重启）可能尚未注入。
+    if (typeof window.electronAPI?.scanCoverImages !== 'function') {
+      setScanUnavailable(true);
+      setDiskCovers([]);
+      return;
+    }
+    setScanUnavailable(false);
+    if (!dir) {
+      setDiskCovers([]);
+      return;
+    }
+    try {
+      const found = await window.electronAPI.scanCoverImages(dir);
+      const mapped: DiskCover[] = [];
+      for (const f of found) {
+        const ratio = classifyRatio(f.width, f.height);
+        if (ratio) mapped.push({ path: f.path, ratio, mtimeMs: f.mtimeMs });
+      }
+      setDiskCovers(mapped);
+    } catch {
+      setDiskCovers([]);
+    }
+  }, [resolveDir]);
+
+  useEffect(() => {
+    void scanDisk();
+  }, [scanDisk]);
+
+  const groups = useMemo(() => {
+    return groupCoverCandidatesByRatio(coverCandidates, diskCovers, basePrompt);
+  }, [coverCandidates, diskCovers, basePrompt]);
+
+  const missingRatios = useMemo(
+    () => PUBLISH_RATIO_VALUES.filter((r) => (groups[r]?.length ?? 0) === 0),
+    [groups],
+  );
+
+  const persist = useCallback(async (nextCandidates: CoverCandidate[]) => {
+    const { setCoverCandidates, analysisResult: ar } = useAIStore.getState();
+    setCoverCandidates(nextCandidates);
+    const projectDir = getProjectDir();
+    if (!projectDir) return;
+    const json = JSON.stringify(createPersistedAIState(ar, nextCandidates), null, 2);
+    try {
+      const saved = await window.electronAPI.saveAIAnalysis(projectDir, json);
+      const parsed = parsePersistedAIState(JSON.parse(saved));
+      if (parsed) setCoverCandidates(parsed.coverCandidates);
+    } catch {
+      // 落盘失败不回滚内存态：用户仍可看到已生成的封面
+    }
+  }, []);
+
+  const runGeneration = useCallback(
+    async (ratio: ImageAspectRatio, n: number): Promise<CoverCandidate[]> => {
+      const prompt = basePrompt;
+      if (!prompt) throw new Error('缺少封面提示词，请先在编辑器完成 AI 分析');
+      const settings = await loadAISettings();
+      const hasImageProvider =
+        !!settings && settings.imageProviders.length > 0 && !!settings.defaultImageProviderId;
+      if (!settings || !hasImageProvider) {
+        throw new Error('请先在「设置 → AI」中配置至少一个图像生成 Provider');
+      }
+      const dir = resolveDir();
+      if (!dir) throw new Error('未找到项目目录');
+      const generated = await window.electronAPI.generateCoverImages({
+        prompts: [buildRatioPrompt(prompt, ratio)],
+        settings,
+        projectDir: dir,
+        projectBindings: useAIStore.getState().projectBindings,
+        aspectRatio: ratio,
+        n,
+      });
+      // 发布封面通过缩略图路径选用，不占用 store 的 selected 标记；
+      // 否则会与编辑器选定的 16:9 整期封面冲突（出现多个 selected）。
+      return generated.map((c) => ({ ...c, selected: false }));
+    },
+    [basePrompt, resolveDir],
+  );
+
+  const regenerateRatio = useCallback(
+    async (ratio: ImageAspectRatio) => {
+      setError(null);
+      setBusyRatios((prev) => (prev.includes(ratio) ? prev : [...prev, ratio]));
+      try {
+        const fresh = await runGeneration(ratio, RATIO_BATCH);
+        const all = useAIStore.getState().coverCandidates;
+        // 保留其它比例 + 当前比例里已被选中的候选（避免覆盖编辑器选定的整期背景），追加新一组
+        const keptOther = all.filter((c) => coverAspectRatio(c) !== ratio);
+        const keptSelected = all.filter((c) => coverAspectRatio(c) === ratio && c.selected);
+        await persist([...keptOther, ...keptSelected, ...fresh]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '封面生成失败');
+      } finally {
+        setBusyRatios((prev) => prev.filter((r) => r !== ratio));
+        void scanDisk();
+      }
+    },
+    [persist, runGeneration, scanDisk],
+  );
+
+  const regenerateOne = useCallback(
+    async (candidateId: string) => {
+      setError(null);
+      const target = useAIStore.getState().coverCandidates.find((c) => c.id === candidateId);
+      // store 候选可原地替换；磁盘扫描出的候选（disk:）不在 store，按其比例追加一张新候选
+      const ratio = target
+        ? coverAspectRatio(target)
+        : diskCovers.find((d) => `disk:${d.path}` === candidateId)?.ratio;
+      if (!ratio) return;
+      setBusyCandidateIds((prev) => (prev.includes(candidateId) ? prev : [...prev, candidateId]));
+      try {
+        const fresh = (await runGeneration(ratio, 1)).find((c) => c.imageUrl);
+        if (!fresh) throw new Error('未生成有效封面');
+        if (target) {
+          const next = useAIStore.getState().coverCandidates.map((c) =>
+            c.id === candidateId
+              ? { ...c, imageUrl: fresh.imageUrl, prompt: fresh.prompt, error: undefined, createdAt: fresh.createdAt }
+              : c,
+          );
+          await persist(next);
+        } else {
+          await persist([...useAIStore.getState().coverCandidates, fresh]);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '封面生成失败');
+      } finally {
+        setBusyCandidateIds((prev) => prev.filter((id) => id !== candidateId));
+        void scanDisk();
+      }
+    },
+    [persist, runGeneration, diskCovers, scanDisk],
+  );
+
+  const fillMissing = useCallback(async () => {
+    setError(null);
+    // 缺失判定同时考虑 store 候选与磁盘已存在的合适比例图片
+    const targets = PUBLISH_RATIO_VALUES.filter((r) => {
+      const inStore = useAIStore.getState().coverCandidates.some(
+        (c) => coverAspectRatio(c) === r && c.imageUrl,
+      );
+      const onDisk = diskCovers.some((d) => d.ratio === r);
+      return !inStore && !onDisk;
+    });
+    if (targets.length === 0) return;
+    setBusyRatios((prev) => Array.from(new Set([...prev, ...targets])));
+    try {
+      for (const ratio of targets) {
+        const fresh = await runGeneration(ratio, RATIO_BATCH);
+        const all = useAIStore.getState().coverCandidates;
+        await persist([...all, ...fresh]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '封面生成失败');
+    } finally {
+      setBusyRatios((prev) => prev.filter((r) => !targets.includes(r)));
+      void scanDisk();
+    }
+  }, [persist, runGeneration, diskCovers, scanDisk]);
+
+  const regenerateAll = useCallback(async () => {
+    setError(null);
+    setBusyRatios(PUBLISH_RATIO_VALUES.slice());
+    try {
+      for (const ratio of PUBLISH_RATIO_VALUES) {
+        const fresh = await runGeneration(ratio, RATIO_BATCH);
+        const all = useAIStore.getState().coverCandidates;
+        const keptOther = all.filter((c) => coverAspectRatio(c) !== ratio);
+        const keptSelected = all.filter((c) => coverAspectRatio(c) === ratio && c.selected);
+        await persist([...keptOther, ...keptSelected, ...fresh]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '封面生成失败');
+    } finally {
+      setBusyRatios([]);
+      void scanDisk();
+    }
+  }, [persist, runGeneration, scanDisk]);
+
+  return {
+    basePrompt,
+    groups,
+    busyRatios,
+    busyCandidateIds,
+    error,
+    scanUnavailable,
+    missingRatios,
+    regenerateRatio,
+    regenerateOne,
+    fillMissing,
+    regenerateAll,
+  };
+}

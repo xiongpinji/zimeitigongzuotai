@@ -1,0 +1,121 @@
+/* src/components/script/ScriptResourceView.module.css */
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.searchBar {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.groups {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.groupSection {
+  padding: 4px 0 8px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.groupTitle {
+  letter-spacing: 0;
+}
+
+.groupList {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  min-height: 36px;
+  background: transparent;
+  border: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.row:hover {
+  background: var(--color-panel-elevated);
+}
+
+.rowActive {
+  background: var(--color-panel-elevated);
+}
+
+.rowIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+}
+
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rowTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+}
+
+.rowSubtitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.rowMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+}
+
+.dirtyDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-system-blue);
+}
+
+.conflictMark {
+  font-size: var(--font-size-md);
+  color: var(--color-warning);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}

@@ -1,0 +1,44 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 16px);
+  padding: var(--space-5, 16px);
+}
+
+.previewSection {
+  width: 100%;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 6px);
+}
+
+.label {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-text-secondary, var(--mac-text-sec, rgba(255, 255, 255, 0.65)));
+}
+
+.summary {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-text-secondary, var(--mac-text-sec, rgba(255, 255, 255, 0.65)));
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: var(--space-2, 6px);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4, 12px);
+}
+
+.buttonRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 6px);
+  margin-top: var(--space-4, 12px);
+  padding-top: var(--space-4, 12px);
+  border-top: 1px solid var(--color-separator, var(--mac-separator, rgba(255, 255, 255, 0.1)));
+}

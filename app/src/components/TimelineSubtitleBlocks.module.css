@@ -1,0 +1,88 @@
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--color-warning) 72%, white 18%);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: none;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.block {
+  position: absolute;
+  height: 22px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 24%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 68%, var(--color-panel-solid));
+  overflow: hidden;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+.blockSelected {
+  border-color: color-mix(in srgb, var(--color-system-blue) 78%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--color-system-blue) 55%, transparent),
+    0 4px 12px color-mix(in srgb, var(--color-system-blue) 28%, transparent);
+  background: color-mix(in srgb, var(--color-system-blue) 38%, var(--color-panel-solid));
+}
+
+.text {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  color: color-mix(in srgb, var(--color-text-primary) 92%, white 8%);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  line-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.marqueeRect {
+  position: absolute;
+  border: 1px dashed color-mix(in srgb, var(--color-system-blue) 72%, transparent);
+  background: color-mix(in srgb, var(--color-system-blue) 18%, transparent);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.contextMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+
+.contextMenuIcon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.contextMenuLabel {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

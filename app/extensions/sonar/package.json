@@ -1,0 +1,35 @@
+{
+  "name": "@lingji/sonar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "声呐 Sonar — 抖音博主监听 Chrome 扩展（Manifest V3，独立工程，与 Electron 应用隔离）",
+  "scripts": {
+    "copy-ffmpeg-assets": "node scripts/copy-ffmpeg-assets.mjs",
+    "predev": "node scripts/copy-ffmpeg-assets.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/copy-ffmpeg-assets.mjs",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@tanstack/react-virtual": "^3.14.3",
+    "idb": "^8.0.3",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.0",
+    "@types/chrome": "^0.1.43",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
+  }
+}

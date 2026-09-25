@@ -1,0 +1,240 @@
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  min-width: 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--color-separator);
+}
+
+.sectionTitle {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.pillRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pillItem {
+  min-height: 22px;
+  padding: 3px var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.pillItem[aria-pressed='true'] {
+  font-weight: 600;
+}
+
+.fieldStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldLabel {
+  flex-shrink: 0;
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.textInput,
+.textArea,
+.promptArea {
+  padding: var(--space-4) var(--space-5);
+  border-color: var(--color-separator);
+  background: var(--color-panel-elevated);
+  color: var(--color-text-primary);
+  box-shadow: none;
+}
+
+.textInput {
+  min-height: 32px;
+  font-size: var(--font-size-md);
+}
+
+.textArea {
+  min-height: 72px;
+  font-size: var(--font-size-sm);
+}
+
+.promptArea {
+  min-height: 48px;
+  font-size: var(--font-size-sm);
+}
+
+.promptArea::placeholder,
+.textArea::placeholder {
+  color: var(--color-text-disabled);
+  font-size: var(--font-size-sm);
+}
+
+.inlineFieldRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.durationField {
+  flex-shrink: 0;
+  width: 160px;
+}
+
+.inlineSpacer {
+  flex: 1;
+}
+
+.previewFrameShell {
+  height: 130px;
+  overflow: hidden;
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-lg);
+  background: var(--color-preview-bg);
+}
+
+.importedSource {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.importedSourceBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-system-blue) 12%, transparent);
+  color: color-mix(in srgb, var(--color-system-blue) 80%, var(--color-text-primary));
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.importedSourceName {
+  min-width: 0;
+  color: color-mix(in srgb, var(--color-text-primary) 72%, transparent);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewStage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-preview-bg);
+}
+
+.previewCanvas {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.previewFrame {
+  position: absolute;
+}
+
+.previewFrameFullscreen {
+  inset: 0;
+}
+
+.previewFramePip {
+  position: absolute;
+}
+
+.previewCardSurface {
+  width: 100%;
+  height: 100%;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.previewPlaceholder {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.previewIcon {
+  color: var(--color-text-disabled);
+}
+
+.previewHint {
+  color: var(--color-text-disabled);
+  font-size: var(--font-size-sm);
+}
+
+.previewBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-info);
+  color: var(--color-system-blue);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.actionBtn {
+  flex: 1 1 0;
+}
+
+.dangerTitle {
+  color: var(--color-danger);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+.errorText {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  padding: 0 var(--space-6) var(--space-5);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

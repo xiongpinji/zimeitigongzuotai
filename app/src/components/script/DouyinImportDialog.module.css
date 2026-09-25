@@ -1,0 +1,205 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.sourceTabs {
+  width: 100%;
+}
+
+.sourcePane {
+  border-radius: var(--radius-xl);
+  background: var(--color-panel-bg);
+}
+
+.linkBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.filePicker {
+  min-height: 72px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-separator);
+  background: var(--color-preview-bg);
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.filePickerActive {
+  border-color: var(--color-system-blue);
+  background: color-mix(in srgb, var(--color-system-blue) 9%, var(--color-preview-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-system-blue) 52%, transparent);
+}
+
+.fileIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--color-text-tertiary);
+}
+
+.filePickerActive .fileIcon,
+.fileIconFilled {
+  color: var(--color-system-blue);
+  background: rgba(10, 132, 255, 0.14);
+}
+
+.fileInfo {
+  min-width: 0;
+}
+
+.fileName {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileHint {
+  margin-top: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errorText {
+  margin-top: var(--space-4);
+  color: var(--color-danger);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+}
+
+.progressBox,
+.resultBox {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-separator);
+  background: var(--color-panel-bg);
+  padding: var(--space-7);
+}
+
+.progressHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-5);
+}
+
+.progressLabel,
+.progressPercent {
+  font-size: var(--font-size-md);
+}
+
+.progressLabel {
+  color: var(--color-text-secondary);
+}
+
+.progressPercent {
+  color: var(--color-system-blue);
+  font-weight: 600;
+}
+
+.statusText {
+  margin-top: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.resultBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.resultHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.resultTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  line-height: var(--line-height-normal);
+}
+
+.resultSubtitle {
+  margin-top: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.previewFrame {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: #000;
+  border: 1px solid var(--color-separator);
+}
+
+.videoPreview {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  background: #000;
+}
+
+.audioPreview {
+  width: 100%;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-3) var(--space-6);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+}
+
+.metaLabel {
+  color: var(--color-text-tertiary);
+}
+
+.metaValue {
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.resultActions {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .filePicker {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .filePicker > button {
+    grid-column: 1 / -1;
+  }
+}

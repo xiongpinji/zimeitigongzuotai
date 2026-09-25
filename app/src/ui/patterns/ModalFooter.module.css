@@ -1,0 +1,16 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.extra {
+  margin-right: auto;
+}
+
+@media (max-width: 720px) {
+  .root {
+    flex-wrap: wrap;
+  }
+}

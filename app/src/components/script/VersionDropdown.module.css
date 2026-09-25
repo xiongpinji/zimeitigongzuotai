@@ -1,0 +1,201 @@
+/* VersionDropdown — macOS 专业工具风格版本历史下拉面板 */
+
+/* 触发按钮 */
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s, color 0.12s;
+}
+
+.trigger:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
+}
+
+.trigger .icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+
+.trigger .chevron {
+  width: 10px;
+  height: 10px;
+  opacity: 0.5;
+  transition: transform 0.15s;
+}
+
+.trigger[data-open="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+/* 下拉面板 */
+.panel {
+  width: 340px;
+  background: var(--color-panel-elevated);
+  overflow: hidden;
+}
+
+/* 面板头 — 筛选 tab */
+.filterBar {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.filterTab {
+  flex: 1;
+  padding: 4px 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.filterTab:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
+}
+
+.filterTab[data-active="true"] {
+  background: color-mix(in srgb, var(--color-selection-blue) 16%, transparent);
+  color: var(--color-selection-blue);
+  font-weight: 600;
+}
+
+/* 版本列表容器 */
+.list {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* 空状态 / 加载 */
+.empty {
+  padding: 24px 16px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  text-align: center;
+}
+
+/* 单条版本 */
+.versionItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 1px solid var(--color-bg-subtle);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.versionItem:hover {
+  background: var(--color-bg-muted);
+}
+
+.versionItem:last-child {
+  border-bottom: none;
+}
+
+/* 左侧彩色竖条 */
+.bar {
+  width: 3px;
+  min-width: 3px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+/* AI 铁律：AI 来源标识使用 #a78bfa 紫色 */
+.bar[data-source="ai"] {
+  background: #a78bfa;
+}
+
+.bar[data-source="manual"] {
+  background: var(--color-text-muted);
+}
+
+/* 版本内容区 */
+.versionContent {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 第一行：来源标签 + 时间 + 当前版本 */
+.versionRow1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.sourceTag {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* AI 铁律：AI 来源标签复用紫色系 */
+.sourceTag[data-source="ai"] {
+  color: #c4b5fd;
+  background: color-mix(in srgb, #a78bfa 15%, transparent);
+  border: 1px solid color-mix(in srgb, #a78bfa 25%, transparent);
+}
+
+.sourceTag[data-source="manual"] {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-muted);
+}
+
+.timeLabel {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.currentBadge {
+  font-size: var(--font-size-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-selection-blue) 16%, transparent);
+  color: var(--color-selection-blue);
+  font-weight: 600;
+  margin-left: auto;
+}
+
+/* 第二行：模型信息 + 标签 */
+.versionRow2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.versionLabel {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

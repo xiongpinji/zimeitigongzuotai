@@ -1,0 +1,9 @@
+.formStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.saveButton {
+  align-self: flex-start;
+}

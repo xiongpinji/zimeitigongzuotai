@@ -1,0 +1,232 @@
+.container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: var(--font-size-md);
+  letter-spacing: 0.18em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.viewToggle {
+  display: flex;
+  gap: var(--space-2);
+  padding: 2px;
+  background: var(--color-panel-elevated);
+  border-radius: var(--radius-md);
+}
+
+/* 网格视图 */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-8);
+}
+
+.card {
+  position: relative;
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-system-blue);
+  box-shadow: var(--shadow-card);
+}
+
+.coverArea {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+  background: var(--color-preview-bg);
+  overflow: hidden;
+}
+
+.coverImage,
+.coverSVG {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.infoArea {
+  padding: 14px var(--space-8) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.projectName {
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.projectMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metaItem {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary-strong);
+}
+
+.projectPath {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.removeButton {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.card:hover .removeButton {
+  opacity: 1;
+}
+
+/* 列表视图（原生 table 风格） */
+
+.table {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-window-bg);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 0.5px solid var(--color-separator);
+}
+
+.tableHeader {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--space-6);
+  background: var(--color-panel-elevated);
+  border-bottom: 0.5px solid var(--color-separator);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary-strong);
+  user-select: none;
+}
+
+.tableBody {
+  display: flex;
+  flex-direction: column;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-6);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+  border-bottom: 0.5px solid color-mix(in srgb, var(--color-separator) 50%, transparent);
+}
+
+.listRow:last-child {
+  border-bottom: none;
+}
+
+.listRow:hover {
+  background: color-mix(in srgb, var(--color-system-blue) 12%, transparent);
+}
+
+.listRow:active {
+  background: color-mix(in srgb, var(--color-system-blue) 20%, transparent);
+}
+
+.colName {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-lg);
+  font-weight: 400;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: var(--space-8);
+}
+
+.rowThumb {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-preview-bg);
+}
+
+.rowThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.colDate {
+  flex: 0 0 90px;
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary-strong);
+  white-space: nowrap;
+  text-align: left;
+  padding-right: var(--space-8);
+}
+
+.colPath {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: var(--space-4);
+}
+
+.colAction {
+  flex: 0 0 24px;
+}
+
+.listRemoveButton {
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+  flex-shrink: 0;
+}
+
+.listRow:hover .listRemoveButton {
+  opacity: 1;
+}

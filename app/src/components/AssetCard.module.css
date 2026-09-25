@@ -1,0 +1,197 @@
+/* 方形网格卡片 — 与 AI 封面候选保持同规格 (96×96) */
+.root {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-lg);
+  background: var(--color-panel-elevated);
+  border: 1px solid var(--color-control-bg);
+  overflow: hidden;
+  cursor: default;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.draggable {
+  cursor: grab;
+  transition:
+    border-color var(--motion-fast, 120ms),
+    box-shadow var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.draggable:hover {
+  border-color: color-mix(in srgb, var(--color-text-muted) 56%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.draggable:active {
+  transform: scale(0.96);
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  border-color: var(--color-text-muted);
+}
+
+/* compact 模式下保持方形大小不变 */
+.compact {
+  width: 96px;
+  height: 96px;
+}
+
+.regular {
+  width: 96px;
+  height: 96px;
+}
+
+/* 移除素材按钮 — hover 可见,右上角 */
+.removeButton {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.85);
+  transition:
+    opacity var(--motion-fast, 120ms) ease,
+    transform var(--motion-fast, 120ms) ease,
+    background var(--motion-fast, 120ms) ease;
+}
+
+.root:hover .removeButton,
+.removeButton:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.removeButton:hover {
+  background: var(--color-danger);
+}
+
+.removeButton:focus-visible {
+  outline: 2px solid var(--color-system-blue);
+  outline-offset: 1px;
+}
+
+/* 顶部带色背景区域 */
+.iconArea {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--icon-area-bg, var(--color-panel-bg));
+  overflow: hidden;
+}
+
+/* 缩略图 */
+.thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 视频播放角标 */
+.playBadge {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* 有缩略图时不需要类型着色背景 */
+.hasThumbnail .iconArea {
+  --icon-area-bg: transparent;
+}
+
+/* 按素材类型着色 */
+.typeVideo .iconArea {
+  --icon-area-bg: color-mix(in srgb, var(--color-selection-blue) 18%, var(--color-panel-bg));
+}
+
+.typeImage .iconArea {
+  --icon-area-bg: color-mix(in srgb, var(--color-success) 14%, var(--color-panel-bg));
+}
+
+.typeAudio .iconArea {
+  --icon-area-bg: color-mix(in srgb, var(--color-brand-warm) 18%, var(--color-panel-bg));
+}
+
+.typeSrt .iconArea {
+  --icon-area-bg: color-mix(in srgb, var(--color-brand-accent) 14%, var(--color-panel-bg));
+}
+
+.typeText .iconArea {
+  --icon-area-bg: color-mix(in srgb, var(--color-success) 12%, var(--color-panel-bg));
+}
+
+/* 底部文件名区域 */
+.nameArea {
+  flex-shrink: 0;
+  padding: 0 3px 3px;
+  text-align: center;
+}
+
+.name {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* ghost 导入卡片 */
+.ghost {
+  background: var(--color-bg-subtle);
+  border: 1px dashed color-mix(in srgb, var(--color-text-muted) 36%, transparent);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition:
+    background var(--motion-fast, 120ms),
+    border-color var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.ghost:hover {
+  background: var(--color-bg-muted);
+  border-color: var(--color-text-muted);
+}
+
+.ghost:active {
+  transform: scale(0.94);
+}
+
+.ghostLabel {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}

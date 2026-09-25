@@ -1,0 +1,155 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and upload, for example v1.3.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    strategy:
+      matrix:
+        arch: [arm64, x64]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - name: Install dependencies (official registry)
+        run: npm install --registry https://registry.npmjs.org/
+        env:
+          ELECTRON_MIRROR: ''
+          npm_config_disturl: ''
+
+      - name: Build
+        run: npm run build
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Bundle Remotion
+        run: npm run bundle:remotion
+
+      - name: Package macOS app
+        run: npm run package:mac
+        env:
+          ARCH: ${{ matrix.arch }}
+
+      - name: Create DMG
+        run: npm run dmg:mac
+        env:
+          ARCH: ${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: release/*.dmg
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - name: Install dependencies (official registry)
+        run: npm install --registry https://registry.npmjs.org/
+        env:
+          ELECTRON_MIRROR: ''
+          npm_config_disturl: ''
+
+      - name: Build
+        run: npm run build
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Bundle Remotion
+        run: npm run bundle:remotion
+
+      - name: Package Windows app
+        run: npm run package:win
+        env:
+          ARCH: x64
+
+      - name: Create zip archive
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $name = if ($pkg.productName) { $pkg.productName } else { $pkg.name }
+          $version = $pkg.version
+          $srcDir = "release/${name}-win32-x64"
+          $zipName = "release/${name}-${version}-win-x64.zip"
+          Compress-Archive -Path "$srcDir/*" -DestinationPath $zipName
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: release/*.zip
+          if-no-files-found: error
+
+  publish-release:
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          mkdir -p release-assets
+
+          mac_arm64="$(find artifacts -type f -name '*arm64.dmg' -print -quit)"
+          mac_x64="$(find artifacts -type f -name '*x64.dmg' -print -quit)"
+          win_x64="$(find artifacts -type f -name '*win-x64.zip' -print -quit)"
+
+          test -n "$mac_arm64"
+          test -n "$mac_x64"
+          test -n "$win_x64"
+
+          cp "$mac_arm64" "release-assets/lingji-cut-${version}-mac-arm64.dmg"
+          cp "$mac_x64" "release-assets/lingji-cut-${version}-mac-x64.dmg"
+          cp "$win_x64" "release-assets/lingji-cut-${version}-win-x64.zip"
+
+          ls -lh release-assets/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: release-assets/*
+          fail_on_unmatched_files: true

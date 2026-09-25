@@ -1,0 +1,48 @@
+/* Agent Markdown 渲染样式 */
+.agent-markdown p { margin: 0 0 8px; }
+.agent-markdown p:last-child { margin-bottom: 0; }
+.agent-markdown pre {
+  background: #1A1A1C;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.agent-markdown code {
+  font-family: var(--font-mono, "SF Mono", Menlo, Monaco, "Courier New", monospace);
+  font-size: 12px;
+}
+.agent-markdown :not(pre) > code {
+  background: #2C2C2E;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.agent-markdown ul, .agent-markdown ol { padding-left: 20px; margin: 4px 0; }
+.agent-markdown table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.agent-markdown th, .agent-markdown td {
+  border: 1px solid #38383A;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 12px;
+}
+.agent-markdown th { background: #2C2C2E; font-weight: 600; }
+.agent-markdown a { color: #0A84FF; text-decoration: none; }
+.agent-markdown blockquote {
+  border-left: 3px solid #48484A;
+  padding-left: 12px;
+  margin: 8px 0;
+  color: #EBEBF580;
+}
+.agent-markdown h1, .agent-markdown h2, .agent-markdown h3 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+.agent-markdown h1 { font-size: 16px; }
+.agent-markdown h2 { font-size: 15px; }
+.agent-markdown h3 { font-size: 14px; }
+
+/* Spin animation for loading indicators */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

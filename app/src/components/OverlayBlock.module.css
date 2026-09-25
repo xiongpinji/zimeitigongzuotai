@@ -1,0 +1,106 @@
+.root {
+  position: absolute;
+  top: 3px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--overlay-color, var(--color-selection-blue)) 36%, transparent);
+  background: color-mix(in srgb, var(--color-panel-elevated) 82%, var(--color-timeline-bg));
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  cursor: grab;
+  /* 选中态切换 + hover 亮度柔和过渡,但拖拽中会被 inline style 的 transition:none 覆盖 */
+  transition:
+    border-color 180ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 260ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    filter 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
+  will-change: transform;
+}
+
+.root:hover:not(.locked) {
+  filter: brightness(1.12);
+}
+
+.locked {
+  cursor: default;
+}
+
+.selected {
+  border-color: var(--color-system-blue);
+  background: color-mix(
+    in srgb,
+    var(--color-system-blue) 14%,
+    color-mix(in srgb, var(--color-panel-elevated) 82%, var(--color-timeline-bg))
+  );
+  box-shadow:
+    0 0 0 2px var(--color-system-blue),
+    0 0 0 4px color-mix(in srgb, var(--color-system-blue) 32%, transparent),
+    0 0 14px color-mix(in srgb, var(--color-system-blue) 48%, transparent);
+  z-index: 2;
+}
+
+/* 拖拽中的电梯效果 — 通过 data 属性触发,不占用 selected */
+.root[data-dragging="true"] {
+  box-shadow:
+    0 0 0 1px var(--overlay-color, var(--color-selection-blue)),
+    0 16px 32px rgba(0, 0, 0, 0.42),
+    0 0 14px color-mix(in srgb, var(--overlay-color, var(--color-selection-blue)) 40%, transparent);
+}
+
+.accentLine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--overlay-color, var(--color-selection-blue));
+}
+
+.thumbnail {
+  height: 100%;
+  flex: 0 0 auto;
+  border-right: 1px solid color-mix(in srgb, var(--overlay-color, var(--color-selection-blue)) 24%, transparent);
+  background: color-mix(in srgb, var(--color-panel-solid) 78%, black);
+}
+
+.content {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary);
+  min-width: 0;
+  flex: 1;
+}
+
+.contentWithThumbnail {
+  padding: 0 8px;
+}
+
+.contentStandalone {
+  padding: 0 10px;
+}
+
+.badge {
+  color: var(--overlay-color, var(--color-selection-blue));
+  margin-right: 6px;
+}
+
+.resizeHandle {
+  margin-left: auto;
+  width: 8px;
+  align-self: stretch;
+  cursor: ew-resize;
+  background: color-mix(in srgb, var(--color-window-sheen) 18%, transparent);
+}
+
+.collisionOverlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-danger) 24%, transparent);
+  border: 1.5px solid var(--color-danger);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}

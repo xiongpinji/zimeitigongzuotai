@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="zh-CN" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #08090b;
+        color: #f6f8fb;
+        font-family: sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background:
+          linear-gradient(115deg, rgba(10, 132, 255, 0.18), rgba(8, 9, 11, 0) 34%),
+          linear-gradient(245deg, rgba(255, 184, 107, 0.1), rgba(8, 9, 11, 0) 42%),
+          #08090b;
+      }
+
+      audio {
+        display: none;
+      }
+
+      .grain,
+      .scan-lines {
+        position: absolute;
+        inset: 0;
+        z-index: 90;
+        pointer-events: none;
+      }
+
+      .grain {
+        opacity: 0.1;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.045) 1px, rgba(255, 255, 255, 0) 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, rgba(255, 255, 255, 0) 1px);
+        background-size: 5px 5px, 9px 9px;
+        mix-blend-mode: overlay;
+      }
+
+      .scan-lines {
+        z-index: 4;
+        opacity: 0.14;
+        background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, rgba(255, 255, 255, 0) 1px);
+        background-size: 96px 100%;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        opacity: 0;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 26%),
+          #08090b;
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 8;
+        width: 100%;
+        height: 100%;
+        padding: 86px 106px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 70px;
+      }
+
+      .copy {
+        width: 690px;
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .eyebrow {
+        color: #8fc2ff;
+        font-size: 25px;
+        line-height: 1.24;
+        font-weight: 700;
+      }
+
+      .title {
+        color: #f6f8fb;
+        font-family: sans-serif;
+        font-size: 86px;
+        line-height: 1.04;
+        font-weight: 780;
+        letter-spacing: 0;
+      }
+
+      .title.large {
+        max-width: 1120px;
+        font-size: 112px;
+      }
+
+      .body {
+        max-width: 720px;
+        color: #d8dee8;
+        font-size: 31px;
+        line-height: 1.46;
+        font-weight: 360;
+      }
+
+      .caption {
+        display: none;
+        width: 100%;
+        max-width: 1080px;
+        padding: 18px 24px;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 20px;
+        color: #f6f8fb;
+        background: rgba(8, 9, 11, 0.66);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+        backdrop-filter: blur(24px);
+        font-size: 27px;
+        line-height: 1.36;
+        font-weight: 540;
+      }
+
+      .hero .scene-content,
+      .closing .scene-content {
+        justify-content: center;
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .hero .copy,
+      .closing .copy {
+        width: 1180px;
+        align-items: center;
+      }
+
+      .hero-image {
+        position: absolute;
+        inset: -36px -20px 0 -20px;
+        width: calc(100% + 40px);
+        height: calc(100% + 36px);
+        object-fit: cover;
+        object-position: center;
+        opacity: 0.54;
+        filter: saturate(1.06) contrast(1.02);
+        transform: scale(1.06);
+      }
+
+      .hero-shade {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(8, 9, 11, 0.92), rgba(8, 9, 11, 0.44), rgba(8, 9, 11, 0.9)),
+          linear-gradient(180deg, rgba(8, 9, 11, 0.2), rgba(8, 9, 11, 0.88));
+      }
+
+      .shot-stage {
+        position: relative;
+        flex: 1;
+        height: 760px;
+        perspective: 1600px;
+      }
+
+      .shot {
+        position: absolute;
+        overflow: hidden;
+        border-radius: 24px;
+        background: #15171c;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 54px 160px rgba(0, 0, 0, 0.68), 0 0 86px rgba(10, 132, 255, 0.12);
+      }
+
+      .shot img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .shot.primary {
+        width: 1040px;
+        height: 668px;
+        top: 48px;
+        right: 0;
+        transform: rotateY(-8deg) rotateX(3deg);
+      }
+
+      .shot.secondary {
+        width: 500px;
+        height: 321px;
+        left: 0;
+        bottom: 22px;
+        transform: rotateY(10deg) rotateX(-2deg);
+      }
+
+      .shot.vertical {
+        width: 470px;
+        height: 620px;
+        right: 64px;
+        top: 70px;
+      }
+
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        max-width: 690px;
+      }
+
+      .pill {
+        padding: 16px 21px;
+        border-radius: 999px;
+        color: #f6f8fb;
+        background: rgba(255, 255, 255, 0.075);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        font-size: 24px;
+        line-height: 1.15;
+        font-weight: 650;
+      }
+
+      .pill.hot {
+        color: #08090b;
+        background: #ffb86b;
+        border-color: rgba(255, 184, 107, 0.8);
+      }
+
+      .platforms {
+        width: 760px;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 16px;
+      }
+
+      .platform {
+        height: 142px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.07);
+        color: #f6f8fb;
+        font-size: 31px;
+        font-weight: 760;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.32);
+      }
+
+      .metric-row {
+        display: flex;
+        gap: 18px;
+        justify-content: center;
+        margin-top: 20px;
+      }
+
+      .metric {
+        min-width: 220px;
+        padding: 18px 24px;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .metric strong {
+        display: block;
+        color: #8fc2ff;
+        font-family: monospace;
+        font-size: 38px;
+        line-height: 1.1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 8px;
+        color: #b7c0ce;
+        font-size: 21px;
+      }
+
+      .transition {
+        position: absolute;
+        inset: 0;
+        z-index: 82;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, rgba(10, 132, 255, 0), rgba(10, 132, 255, 0.35), rgba(246, 248, 251, 0.95), rgba(255, 184, 107, 0.2), rgba(8, 9, 11, 0));
+      }
+
+      .light-sweep {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        opacity: 0.32;
+        background: linear-gradient(110deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
+      }
+
+      .sync-captions {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 66px;
+        z-index: 76;
+        display: flex;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      .sync-caption {
+        position: absolute;
+        width: auto;
+        max-width: 1540px;
+        min-height: 64px;
+        padding: 18px 28px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(8, 9, 11, 0.78);
+        box-shadow: 0 28px 92px rgba(0, 0, 0, 0.48);
+        color: #f6f8fb;
+        backdrop-filter: blur(24px);
+        font-size: 30px;
+        line-height: 1.34;
+        font-weight: 740;
+        text-align: center;
+        opacity: 0;
+        visibility: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="42.92"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio id="voiceover" data-start="0" data-duration="42.92" data-track-index="20" src="generated/voiceover-human.mp3" data-volume="1"></audio>
+      <audio id="bgm" data-start="0" data-duration="42.92" data-track-index="21" src="generated/bgm.mp3" data-volume="0.13"></audio>
+
+      <section id="scene-1" class="scene hero">
+        <img class="hero-image" src="assets-current/02-video-editor.png" alt="灵机剪影视频编辑器最新界面" data-layout-allow-overflow />
+        <div class="hero-shade"></div>
+        <div class="light-sweep" data-layout-allow-overflow></div>
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">Lingji Cut 1.3</div>
+            <div class="title large">这不是一次小更新。</div>
+            <div class="body">从 AI 剪辑按钮，进化成一条本地优先的视频创作流水线。</div>
+            <div class="caption">从 1.0 上线到现在，灵机剪影已经不只是一个 AI 剪辑按钮。它变成了一条本地优先的视频创作流水线。</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-2" class="scene">
+        <div class="scan-lines"></div>
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">选题采风</div>
+            <div class="title">刷到选题，直接进入生产线。</div>
+            <div class="body">灵机采风 Chrome 插件监听博主、采集公开视频、本地转录，再把爆款拆解送进待创作箱。</div>
+            <div class="flow">
+              <div class="pill hot">监听博主</div>
+              <div class="pill">采集视频</div>
+              <div class="pill">本地转录</div>
+              <div class="pill">爆款拆解</div>
+            </div>
+            <div class="caption">第一步，用灵机采风 Chrome 插件监听博主，采集视频，本地转录，再做爆款拆解。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="shot primary"><img src="assets-current/13-sonar-extension-workbench.png" alt="灵机采风 Chrome 扩展工作台" /></div>
+            <div class="shot secondary"><img src="assets-current/14-sonar-extension-sidepanel.png" alt="灵机采风 Chrome 扩展侧边栏" /></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-3" class="scene">
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">内置 Pi Agent</div>
+            <div class="title">AI 不只聊天，直接改稿改视频。</div>
+            <div class="body">Pi Agent 复用应用里的模型配置，直接编辑文稿、动画和时间线，编辑器实时热重载。</div>
+            <div class="flow">
+              <div class="pill hot">改文稿</div>
+              <div class="pill">改动画</div>
+              <div class="pill">改时间线</div>
+              <div class="pill">实时刷新</div>
+            </div>
+            <div class="caption">第二步，把素材推到待创作箱，一键生成初稿。内置 Pi Agent 可以直接改稿、改动画、改时间线，编辑器实时刷新。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="shot primary"><img src="assets-current/06-script-agent.png" alt="写稿工作台内置 Pi Agent" /></div>
+            <div class="shot secondary"><img src="assets-current/08-settings-agent-skills.png" alt="AI Agent 与 Skills 配置" /></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-4" class="scene">
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">一键生产</div>
+            <div class="title">口播、字幕、信息卡、封面一起跑。</div>
+            <div class="body">Remotion Motion Card、逐拍动画指导、多 Provider TTS 与多比例封面，把内容变成可发布的视频资产。</div>
+            <div class="flow">
+              <div class="pill">TTS</div>
+              <div class="pill">字幕</div>
+              <div class="pill hot">Motion Card</div>
+              <div class="pill">封面</div>
+            </div>
+            <div class="caption">第三步，自动生成口播、字幕、Remotion 信息卡和多比例封面。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="shot primary"><img src="assets-current/01-video-editor-agent.png" alt="视频编辑器与 Agent 协作" /></div>
+            <div class="shot secondary"><img src="assets-current/10-prompt-templates.png" alt="提示词与动画模板配置" /></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-5" class="scene">
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">发布闭环</div>
+            <div class="title">做完视频，继续一键发出去。</div>
+            <div class="body">多平台账号、发布历史、多比例封面、标题简介标签、B 站分区 AI 推荐，都被收进发布工作台。</div>
+            <div class="caption">最后，发布到 B 站、抖音、视频号、快手和小红书。</div>
+          </div>
+          <div class="shot-stage">
+            <div class="shot primary"><img src="assets-current/12-publish-platform-selection.png" alt="多平台一键发布选择" /></div>
+            <div class="shot secondary"><img src="assets-current/09-settings-publish-accounts.png" alt="发布账号配置" /></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-6" class="scene closing">
+        <div class="scene-content">
+          <div class="copy">
+            <div class="eyebrow">Local-first AI Video Workstation</div>
+            <div class="title large">灵机剪影 1.3</div>
+            <div class="body">从选题到发布，把创作者最烦的搬运流程，收进一个桌面工作台。</div>
+            <div class="metric-row">
+              <div class="metric"><strong>271</strong><span>次主线提交</span></div>
+              <div class="metric"><strong>5</strong><span>个发布平台</span></div>
+              <div class="metric"><strong>1</strong><span>条创作闭环</span></div>
+            </div>
+            <div class="caption">灵机剪影 1.3，从选题到发布，把创作者最烦的搬运流程，收进一个桌面工作台。</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="sync-captions" aria-hidden="true">
+        <div id="cap-0" class="sync-caption">从 1.0 上线到现在</div>
+        <div id="cap-1" class="sync-caption">灵机剪影已经不只是一个 AI 剪辑按钮</div>
+        <div id="cap-2" class="sync-caption">它变成了一条本地优先的视频创作流水线</div>
+        <div id="cap-3" class="sync-caption">第一步，用灵机采风 Chrome 插件监听博主，采集视频</div>
+        <div id="cap-4" class="sync-caption">本地转录，再做爆款拆解</div>
+        <div id="cap-5" class="sync-caption">第二步，把素材推到待创作箱</div>
+        <div id="cap-6" class="sync-caption">一键生成初稿</div>
+        <div id="cap-7" class="sync-caption">内置 Pi Agent 可以直接改稿、改动画、改时间线</div>
+        <div id="cap-8" class="sync-caption">编辑器实时刷新</div>
+        <div id="cap-9" class="sync-caption">第三步</div>
+        <div id="cap-10" class="sync-caption">自动生成口播、字幕、Remotion 信息卡和多比例封面</div>
+        <div id="cap-11" class="sync-caption">最后，发布到 B 站、抖音、视频号、快手和小红书</div>
+        <div id="cap-12" class="sync-caption">灵机剪影 1.3</div>
+        <div id="cap-13" class="sync-caption">从选题到发布</div>
+        <div id="cap-14" class="sync-caption">把创作者最烦的搬运流程</div>
+        <div id="cap-15" class="sync-caption">收进一个桌面工作台</div>
+      </div>
+
+      <div class="transition"></div>
+      <div class="grain"></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const durations = [8.74, 6.81, 9.19, 5.08, 4.38, 8.72];
+      const sceneStarts = [0];
+      for (let i = 0; i < durations.length - 1; i += 1) {
+        sceneStarts.push(sceneStarts[i] + durations[i]);
+      }
+      const totalDuration = durations.reduce((sum, value) => sum + value, 0);
+      const scenes = ["#scene-1", "#scene-2", "#scene-3", "#scene-4", "#scene-5", "#scene-6"];
+      const captionGroups = [
+        { id: "#cap-0", start: 0.379, end: 1.94 },
+        { id: "#cap-1", start: 1.94, end: 5.18 },
+        { id: "#cap-2", start: 5.35, end: 8.74 },
+        { id: "#cap-3", start: 8.74, end: 13.07 },
+        { id: "#cap-4", start: 13.07, end: 15.53 },
+        { id: "#cap-5", start: 15.55, end: 18.05 },
+        { id: "#cap-6", start: 18.05, end: 19.35 },
+        { id: "#cap-7", start: 19.35, end: 22.99 },
+        { id: "#cap-8", start: 22.99, end: 24.63 },
+        { id: "#cap-9", start: 24.74, end: 25.5 },
+        { id: "#cap-10", start: 25.5, end: 29.82 },
+        { id: "#cap-11", start: 29.82, end: 33.97 },
+        { id: "#cap-12", start: 34.2, end: 35.54 },
+        { id: "#cap-13", start: 35.54, end: 36.82 },
+        { id: "#cap-14", start: 36.82, end: 39.02 },
+        { id: "#cap-15", start: 39.02, end: 40.8 },
+      ];
+
+      tl.set(".transition", { yPercent: 100 }, 0);
+      tl.set(".light-sweep", { xPercent: -70 }, 0);
+      tl.set(".sync-caption", { opacity: 0, visibility: "hidden" }, 0);
+
+      function fromIfAny(selector, vars, at) {
+        const targets = gsap.utils.toArray(selector);
+        if (targets.length > 0) {
+          tl.from(targets, vars, at);
+        }
+      }
+
+      function enterScene(scene, at) {
+        tl.set(scene, { opacity: 1, zIndex: 12 }, at);
+        fromIfAny(`${scene} .eyebrow`, { opacity: 0, y: 34, duration: 0.52, ease: "power3.out" }, at + 0.16);
+        fromIfAny(`${scene} .title`, { opacity: 0, y: 64, scale: 0.985, duration: 0.78, ease: "expo.out" }, at + 0.28);
+        fromIfAny(`${scene} .body`, { opacity: 0, y: 28, duration: 0.58, ease: "sine.out" }, at + 0.62);
+        fromIfAny(`${scene} .caption`, { opacity: 0, y: 24, duration: 0.54, ease: "power2.out" }, at + 0.92);
+        fromIfAny(`${scene} .pill`, { opacity: 0, y: 24, scale: 0.94, duration: 0.36, stagger: 0.08, ease: "power4.out" }, at + 1.02);
+        fromIfAny(`${scene} .shot`, { opacity: 0, y: 70, rotationX: -7, scale: 0.93, duration: 0.82, stagger: 0.14, ease: "back.out(1.14)" }, at + 0.34);
+        fromIfAny(`${scene} .platform`, { opacity: 0, y: 44, scale: 0.92, duration: 0.48, stagger: 0.09, ease: "expo.out" }, at + 0.48);
+        fromIfAny(`${scene} .metric`, { opacity: 0, y: 34, scale: 0.95, duration: 0.48, stagger: 0.12, ease: "power3.out" }, at + 0.96);
+        fromIfAny(`${scene} .hero-image`, { opacity: 0, scale: 1.12, duration: 1.1, ease: "sine.out" }, at);
+        fromIfAny(`${scene} .hero-shade`, { opacity: 0, duration: 0.72, ease: "sine.out" }, at);
+      }
+
+      function transition(at, previousScene, nextScene, intense = false) {
+        tl.to(".transition", { yPercent: -108, duration: intense ? 0.42 : 0.56, ease: intense ? "expo.inOut" : "power2.inOut" }, at);
+        tl.set(nextScene, { opacity: 1, zIndex: 14 }, at);
+        tl.set(previousScene, { opacity: 0, zIndex: 1 }, at + (intense ? 0.44 : 0.58));
+        tl.set(".transition", { yPercent: 100 }, at + (intense ? 0.46 : 0.6));
+      }
+
+      scenes.forEach((scene, index) => enterScene(scene, sceneStarts[index]));
+      transition(sceneStarts[1], "#scene-1", "#scene-2");
+      transition(sceneStarts[2], "#scene-2", "#scene-3");
+      transition(sceneStarts[3], "#scene-3", "#scene-4");
+      transition(sceneStarts[4], "#scene-4", "#scene-5", true);
+      transition(sceneStarts[5], "#scene-5", "#scene-6");
+
+      tl.to(".light-sweep", { xPercent: 160, duration: 3.2, ease: "sine.inOut" }, 0.4);
+      tl.to(".shot.primary", { y: -16, scale: 1.012, duration: 5.8, ease: "sine.inOut", stagger: 0.2 }, 1.2);
+      tl.to(".shot.secondary", { y: 14, scale: 0.988, duration: 5.8, ease: "sine.inOut", stagger: 0.2 }, 1.4);
+      tl.to("#scene-6 .scene-content", { opacity: 0, y: -18, duration: 0.72, ease: "sine.in" }, totalDuration - 0.72);
+
+      captionGroups.forEach((group) => {
+        tl.set(group.id, { visibility: "visible" }, group.start);
+        tl.fromTo(group.id, { opacity: 0, y: 18, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "power3.out", overwrite: "auto" }, group.start);
+        tl.to(group.id, { opacity: 0, y: -10, scale: 0.99, duration: 0.1, ease: "power2.in", overwrite: "auto" }, Math.max(group.start + 0.14, group.end - 0.1));
+        tl.set(group.id, { opacity: 0, visibility: "hidden" }, group.end);
+      });
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

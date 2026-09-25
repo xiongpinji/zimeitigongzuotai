@@ -1,0 +1,95 @@
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-pill);
+  background: var(--color-control-bg);
+  color: var(--color-text-secondary);
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.item[data-status='active'] {
+  border-color: var(--color-separator);
+  background: var(--color-panel-elevated);
+  color: var(--color-text-primary);
+}
+
+.item[data-status='completed'] {
+  border-color: var(--color-separator);
+  background: var(--color-panel-elevated);
+  color: var(--color-text-primary);
+}
+
+.item[data-status='error'] {
+  border-color: var(--color-separator);
+  background: var(--color-panel-elevated);
+  color: var(--color-danger);
+}
+
+.marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.72;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
+.checkIcon {
+  width: 14px;
+  height: 14px;
+}
+
+.errorGlyph {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  line-height: 1;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

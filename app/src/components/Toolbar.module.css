@@ -1,0 +1,104 @@
+.root {
+  height: 44px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-separator);
+  background: var(--color-titlebar-bg);
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.compact {
+  height: 40px;
+  padding: 0 12px;
+}
+
+.leadingCluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 168px;
+  z-index: 1;
+}
+
+/* macOS hiddenInset：为系统原生红绿灯预留空间 */
+.trafficLightSpacer {
+  width: 68px;
+  flex-shrink: 0;
+}
+
+.historyActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.historyButton {
+  color: color-mix(in srgb, var(--color-text-primary) 82%, transparent);
+  background: transparent;
+  border-radius: var(--radius-md);
+  transition:
+    color var(--motion-fast, 120ms),
+    background var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.historyButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+.historyButton:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.historyButton[data-enabled='false'] {
+  color: color-mix(in srgb, var(--color-text-tertiary) 72%, transparent);
+}
+
+/* ── 居中标题（absolute，不影响 flex 两端） ── */
+.titleArea {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.projectName {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1;
+}
+
+.saveStatus {
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+/* ── 右侧操作区 ── */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 168px;
+  justify-content: flex-end;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+}

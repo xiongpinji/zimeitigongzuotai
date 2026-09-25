@@ -1,0 +1,130 @@
+.dropZone {
+  position: relative;
+  border-radius: var(--radius-xl);
+  transition: box-shadow var(--motion-fast);
+}
+
+.dropZoneActive {
+  box-shadow: 0 0 0 2px var(--color-system-blue) inset;
+}
+
+.dropOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  background: color-mix(in srgb, var(--color-system-blue) 18%, var(--color-panel-elevated));
+  border-radius: var(--radius-xl);
+  pointer-events: none;
+  font-size: var(--font-size-md);
+  color: var(--color-system-blue);
+  font-weight: 600;
+  z-index: 1;
+}
+
+.sourceActions {
+  margin-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sourceTag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg-success);
+  border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sourceTagIcon {
+  color: var(--color-success);
+  flex-shrink: 0;
+}
+
+.sourceTagName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.sourceTagClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.sourceTagClear:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-primary);
+}
+
+.dirPickerButton {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) 14px;
+  background: var(--color-panel-elevated);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-xl);
+  color: color-mix(in srgb, var(--color-text-primary) 80%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+  text-align: left;
+}
+
+.dirPickerButton:hover {
+  border-color: var(--color-system-blue);
+  background: color-mix(in srgb, var(--color-panel-elevated) 85%, var(--color-text-primary));
+}
+
+.dirPickerText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectPath {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-bg-info);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinIcon {
+  animation: spin 1s linear infinite;
+}

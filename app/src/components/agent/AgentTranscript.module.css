@@ -1,0 +1,604 @@
+.event { width: 100%; color: var(--color-text-secondary); }
+
+.eventHeader {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  text-align: left;
+}
+
+.eventHeaderInteractive { cursor: pointer; }
+
+.eventHeaderInteractive:hover { color: var(--color-text-secondary); }
+
+.eventHeader:disabled { cursor: default; }
+
+/* 命令类工具头部与「复制命令」按钮同处一行：header 占满剩余宽度，
+   复制按钮默认隐形，悬停 / 聚焦该行时淡入，保持 macOS 工具的低噪静默态。 */
+.eventHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.eventHeaderRow .eventHeader { flex: 1 1 auto; min-width: 0; width: auto; }
+
+.eventCopyBtn,
+.commandRowCopyBtn {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.eventHeaderRow:hover .eventCopyBtn,
+.eventHeaderRow:focus-within .eventCopyBtn,
+.commandRowHeadRow:hover .commandRowCopyBtn,
+.commandRowHeadRow:focus-within .commandRowCopyBtn {
+  opacity: 1;
+}
+
+.eventIcon,
+.eventChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.eventIcon { width: 16px; height: 16px; }
+
+.eventChevron { width: 14px; height: 14px; }
+
+.eventLabel {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: currentColor;
+}
+
+.eventTitle {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 命令类工具的 subject 直接以等宽字体展示在 header 同一行；
+   .eventTitle 已负责省略号、宽度自适应，这里只追加字体族和轻微背景以提示是 shell。 */
+.eventTitleMono {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.eventStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-muted);
+}
+
+.eventStatusError { color: color-mix(in srgb, var(--color-danger) 78%, var(--color-text-primary)); }
+
+.eventStatusOk { color: color-mix(in srgb, var(--color-success) 72%, var(--color-text-primary)); }
+
+.thinkingBody,
+.toolDetails,
+.groupChildren {
+  margin-left: 7px;
+  padding-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--color-text-muted) 32%, transparent);
+}
+
+.thinkingBody {
+  margin-top: 2px;
+  margin-bottom: 12px;
+  padding-top: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thinkingCursor {
+  display: inline-block;
+  width: 6px;
+  height: 13px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--color-system-blue);
+  animation: agentBlink 1s steps(2, start) infinite;
+}
+
+.toolDetails {
+  margin-top: 3px;
+  margin-bottom: 10px;
+  padding-top: 4px;
+  padding-bottom: 2px;
+}
+
+.detailSection + .detailSection { margin-top: 8px; }
+
+.detailPre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-timeline-bg);
+  padding: 9px 10px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detailShell {
+  border-color: color-mix(in srgb, var(--color-text-primary) 10%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-panel-elevated) 72%, var(--color-timeline-bg));
+}
+
+.detailText {
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+}
+
+.groupChildren {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+  margin-bottom: 10px;
+  padding-top: 2px;
+}
+
+.commandGroupShell {
+  max-height: 260px;
+}
+
+.fileGroupBody {
+  margin: 2px 0 10px;
+}
+
+.fileSummaryList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 0 7px;
+  padding: 4px 0 0 14px;
+  border-left: 1px solid color-mix(in srgb, var(--color-text-muted) 32%, transparent);
+  list-style: none;
+}
+
+.fileSummaryItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fileSummaryButton {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  min-height: 24px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.fileSummaryButton:hover {
+  color: var(--color-text-secondary);
+}
+
+.fileSummaryAction {
+  flex: 0 0 auto;
+  color: currentColor;
+  font-weight: 500;
+}
+
+.fileSummaryPath {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileSummaryChevron {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.fileSummaryDetail {
+  margin: 1px 0 8px;
+}
+
+.diffCard {
+  overflow: hidden;
+  margin-top: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-panel-bg);
+}
+
+/* +N / -M 徽章：用 inline-flex + align-items: center 让 +/- 字符与 RollingNumber
+ * 内的数字按高度中线对齐。两边 line-height: 1 + height: 1em 保证视觉高度一致，
+ * 不会再出现"数字盒子顶部高于 + 号"的错位。 */
+.plus,
+.minus {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.plus { color: var(--color-success); }
+
+.minus { color: var(--color-danger); }
+
+.diffTable {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.diffTable tbody {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.diffRowAdd { background: color-mix(in srgb, var(--color-success) 14%, transparent); }
+
+.diffRowRemove { background: color-mix(in srgb, var(--color-danger) 14%, transparent); }
+
+.lineNo {
+  width: 48px;
+  padding: 2px 8px;
+  color: var(--color-text-tertiary);
+  text-align: right;
+  user-select: none;
+  vertical-align: top;
+}
+
+.lineNoAdd { color: var(--color-success); }
+
+.lineNoRemove { color: var(--color-danger); }
+
+.lineCode {
+  padding: 2px 10px;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.emptyDiff {
+  padding: 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* —— 命令组紧凑行 ——
+ * "已运行 N 条命令" 折叠态下每条命令一行；点击单行独立展开它的 shell pre。
+ * 视觉与单卡 ToolCallBlock 的 header 看齐（左侧侧栏、12px 字号、等宽命令文本）。 */
+.commandList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 10px 7px;
+  padding: 4px 0 0 14px;
+  border-left: 1px solid color-mix(in srgb, var(--color-text-muted) 32%, transparent);
+  list-style: none;
+}
+
+.commandRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.commandRowHeadRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.commandRowHeadRow .commandRowHead { flex: 1 1 auto; min-width: 0; }
+
+.commandRowHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.commandRowHead:hover { color: var(--color-text-secondary); }
+
+.commandRowLabel {
+  flex: 0 0 auto;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.commandRowText {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commandRowChevron {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.commandRowBody {
+  margin: 2px 0 8px;
+}
+
+.commandRowStatusLine {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.detailRowList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detailRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detailRowHead {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  min-height: 24px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.detailRowHead:hover {
+  color: var(--color-text-secondary);
+}
+
+.detailRowLabel {
+  flex: 0 0 auto;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.detailRowText,
+.detailRowMono {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailRowMono {
+  font-family: var(--font-mono);
+}
+
+.detailRowChevron {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.detailRowBody {
+  margin: 2px 0 8px;
+}
+
+/* —— RollingNumber：odometer 风格的"数字往上翻" ——
+ * 仅在 props value 真发生变化时滚一次（流式追加）；历史回显 value 不变 → 静态显示。
+ * 关键约束：
+ *  - 高度严格 = 1em，line-height: 1，让外层 .plus/.minus 用 center 对齐时
+ *    与 +/- 字符高度同形，视觉对齐稳定（不依赖 inline-block baseline 退化行为）。
+ *  - tabular-nums 防止数字字宽变化让 +/- 颜色块挪位。 */
+.rollingNumber {
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.rollingNumberStrip {
+  display: flex;
+  flex-direction: column;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.rollingNumberCell {
+  display: block;
+  height: 1em;
+  line-height: 1;
+}
+
+.rollingNumberStatic {
+  display: inline-block;
+  line-height: 1;
+}
+
+@keyframes agentBlink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.sessionFileSummary {
+  margin-top: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-panel-bg);
+}
+
+.sessionFileSummaryHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.sessionFileSummaryTitle {
+  flex: 1;
+}
+
+.sessionFileList {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sessionFileRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.sessionFileRow:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+.sessionFileIcon {
+  display: inline-flex;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.sessionFileMeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.sessionFileName {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionFileSub {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.sessionFileOpenBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.sessionFileOpenBtn:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}

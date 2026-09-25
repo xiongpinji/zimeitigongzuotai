@@ -1,0 +1,136 @@
+:root {
+  color-scheme: dark;
+
+  /* Typography — SF Pro for macOS native feel */
+  --font-sans:
+    "SF Pro Text",
+    "SF Pro Display",
+    "PingFang SC",
+    -apple-system,
+    BlinkMacSystemFont,
+    Inter,
+    "Segoe UI",
+    sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 12px;
+  --font-size-lg: 13px;
+  --font-size-xl: 14px;
+  /* Section title 与 large heading — 仅用于面板标题、Setup 首屏等关键区域 */
+  --font-size-2xl: 15px;
+  --font-size-3xl: 24px;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.45;
+  --line-height-relaxed: 1.6;
+
+  /* Spacing */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+
+  /* Radius — macOS dark style */
+  --radius: 10px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+  --radius-pill: 999px;
+  --radius-window: 10px;
+  --radius-dialog: 14px;
+  --radius-dropdown: 12px;
+
+  /* ===== macOS Dark Mode Palette (from design.pen) ===== */
+
+  /* Core backgrounds */
+  --color-window-bg: #1C1C1E;
+  --color-panel-bg: #1E1E20;
+  --color-panel-elevated: #2C2C2E;
+  --color-titlebar-bg: #252527;
+  --color-preview-bg: #141416;
+  --color-timeline-bg: #1A1A1C;
+  --color-control-bg: #3A3A3C;
+
+  /* Legacy aliases for CSS Modules bridge */
+  --color-bg-canvas: var(--color-window-bg);
+  --color-bg-surface: var(--color-panel-bg);
+  --color-bg-elevated: var(--color-panel-elevated);
+  --color-bg-subtle: rgba(255, 255, 255, 0.035);
+  --color-bg-muted: rgba(255, 255, 255, 0.055);
+  --color-bg-hover: rgba(255, 255, 255, 0.08);
+  --color-panel-solid: var(--color-panel-bg);
+  --color-panel-subtle: rgba(255, 255, 255, 0.05);
+  --color-panel-muted: rgba(255, 255, 255, 0.08);
+  --color-recessed-bg: var(--color-timeline-bg);
+  --color-recessed-border: var(--color-separator);
+  --color-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Borders / separators — macOS solid style */
+  --color-separator: #38383A;
+  --color-border-subtle: #38383A;
+  --color-border-strong: #48484A;
+  --color-border-control: #48484A;
+  --color-outline-soft: rgba(255, 255, 255, 0.16);
+
+  /* Text — macOS system text colors */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #EBEBF599;
+  --color-text-secondary-strong: #EBEBF580;
+  --color-text-tertiary: #8E8E93;
+  --color-text-quaternary: #636366;
+  --color-text-placeholder: #EBEBF560;
+  --color-text-muted: #EBEBF54D;
+  --color-text-disabled: #EBEBF533;
+
+  /* Accent / status — macOS system colors */
+  --color-selection-blue: #0A84FF;
+  --color-selection-blue-hover: #409CFF;
+  --color-selection-blue-active: #0071E3;
+  --color-system-blue: var(--color-selection-blue);
+  --color-system-blue-hover: var(--color-selection-blue-hover);
+  --color-system-blue-active: var(--color-selection-blue-active);
+  --color-brand-primary: var(--color-selection-blue);
+  --color-brand-accent: #409CFF;
+  --color-brand-info: #409CFF;
+  --color-brand-warm: #FF9F0A;
+  --color-danger: #FF453A;
+  --color-success: #32D74B;
+  --color-warning: #FFD60A;
+
+  /* Functional tinted surfaces */
+  --color-bg-error: rgba(255, 69, 58, 0.08);
+  --color-bg-warning: rgba(255, 159, 10, 0.08);
+  --color-bg-success: rgba(50, 215, 75, 0.08);
+  --color-bg-info: rgba(10, 132, 255, 0.08);
+  --color-track-audio: color-mix(in srgb, var(--color-brand-info) 24%, var(--color-panel-bg));
+  --color-track-subtitle: color-mix(in srgb, var(--color-brand-warm) 22%, var(--color-panel-bg));
+  --color-track-primary: color-mix(in srgb, var(--color-selection-blue) 24%, var(--color-panel-bg));
+  --color-track-secondary: color-mix(in srgb, var(--color-text-muted) 26%, var(--color-panel-bg));
+
+  /* Blur / shadows — macOS style */
+  --backdrop-blur: blur(12px);
+  --shadow-card: 0 4px 14px rgba(0, 0, 0, 0.24);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.66);
+  --shadow-dropdown: 0 10px 30px rgba(0, 0, 0, 0.66);
+  --shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.66);
+  --shadow-focus: 0 0 0 3px rgba(10, 132, 255, 0.33);
+  --shadow-window: 0 18px 44px rgba(0, 0, 0, 0.44);
+
+  /* Layout */
+  --titlebar-height: 44px;
+
+  /* Motion */
+  --motion-micro: 100ms cubic-bezier(0.3, 0, 0.2, 1);
+  --motion-fast: 150ms cubic-bezier(0.3, 0, 0.2, 1);
+  --motion-base: 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Layering */
+  --z-modal: 120;
+  --z-toast: 180;
+}

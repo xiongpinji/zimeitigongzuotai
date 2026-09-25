@@ -1,0 +1,297 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.providerList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.providerCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-panel-subtle) 80%, transparent);
+}
+
+.providerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.providerTitleGroup {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.providerName {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-tight);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.providerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.providerBaseUrl {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.providerModels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.providerHint {
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+}
+
+.addProviderButton {
+  align-self: flex-start;
+}
+
+.dialogContent {
+  max-width: min(720px, calc(100vw - 32px));
+  width: 100%;
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  overscroll-behavior: contain;
+}
+
+.hintText {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+}
+
+.modelList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modelItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel-muted) 70%, transparent);
+}
+
+.modelItemActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.testResult {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 260px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-panel-elevated) 60%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.testResultOk {
+  color: var(--color-success, #32d74b);
+  background: color-mix(in srgb, var(--color-success, #32d74b) 18%, transparent);
+}
+
+.testResultError {
+  color: var(--color-danger, var(--color-system-red));
+  background: color-mix(in srgb, var(--color-danger, var(--color-system-red)) 16%, transparent);
+}
+
+.removeModelButton {
+  min-width: 48px;
+}
+
+.modelInputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.modelInput {
+  flex: 1;
+}
+
+.defaultCheckbox {
+  color: var(--color-text-secondary);
+}
+
+.footerError {
+  font-size: var(--font-size-md);
+  color: var(--color-system-red);
+}
+
+.dialogFooterInner {
+  width: 100%;
+}
+
+.advancedToggle {
+  align-self: flex-start;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent, var(--color-text-primary));
+  font: inherit;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.advancedToggle:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.fetchError {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-danger, var(--color-system-red));
+}
+
+.fetchPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel-elevated) 60%, transparent);
+}
+
+.fetchPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.fetchPanelActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fetchOptionList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-2);
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.fetchPanelFooter {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.piPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-panel-muted) 58%, transparent);
+}
+
+.piPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.piPanelTitle {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  font-weight: 650;
+  color: var(--color-text-primary);
+}
+
+.piPanelHint {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+}
+
+.piGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.piSwitchGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .providerHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .providerActions {
+    justify-content: flex-end;
+  }
+
+  .modelInputRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .addProviderButton {
+    width: 100%;
+  }
+
+  .piGrid,
+  .piSwitchGrid {
+    grid-template-columns: 1fr;
+  }
+}

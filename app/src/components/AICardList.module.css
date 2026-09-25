@@ -1,0 +1,302 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel-elevated);
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.card:hover {
+  background: color-mix(in srgb, var(--color-panel-elevated) 94%, white 6%);
+}
+
+.card[data-enabled='true'] {
+  border-color: color-mix(in srgb, var(--color-system-blue) 25%, transparent);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.checkbox {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardActions {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.card:hover .cardActions,
+.cardActions:focus-within {
+  opacity: 1;
+}
+
+.cardMenuTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+
+.cardMenuTrigger:hover {
+  background: color-mix(in srgb, var(--color-text-secondary) 18%, transparent);
+  color: var(--color-text-primary);
+}
+
+.cardMenuTrigger:focus-visible {
+  outline: 2px solid var(--color-system-blue);
+  outline-offset: 1px;
+}
+
+.body {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.thumbnail {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--color-panel-recessed, rgba(0, 0, 0, 0.06));
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnailImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.thumbnailPlaceholder {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--color-text-tertiary, #888);
+}
+
+.statusBadge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--color-panel-elevated, #fff);
+  pointer-events: none;
+}
+
+.badgeGenerating {
+  background: var(--color-system-blue, #0a84ff);
+  animation: aiCardBadgePulse 1.2s ease-in-out infinite;
+}
+
+.badgeFailed {
+  background: var(--color-system-red, #ff453a);
+}
+
+@keyframes aiCardBadgePulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.55;
+  }
+}
+
+/* ── Skeleton (incremental analysis placeholder) ─────────────────────── */
+
+.skeleton {
+  cursor: default;
+}
+
+.skeleton[data-skeleton-status='pending'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-system-blue) 30%, var(--color-separator));
+}
+
+.skeleton[data-skeleton-status='failed'] {
+  border-color: color-mix(in srgb, var(--color-system-red, #ff453a) 35%, var(--color-separator));
+  background: color-mix(in srgb, var(--color-system-red, #ff453a) 5%, var(--color-panel-elevated));
+}
+
+.skeletonHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skeletonDot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.skeleton[data-skeleton-status='pending'] .skeletonDot {
+  background: var(--color-system-blue, #0a84ff);
+  animation: aiCardBadgePulse 1.2s ease-in-out infinite;
+}
+
+.skeleton[data-skeleton-status='failed'] .skeletonDot {
+  background: var(--color-system-red, #ff453a);
+}
+
+.skeletonTitle {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skeletonLabel {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-system-blue, #0a84ff);
+  animation: aiCardSkeletonShimmer 1.6s ease-in-out infinite;
+}
+
+.skeletonRetry {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-system-red, #ff453a) 40%, transparent);
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--color-system-red, #ff453a);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+
+.skeletonRetry:hover {
+  background: color-mix(in srgb, var(--color-system-red, #ff453a) 12%, transparent);
+}
+
+.skeletonRetry:focus-visible {
+  outline: 2px solid var(--color-system-red, #ff453a);
+  outline-offset: 1px;
+}
+
+.skeletonBars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skeletonBar {
+  height: 8px;
+  border-radius: var(--radius-sm, 6px);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-text-secondary) 10%, transparent) 25%,
+    color-mix(in srgb, var(--color-text-secondary) 20%, transparent) 50%,
+    color-mix(in srgb, var(--color-text-secondary) 10%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: aiCardSkeletonSweep 1.6s ease-in-out infinite;
+}
+
+.skeletonBarShort {
+  width: 60%;
+}
+
+.skeletonHint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+@keyframes aiCardSkeletonShimmer {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes aiCardSkeletonSweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

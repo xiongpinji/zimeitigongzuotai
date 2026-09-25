@@ -1,0 +1,53 @@
+{
+  "status_code": 0,
+  "max_cursor": 1717000000000,
+  "has_more": 1,
+  "aweme_list": [
+    {
+      "aweme_id": "7300000000000000101",
+      "desc": "列表作品一",
+      "create_time": 1718001111,
+      "author": {
+        "uid": "100000050",
+        "sec_uid": "MS4wLjABAAAAlistsecuid",
+        "nickname": "列表博主",
+        "follower_count": 5000,
+        "aweme_count": 2
+      },
+      "statistics": { "digg_count": 100, "comment_count": 5 },
+      "video": {
+        "duration": 15000,
+        "cover": { "url_list": ["https://p3.douyinpic.com/aweme/c101.jpeg"] },
+        "play_addr": {
+          "uri": "v0300fake0101",
+          "url_list": ["https://v3-web.douyinvod.com/fake/play101.mp4?sign=REDACTED"],
+          "width": 1080,
+          "height": 1920
+        }
+      }
+    },
+    {
+      "aweme_id": "7300000000000000102",
+      "desc": "列表作品二",
+      "create_time": 1718002222,
+      "author": {
+        "uid": "100000050",
+        "sec_uid": "MS4wLjABAAAAlistsecuid",
+        "nickname": "列表博主",
+        "follower_count": 5000,
+        "aweme_count": 2
+      },
+      "statistics": { "digg_count": 200, "comment_count": 8 },
+      "video": {
+        "duration": 22000,
+        "cover": { "url_list": ["https://p3.douyinpic.com/aweme/c102.jpeg"] },
+        "play_addr": {
+          "uri": "v0300fake0102",
+          "url_list": ["https://v3-web.douyinvod.com/fake/play102.mp4?sign=REDACTED"],
+          "width": 1080,
+          "height": 1920
+        }
+      }
+    }
+  ]
+}

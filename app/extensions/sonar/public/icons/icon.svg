@@ -1,0 +1,38 @@
+<svg width="512" height="512" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="panelBase" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3b3f"></stop>
+      <stop offset="1" stop-color="#1a1a1c"></stop>
+    </linearGradient>
+    <radialGradient id="panelTop" cx="50%" cy="-4%" r="78%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"></stop>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"></stop>
+    </radialGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3aa0ff"></stop>
+      <stop offset="1" stop-color="#0a78ef"></stop>
+    </linearGradient>
+  </defs>
+
+  <rect x="12" y="12" width="176" height="176" rx="42" fill="url(#panelBase)"></rect>
+  <rect x="12" y="12" width="176" height="176" rx="42" fill="url(#panelTop)"></rect>
+  <rect x="12.5" y="12.5" width="175" height="175" rx="41.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="1"></rect>
+  <rect x="12" y="12" width="176" height="176" rx="42" fill="none" stroke="#000000" stroke-opacity="0.5" stroke-width="1"></rect>
+
+  <g fill="none" stroke="#8e8e93" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5">
+    <path d="M124 60 H134 Q140 60 140 66 V76"></path>
+    <path d="M124 140 H134 Q140 140 140 134 V124"></path>
+  </g>
+
+  <g fill="none" stroke="#5ad1ff" stroke-width="4" stroke-linecap="round" opacity="0.85">
+    <path d="M42 84 Q66 82 88 90"></path>
+    <path d="M38 102 Q66 100 86 104"></path>
+    <path d="M46 120 Q68 117 86 116"></path>
+  </g>
+
+  <polygon points="112,64 136,104 102,140 84,98" fill="url(#blueGrad)"></polygon>
+  <g stroke="#063e7d" stroke-opacity="0.4" stroke-width="2.5" stroke-linecap="round">
+    <line x1="112" y1="64" x2="102" y2="140"></line>
+    <line x1="84" y1="98" x2="136" y2="104"></line>
+  </g>
+</svg>

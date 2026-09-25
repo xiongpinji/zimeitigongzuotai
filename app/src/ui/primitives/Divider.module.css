@@ -1,0 +1,23 @@
+.root {
+  display: flex;
+  align-items: center;
+}
+
+.withLabel {
+  gap: var(--space-3);
+}
+
+.line {
+  flex: 1;
+  min-width: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.label {
+  flex-shrink: 0;
+  color: var(--color-text-disabled);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  text-transform: uppercase;
+}

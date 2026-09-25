@@ -1,0 +1,322 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-8);
+  flex: 1;
+  min-height: 0;
+}
+
+/* ─── 左侧列表 Card ────────────────────────────── */
+
+.sidebarCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  padding: var(--space-6) var(--space-8) !important;
+}
+
+.sidebarList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-4) !important;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupTitle {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-4);
+}
+
+/* ─── 子分组头：标题 + 行内操作（如“+ 新增”） ── */
+.subGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.subGroupTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-4);
+  min-height: 22px;
+}
+
+.subGroupLabel {
+  letter-spacing: 0.02em;
+}
+
+.subGroupAddBtn {
+  font-size: var(--font-size-xs) !important;
+  padding: 0 var(--space-3) !important;
+  min-height: 24px !important;
+  gap: 4px;
+}
+
+.entryDescription {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-6);
+  margin-top: -2px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.kindRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kindButton {
+  flex: 1;
+  justify-content: space-between !important;
+  text-align: left;
+  padding: var(--space-4) var(--space-6) !important;
+  min-height: 34px;
+  font-weight: 500 !important;
+}
+
+.kindButton span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── 右侧编辑器 Card ────────────────────────── */
+
+.editorCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editorHeader {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.editorHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.editorBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-8) !important;
+}
+
+.varHintGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-panel-bg);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-sm);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.varHintItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.varHintItem code {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--color-system-blue);
+  font-size: var(--font-size-xs);
+}
+
+.editorWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editorWrap > div {
+  flex: 1;
+}
+
+.statusBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  align-items: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.editorFooter {
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ─── 绑定失效警告条 ──────────────────────────── */
+
+.warning {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border-left: 3px solid var(--color-danger);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.bindingAlert {
+  margin-bottom: var(--space-4);
+}
+
+/* ─── 左侧列表：Badge 容器 ────────────────────── */
+
+.kindBadges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* ─── 可折叠辅助区（变量提示 / 业务契约） ──── */
+
+.collapsible {
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-md);
+  background: var(--color-panel-bg);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.collapsible[open] {
+  background: var(--color-panel-elevated);
+}
+
+.collapsibleLocked {
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-separator));
+}
+
+.collapsibleLocked[open] {
+  background: color-mix(in srgb, var(--color-warning) 6%, var(--color-panel-elevated));
+}
+
+.collapsibleSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  min-height: 30px;
+  transition: background 120ms ease;
+}
+
+.collapsibleSummary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsibleSummary:hover {
+  background: color-mix(in srgb, var(--color-system-blue) 6%, transparent);
+}
+
+.collapsibleChevron {
+  color: var(--color-text-secondary);
+  transition: transform 140ms ease;
+  flex-shrink: 0;
+}
+
+.collapsible[open] .collapsibleChevron {
+  transform: rotate(90deg);
+}
+
+.collapsibleTitle {
+  font-weight: 600;
+}
+
+.collapsibleMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: 400;
+  margin-left: auto;
+}
+
+.collapsibleBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-5) var(--space-5);
+  border-top: 1px solid var(--color-separator);
+  padding-top: var(--space-4);
+}
+
+.lockedReason {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.lockedContent {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  background: var(--color-window-bg);
+  border: 1px solid var(--color-separator);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+}

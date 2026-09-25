@@ -1,0 +1,454 @@
+.page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  background: var(--color-window-bg);
+  overflow: hidden;
+}
+
+.workArea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.workflowBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(
+    in srgb,
+    var(--color-window-bg) 78%,
+    var(--color-panel-bg)
+  );
+}
+
+.workflowButton {
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--color-selection-blue) 26%, transparent);
+  background: color-mix(in srgb, var(--color-selection-blue) 10%, transparent);
+  color: var(--color-text-primary);
+}
+
+.workflowStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.workflowError {
+  font-size: var(--font-size-md);
+  color: var(--color-danger);
+}
+
+.workflowOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  background: var(--color-overlay);
+  backdrop-filter: blur(6px);
+}
+
+.workflowOverlayCard {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  padding: var(--space-8) var(--space-8);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-elevated);
+  box-shadow: var(--shadow-modal);
+}
+
+.workflowOverlayHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workflowOverlayTitle {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.workflowOverlayMeta {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+.workflowOverlayProgressTrack {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+}
+
+.workflowOverlayProgressValue {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  /* AI 铁律色：生成态紫色 #a78bfa 保留，视觉反馈体系专用 */
+  background: linear-gradient(90deg, #a78bfa, var(--color-selection-blue-hover));
+  box-shadow: 0 0 18px color-mix(in srgb, #a78bfa 32%, transparent);
+  transition: width 180ms ease;
+}
+
+.workflowOverlayActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conflictBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-8);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
+.conflictBannerText {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--color-danger);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.conflictBannerActions {
+  display: inline-flex;
+  gap: var(--space-4);
+}
+
+.conflictBannerActions button {
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.editorSurface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-window-bg);
+  position: relative;
+  border-radius: var(--radius-md);
+  transition: box-shadow 0.4s ease;
+}
+
+/* ─── 审稿呼吸光效：暗底 + 高饱和发光色 ─────── */
+.reviewBreathing {
+  animation: reviewGlowBreathing 2.4s ease-in-out infinite;
+  border: 1px solid transparent;
+}
+
+/* 内层辉光覆层 */
+.reviewBreathing::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 5;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(0, 210, 255, 0.06), transparent 70%),
+    radial-gradient(ellipse 50% 50% at 80% 90%, rgba(52, 211, 153, 0.05), transparent 70%);
+  animation: reviewInnerGlow 2.4s ease-in-out infinite;
+}
+
+/* 扫描线 — 自上而下来回 */
+.reviewBreathing::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 6;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(52, 211, 153, 0.5) 20%,
+    rgba(0, 210, 255, 0.7) 50%,
+    rgba(52, 211, 153, 0.5) 80%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 12px 2px rgba(0, 210, 255, 0.35),
+    0 0 30px 4px rgba(52, 211, 153, 0.15);
+  animation: reviewScanLine 2.4s ease-in-out infinite;
+}
+
+@keyframes reviewGlowBreathing {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 30px rgba(52, 211, 153, 0.04),
+      0 0 15px rgba(52, 211, 153, 0.08),
+      0 0 40px rgba(0, 210, 255, 0.04);
+    border-color: rgba(52, 211, 153, 0.12);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 50px rgba(52, 211, 153, 0.08),
+      0 0 25px rgba(52, 211, 153, 0.18),
+      0 0 60px rgba(0, 210, 255, 0.1),
+      0 0 100px rgba(52, 211, 153, 0.04);
+    border-color: rgba(52, 211, 153, 0.28);
+  }
+}
+
+@keyframes reviewInnerGlow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes reviewScanLine {
+  0% { top: -2px; opacity: 0; }
+  10% { opacity: 1; }
+  50% { top: 100%; opacity: 0.8; }
+  90% { opacity: 1; }
+  100% { top: -2px; opacity: 0; }
+}
+
+.thinkingPanel {
+  flex-shrink: 0;
+  padding: 12px 16px 0;
+}
+
+.editorContainer {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+.editorContainer [data-color-mode="dark"] {
+  height: 100%;
+}
+
+.editorContainer :global(.w-md-editor) {
+  height: 100% !important;
+}
+
+.centerHint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xl);
+}
+
+/* ─── 审查结果面板 ──────────────────────────────── */
+.annotationPanel {
+  flex-shrink: 0;
+  max-height: 35%;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-window-bg);
+}
+.annotationPanelBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+}
+/* 面板内滚动条 macOS 风格 */
+.annotationPanelBody::-webkit-scrollbar {
+  width: 6px;
+}
+.annotationPanelBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+.annotationPanelBody::-webkit-scrollbar-thumb {
+  background: var(--color-separator);
+  border-radius: var(--radius-sm);
+}
+.annotationPanelBody::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+/* ─── 审稿推荐横幅 (AI 铁律：生成态紫色 #a78bfa 保留) ─────── */
+.reviewBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-8);
+  background: rgba(124, 58, 237, 0.12);
+  border-bottom: 1px solid rgba(124, 58, 237, 0.3);
+  color: #a78bfa;
+  font-size: var(--font-size-md);
+  flex-shrink: 0;
+}
+
+.reviewBannerBtn {
+  margin-left: auto;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(124, 58, 237, 0.4);
+  background: rgba(124, 58, 237, 0.2);
+  color: #a78bfa;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.reviewBannerBtn:hover {
+  background: rgba(124, 58, 237, 0.35);
+}
+
+.reviewBannerClose {
+  padding: var(--space-1);
+  border: none;
+  background: transparent;
+  color: rgba(167, 139, 250, 0.5);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s;
+}
+
+.reviewBannerClose:hover {
+  color: #a78bfa;
+}
+
+/* AI 铁律：生成态紫色 #a78bfa 保留 */
+.agentTypingIndicator {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-6);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(124, 58, 237, 0.36);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  color: #a78bfa;
+  z-index: 10;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.agentTypingIndicator::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  box-shadow:
+    10px 0 0 rgba(167, 139, 250, 0.55),
+    20px 0 0 rgba(167, 139, 250, 0.28);
+  animation: typingPulse 1s ease-in-out infinite;
+}
+
+@keyframes typingPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+/* ─── 审稿操作指示器（AI 铁律：审稿态绿色 #34d399 保留）─────────────── */
+.agentReviewIndicator {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-6);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: rgba(52, 211, 153, 0.15);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  color: #34d399;
+  z-index: 10;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.agentReviewIndicator::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  box-shadow:
+    10px 0 0 rgba(52, 211, 153, 0.55),
+    20px 0 0 rgba(52, 211, 153, 0.28);
+  animation: typingPulse 1s ease-in-out infinite;
+}
+
+/* ─── AI 审稿浮动指针 ───────────────────────── */
+.aiReviewCursor {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  transition: left 0.15s ease-out, top 0.15s ease-out;
+  filter: drop-shadow(0 2px 6px rgba(52, 211, 153, 0.4));
+  animation: cursorFadeIn 0.3s ease-out;
+}
+
+/* AI 铁律：审稿浮动指针标签，绿色 #34d399 保留 */
+.aiReviewCursorLabel {
+  position: absolute;
+  bottom: -2px;
+  left: 14px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  background: rgba(52, 211, 153, 0.85);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  line-height: 1.2;
+  letter-spacing: 0.5px;
+}
+
+@keyframes cursorFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

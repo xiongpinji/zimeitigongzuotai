@@ -1,0 +1,300 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+/* ── Tabs ── */
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.tab {
+  flex: 1;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 8px 12px;
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tab.active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-selection-blue);
+  background: var(--color-surface-secondary);
+}
+
+.tabContent {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+/* ── 通用 section / label / 控件 ── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.section:last-child {
+  border-bottom: none;
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  letter-spacing: 0.5px;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 72px;
+}
+
+.select {
+  width: 100%;
+}
+
+.selectControl {
+  min-height: 34px;
+  border-radius: var(--radius-md);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.numberField {
+  flex: 1;
+  min-width: 0;
+  max-width: 136px;
+}
+
+.colorField {
+  display: flex;
+  justify-content: center;
+}
+
+.colorSwatch {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+}
+
+.sliderControl {
+  flex: 1;
+}
+
+.toggleGroup {
+  display: flex;
+  gap: 2px;
+}
+
+.toggleBtn {
+  width: 32px;
+  height: 32px;
+  min-height: 32px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast, 120ms),
+    color var(--motion-fast, 120ms),
+    border-color var(--motion-fast, 120ms),
+    transform 80ms ease;
+}
+
+.toggleBtn:hover {
+  background: color-mix(in srgb, var(--color-selection-blue) 16%, var(--color-surface-secondary));
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-selection-blue) 32%, var(--color-border-subtle));
+}
+
+.toggleBtn:active {
+  transform: scale(0.92);
+}
+
+.toggleBtn.active {
+  background: var(--color-selection-blue);
+  color: var(--color-text-primary);
+  border-color: var(--color-selection-blue);
+}
+
+.toggleBtn.active:hover {
+  background: color-mix(in srgb, var(--color-selection-blue) 88%, var(--color-text-primary));
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sliderLabel {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  min-width: 44px;
+}
+
+.sliderValue {
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+  min-width: 40px;
+  text-align: right;
+}
+
+.animRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.animRow .select {
+  flex: 1;
+}
+
+.deleteButton {
+  width: 100%;
+}
+
+/* ── Preset Grid（动画卡片 4 列） ── */
+
+.presetGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.presetCard {
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 6px 4px;
+  font-size: var(--font-size-md);
+  text-align: center;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.presetCard:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+}
+
+.presetCard.active {
+  color: var(--color-text-primary);
+  border-color: var(--color-selection-blue);
+  background: var(--color-selection-blue);
+}
+
+/* ── Template Grid（模板卡片 2 列） ── */
+
+.templateGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.templateCard {
+  display: flex;
+  height: auto !important;
+  min-height: 0 !important;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  text-align: left;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.templateCard:hover {
+  border-color: var(--color-text-muted);
+  box-shadow: var(--shadow-card);
+}
+
+.templateName {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.templateDesc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+/* ── Advanced Toggle ── */
+
+.advancedToggle {
+  display: flex;
+  width: 100%;
+  height: auto !important;
+  min-height: 0 !important;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast, 120ms),
+    background var(--motion-fast, 120ms);
+}
+
+.advancedToggle:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+
+.advancedContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}

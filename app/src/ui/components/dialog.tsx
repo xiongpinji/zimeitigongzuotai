@@ -1,0 +1,277 @@
+"use client";
+
+import * as React from "react";
+import { createPortal } from "react-dom";
+import { m, AnimatePresence } from "framer-motion";
+import FocusLock from "react-focus-lock";
+import { X } from "lucide-react";
+import { cn } from "../lib/utils";
+import { modalBackdrop, sheetFromTop } from "../lib/motion";
+import { useOverlay } from "../contexts/overlay-context";
+import { useEscapeKey } from "../hooks/use-escape-key";
+
+interface DialogProps {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	children: React.ReactNode;
+}
+
+interface DialogContextValue {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}
+
+const DialogContext = React.createContext<DialogContextValue | undefined>(undefined);
+
+function useDialogContext() {
+	const context = React.useContext(DialogContext);
+	if (!context) {
+		throw new Error("Dialog components must be used within a Dialog provider");
+	}
+	return context;
+}
+
+function Dialog({ open, onOpenChange, children }: DialogProps) {
+	const [overlayId, setOverlayId] = React.useState<string | null>(null);
+	const { registerOverlay, unregisterOverlay } = useOverlay();
+
+	React.useEffect(() => {
+		if (open && !overlayId) {
+			const id = registerOverlay("dialog", {
+				blocksScroll: true,
+				isFullscreen: false,
+			});
+			setOverlayId(id);
+		} else if (!open && overlayId) {
+			unregisterOverlay(overlayId);
+			setOverlayId(null);
+		}
+	}, [open, overlayId, registerOverlay, unregisterOverlay]);
+
+	useEscapeKey(() => onOpenChange(false), open);
+
+	return (
+		<DialogContext.Provider value={{ open, onOpenChange }}>
+			{children}
+		</DialogContext.Provider>
+	);
+}
+
+interface DialogTriggerProps {
+	children: React.ReactNode;
+	asChild?: boolean;
+}
+
+function DialogTrigger({ children, asChild }: DialogTriggerProps) {
+	const { onOpenChange } = useDialogContext();
+
+	if (asChild && React.isValidElement(children)) {
+		return React.cloneElement(children as React.ReactElement<{ onClick?: () => void }>, {
+			onClick: () => onOpenChange(true),
+		});
+	}
+
+	return (
+		<button type="button" onClick={() => onOpenChange(true)}>
+			{children}
+		</button>
+	);
+}
+
+interface DialogContentProps {
+	children: React.ReactNode;
+	className?: string;
+	size?: "sm" | "md" | "lg" | "xl" | "full";
+	/** Enable frosted glass effect */
+	glass?: boolean;
+}
+
+function DialogContent({ children, className, size = "md", glass: _glass = false }: DialogContentProps) {
+	const { open, onOpenChange } = useDialogContext();
+	const [mounted, setMounted] = React.useState(false);
+
+	// Ensure we only render portal on client
+	React.useEffect(() => {
+		setMounted(true);
+	}, []);
+
+	const sizeClasses = {
+		sm: "max-w-sm",
+		md: "max-w-md",
+		lg: "max-w-lg",
+		xl: "max-w-xl",
+		full: "max-w-[90vw]",
+	};
+
+	const dialogPanel = (
+		<m.div
+			variants={sheetFromTop}
+			initial="hidden"
+			animate="visible"
+			exit="exit"
+			role="dialog"
+			aria-modal="true"
+			className={cn(
+				"relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-[14px] border border-mac-border bg-mac-elevated shadow-[0_20px_60px_rgba(0,0,0,0.66)]",
+				sizeClasses[size],
+				className
+			)}
+		>
+			{children}
+		</m.div>
+	);
+
+	const content = (
+		<AnimatePresence>
+			{open && (
+				<FocusLock returnFocus>
+					<m.div
+						variants={modalBackdrop}
+						initial="hidden"
+						animate="visible"
+						exit="exit"
+						className="fixed inset-0 flex items-center justify-center overflow-hidden bg-black/60 p-4"
+						style={{ zIndex: 9999 }}
+						onClick={(e) => {
+							if (e.target === e.currentTarget) {
+								onOpenChange(false);
+							}
+						}}
+					>
+						{dialogPanel}
+					</m.div>
+				</FocusLock>
+			)}
+		</AnimatePresence>
+	);
+
+	if (typeof document === "undefined") {
+		if (!open) {
+			return null;
+		}
+
+		return (
+			<div
+				className="fixed inset-0 flex items-center justify-center overflow-hidden bg-black/60 p-4"
+				style={{ zIndex: 9999 }}
+			>
+				{dialogPanel}
+			</div>
+		);
+	}
+
+	// Use portal to escape stacking context
+	if (!mounted) return null;
+	return createPortal(content, document.body);
+}
+
+interface DialogHeaderProps {
+	children: React.ReactNode;
+	className?: string;
+}
+
+function DialogHeader({ children, className }: DialogHeaderProps) {
+	return (
+		<div className={cn("shrink-0 px-6 pt-6 pb-4 border-b border-mac-separator", className)}>
+			{children}
+		</div>
+	);
+}
+
+interface DialogTitleProps {
+	children: React.ReactNode;
+	className?: string;
+}
+
+function DialogTitle({ children, className }: DialogTitleProps) {
+	return (
+		<h2 className={cn("text-base font-semibold text-foreground", className)}>
+			{children}
+		</h2>
+	);
+}
+
+interface DialogDescriptionProps {
+	children: React.ReactNode;
+	className?: string;
+}
+
+function DialogDescription({ children, className }: DialogDescriptionProps) {
+	return (
+		<p className={cn("mt-1 text-sm text-muted-foreground", className)}>
+			{children}
+		</p>
+	);
+}
+
+interface DialogBodyProps {
+	children: React.ReactNode;
+	className?: string;
+}
+
+function DialogBody({ children, className }: DialogBodyProps) {
+	return <div className={cn("min-h-0 flex-1 overflow-y-auto px-6 py-4", className)}>{children}</div>;
+}
+
+interface DialogFooterProps {
+	children: React.ReactNode;
+	className?: string;
+}
+
+function DialogFooter({ children, className }: DialogFooterProps) {
+	return (
+		<div className={cn("shrink-0 flex items-center justify-end gap-2.5 px-6 py-4 border-t border-mac-separator", className)}>
+			{children}
+		</div>
+	);
+}
+
+interface DialogCloseProps {
+	children?: React.ReactNode;
+	className?: string;
+	asChild?: boolean;
+}
+
+function DialogClose({ children, className, asChild }: DialogCloseProps) {
+	const { onOpenChange } = useDialogContext();
+
+	if (asChild && React.isValidElement(children)) {
+		return React.cloneElement(children as React.ReactElement<{ onClick?: () => void }>, {
+			onClick: () => onOpenChange(false),
+		});
+	}
+
+	if (!children) {
+		return (
+			<button
+				type="button"
+				onClick={() => onOpenChange(false)}
+				className={cn(
+					"absolute right-4 top-4 rounded-lg p-1 text-mac-text-muted transition-colors duration-150 outline-none hover:bg-white/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-mac-blue/50",
+					className
+				)}
+			>
+				<X className="h-4 w-4" />
+				<span className="sr-only">Close</span>
+			</button>
+		);
+	}
+
+	return (
+		<button type="button" onClick={() => onOpenChange(false)} className={className}>
+			{children}
+		</button>
+	);
+}
+
+export {
+	Dialog,
+	DialogTrigger,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+	DialogDescription,
+	DialogBody,
+	DialogFooter,
+	DialogClose,
+};

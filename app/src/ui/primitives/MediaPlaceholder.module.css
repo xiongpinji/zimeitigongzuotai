@@ -1,0 +1,80 @@
+.root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.variantAudio {
+  background: color-mix(in srgb, var(--color-panel-elevated) 82%, var(--color-timeline-bg));
+}
+
+.audioWavePrimary {
+  position: absolute;
+  inset: 18% 0 auto;
+  height: 34%;
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-brand-accent) 76%, white 24%) 0 2px,
+    transparent 2px 6px
+  );
+  opacity: 0.74;
+}
+
+.audioWaveSecondary {
+  position: absolute;
+  inset: 52% 0 auto;
+  height: 22%;
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-selection-blue) 20%, black 80%) 0 3px,
+    transparent 3px 8px
+  );
+  opacity: 0.52;
+}
+
+.audioLabel {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.variantSrt {
+  box-sizing: border-box;
+  padding: 10px 8px;
+  background: color-mix(in srgb, var(--color-panel-elevated) 86%, var(--color-timeline-bg));
+}
+
+.srtLine {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-panel-muted) 92%, var(--color-border-subtle));
+  margin-bottom: 6px;
+}
+
+.srtLineAccent {
+  background: color-mix(in srgb, var(--color-selection-blue) 46%, var(--color-panel-muted));
+  margin-bottom: 0;
+}
+
+.srtLabel {
+  margin-top: 10px;
+  color: var(--color-brand-accent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.variantGeneric {
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--color-panel-elevated) 86%, var(--color-timeline-bg));
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}

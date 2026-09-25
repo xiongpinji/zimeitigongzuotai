@@ -1,0 +1,112 @@
+/* ── NumberField 步进器控件 ── */
+/* 匹配 design.pen: NumberField / NumberField/WithUnit */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.rootInline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 外部 label（非 inline 模式由 Field 提供） */
+.inlineLabel {
+  flex-shrink: 0;
+  min-width: 36px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* 步进器外框 */
+.stepper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel-elevated);
+  overflow: hidden;
+}
+
+.stepper:focus-within {
+  border-color: var(--color-selection-blue);
+  box-shadow: var(--shadow-focus);
+}
+
+/* +/- 按钮 */
+.stepBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  margin: 0;
+  border: none;
+  background: var(--color-control-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: background var(--motion-fast);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.stepBtn:hover {
+  background: var(--color-border-strong);
+}
+
+.stepBtn:active {
+  background: color-mix(in srgb, var(--color-control-bg) 70%, white);
+}
+
+.stepBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.stepBtnDec {
+  border-radius: calc(var(--radius-lg) - 1px) 0 0 calc(var(--radius-lg) - 1px);
+}
+
+.stepBtnInc {
+  border-radius: 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0;
+}
+
+/* 中央数值 */
+.value {
+  flex: 1;
+  min-width: 4ch;
+  padding: 6px 8px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.value::-webkit-outer-spin-button,
+.value::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+/* 后缀单位 */
+.unit {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  padding-left: var(--space-2);
+}
