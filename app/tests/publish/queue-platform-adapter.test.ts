@@ -5,12 +5,14 @@ import { join, sep } from 'node:path';
 import {
   AccountVault,
   type AccountVaultDeps,
+  type AccountVaultPlatform,
   type SessionCipher,
 } from '../../electron/publish/accounts-v2';
 import {
   createQueuePlatformExecutor,
   QUEUE_PLATFORM_ADAPTER_ERROR_CODES,
   type QueuePlatformAdapterDeps,
+  type QueuePlatformAdapterPlatform,
 } from '../../electron/publish/queue-platform-adapter';
 import type {
   PublishAttemptInput,
@@ -107,7 +109,7 @@ class FakePlatformModule implements PlatformModule {
 
 interface ResolveCall {
   videoRef: string;
-  context: { accountId: string; platform: 'douyin' | 'kuaishou'; videoVariantId: string };
+  context: { accountId: string; platform: QueuePlatformAdapterPlatform; videoVariantId: string };
   resolved: string;
 }
 
@@ -122,6 +124,9 @@ interface World {
   };
   douyin: FakePlatformModule;
   kuaishou: FakePlatformModule;
+  /** 上游名 'tencent' 的假模块;注入键是队列契约名 'wechat-channels'。 */
+  tencent: FakePlatformModule;
+  xiaohongshu: FakePlatformModule;
   executor: ReturnType<typeof createQueuePlatformExecutor>;
   resolveCalls: ResolveCall[];
   resolveVideoRef: QueuePlatformAdapterDeps['resolveVideoRef'];
@@ -157,6 +162,8 @@ function makeWorld(
   };
   const douyin = new FakePlatformModule('douyin');
   const kuaishou = new FakePlatformModule('kuaishou');
+  const tencent = new FakePlatformModule('tencent');
+  const xiaohongshu = new FakePlatformModule('xiaohongshu');
   const resolveCalls: ResolveCall[] = [];
   const resolveVideoRef: QueuePlatformAdapterDeps['resolveVideoRef'] =
     options.resolveVideoRef ??
@@ -167,16 +174,54 @@ function makeWorld(
     });
   const executor = createQueuePlatformExecutor({
     vault: spy,
-    platformModules: { douyin, kuaishou },
+    // 注入键一律用队列契约名;视频号模块自报 platform 是上游名 'tencent'。
+    platformModules: { douyin, kuaishou, 'wechat-channels': tencent, xiaohongshu },
     resolveVideoRef,
     headless: options.headless,
   });
-  return { root, tmpBase, cipher, vault, spy, douyin, kuaishou, executor, resolveCalls, resolveVideoRef };
+  return {
+    root,
+    tmpBase,
+    cipher,
+    vault,
+    spy,
+    douyin,
+    kuaishou,
+    tencent,
+    xiaohongshu,
+    executor,
+    resolveCalls,
+    resolveVideoRef,
+  };
+}
+
+/**
+ * 队列契约平台名 → 账号仓 / 平台模块上游名。测试侧**独立声明**期望映射
+ * （不 import 适配层的映射表），避免映射断言变成同义反复。
+ */
+const QUEUE_TO_VAULT_PLATFORM: Record<QueuePlatformAdapterPlatform, AccountVaultPlatform> = {
+  douyin: 'douyin',
+  kuaishou: 'kuaishou',
+  'wechat-channels': 'tencent',
+  xiaohongshu: 'xiaohongshu',
+};
+
+function moduleFor(world: World, platform: QueuePlatformAdapterPlatform): FakePlatformModule {
+  switch (platform) {
+    case 'douyin':
+      return world.douyin;
+    case 'kuaishou':
+      return world.kuaishou;
+    case 'wechat-channels':
+      return world.tencent;
+    case 'xiaohongshu':
+      return world.xiaohongshu;
+  }
 }
 
 function addAccount(
   world: World,
-  platform: 'douyin' | 'kuaishou',
+  platform: AccountVaultPlatform, // 账号仓用上游名:视频号账号注册为 'tencent'
   tag: string,
   options: { save?: boolean } = {},
 ) {
@@ -237,7 +282,7 @@ function sessionsDir(world: World): string {
 // ─── 工厂注入边界 ────────────────────────────────────────────────────────────
 
 describe('工厂注入边界', () => {
-  it('缺少 vault / resolveVideoRef，或平台模块 platform 标记与注入键不一致时拒绝创建', () => {
+  it('缺少 vault / resolveVideoRef，或平台模块 platform 标记与注入键的映射上游名不一致时拒绝创建', () => {
     const world = makeWorld();
     expect(() =>
       createQueuePlatformExecutor({
@@ -260,16 +305,45 @@ describe('工厂注入边界', () => {
         resolveVideoRef: world.resolveVideoRef,
       }),
     ).toThrow();
+    // 视频号注入键是契约名 'wechat-channels'，模块必须自报上游名 'tencent'。
+    expect(() =>
+      createQueuePlatformExecutor({
+        vault: world.spy,
+        platformModules: { 'wechat-channels': new FakePlatformModule('douyin') },
+        resolveVideoRef: world.resolveVideoRef,
+      }),
+    ).toThrow();
+    // 小红书两侧同名：注入错误平台标记的模块同样拒绝。
+    expect(() =>
+      createQueuePlatformExecutor({
+        vault: world.spy,
+        platformModules: { xiaohongshu: new FakePlatformModule('tencent') },
+        resolveVideoRef: world.resolveVideoRef,
+      }),
+    ).toThrow();
+    // 正确映射（wechat-channels→tencent、xiaohongshu→xiaohongshu）允许创建。
+    expect(() =>
+      createQueuePlatformExecutor({
+        vault: world.spy,
+        platformModules: {
+          'wechat-channels': new FakePlatformModule('tencent'),
+          xiaohongshu: new FakePlatformModule('xiaohongshu'),
+        },
+        resolveVideoRef: world.resolveVideoRef,
+      }),
+    ).not.toThrow();
   });
 });
 
 // ─── 平台 / 账号预检（不触碰短时会话） ──────────────────────────────────────
 
 describe('平台与账号预检', () => {
-  it('只支持抖音 / 快手：视频号 / 小红书任务在触碰账号仓前被拒绝', async () => {
+  it('只接受四平台契约名：上游 tencent / bilibili 等非契约名在触碰账号仓前被显式拒绝，绝不反向隐式映射', async () => {
     const world = makeWorld();
-    for (const platform of ['tencent', 'xiaohongshu'] as const) {
-      const outcome = await world.executor(attemptInput(platform, 'account-out-of-scope'));
+    for (const platform of ['tencent', 'bilibili'] as const) {
+      const outcome = await world.executor(
+        attemptInput(platform as unknown as QueuePlatform, 'account-out-of-scope'),
+      );
       expect(outcome).toEqual({
         kind: 'needs_user_action',
         errorCode: 'adapter_unsupported_platform',
@@ -279,8 +353,10 @@ describe('平台与账号预检', () => {
     }
     expect(world.spy.getAccount).not.toHaveBeenCalled();
     expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
-    expect(world.douyin.uploadCalls).toHaveLength(0);
-    expect(world.kuaishou.uploadCalls).toHaveLength(0);
+    for (const mod of [world.douyin, world.kuaishou, world.tencent, world.xiaohongshu]) {
+      expect(mod.cookieChecks).toHaveLength(0);
+      expect(mod.uploadCalls).toHaveLength(0);
+    }
   });
 
   it('未注入对应平台模块时拒绝，且不触碰账号仓', async () => {
@@ -371,6 +447,92 @@ describe('平台与账号预检', () => {
     expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
     expect(world.douyin.uploadCalls).toHaveLength(0);
   });
+
+  it('未注入视频号 / 小红书模块时拒绝，且不触碰账号仓', async () => {
+    const world = makeWorld();
+    const executor = createQueuePlatformExecutor({
+      vault: world.spy,
+      platformModules: {
+        douyin: world.douyin,
+        kuaishou: world.kuaishou,
+        xiaohongshu: world.xiaohongshu,
+      },
+      resolveVideoRef: world.resolveVideoRef,
+    });
+    const outcome = await executor(attemptInput('wechat-channels', 'account-wc'));
+    expect(outcome).toEqual({
+      kind: 'needs_user_action',
+      errorCode: 'adapter_platform_module_missing',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(outcome, world);
+    expect(world.spy.getAccount).not.toHaveBeenCalled();
+    expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
+    expect(world.tencent.uploadCalls).toHaveLength(0);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(0);
+  });
+
+  it('视频号 / 小红书账号平台错配（tencent ↔ xiaohongshu 互串）时拒绝，不打开会话、不上传', async () => {
+    const world = makeWorld();
+    const wcAccount = addAccount(world, 'tencent', 'wc-mismatch');
+    const xhsAccount = addAccount(world, 'xiaohongshu', 'xhs-mismatch');
+
+    // 小红书任务拿到视频号（tencent）账号：必须拒绝，绝不因同属"新平台"而混用。
+    const xhsTaskOutcome = await world.executor(attemptInput('xiaohongshu', wcAccount.id));
+    expect(xhsTaskOutcome).toEqual({
+      kind: 'needs_user_action',
+      errorCode: 'adapter_account_platform_mismatch',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(xhsTaskOutcome, world);
+
+    // 视频号任务拿到小红书账号：同样拒绝。
+    const wcTaskOutcome = await world.executor(attemptInput('wechat-channels', xhsAccount.id));
+    expect(wcTaskOutcome).toEqual({
+      kind: 'needs_user_action',
+      errorCode: 'adapter_account_platform_mismatch',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(wcTaskOutcome, world);
+
+    expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
+    expect(world.tencent.cookieChecks).toHaveLength(0);
+    expect(world.tencent.uploadCalls).toHaveLength(0);
+    expect(world.xiaohongshu.cookieChecks).toHaveLength(0);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(0);
+  });
+
+  it('视频号账号未保存会话（sessionRef 为空）时返回 needs_login 且不调用 tencent 模块', async () => {
+    const world = makeWorld();
+    const account = addAccount(world, 'tencent', 'wc-no-session', { save: false });
+    expect(account.sessionRef).toBeNull();
+    const outcome = await world.executor(attemptInput('wechat-channels', account.id));
+    expect(outcome).toEqual({
+      kind: 'needs_login',
+      errorCode: 'adapter_session_missing',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(outcome, world);
+    expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
+    expect(world.tencent.cookieChecks).toHaveLength(0);
+    expect(world.tencent.uploadCalls).toHaveLength(0);
+  });
+
+  it('小红书账号状态为 expired 时返回 needs_login 且不打开会话', async () => {
+    const world = makeWorld();
+    const account = addAccount(world, 'xiaohongshu', 'xhs-expired');
+    world.vault.updateStatusFromProbe(account.id, false);
+    const outcome = await world.executor(attemptInput('xiaohongshu', account.id));
+    expect(outcome).toEqual({
+      kind: 'needs_login',
+      errorCode: 'adapter_session_expired',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(outcome, world);
+    expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
+    expect(world.xiaohongshu.cookieChecks).toHaveLength(0);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(0);
+  });
 });
 
 // ─── 视频引用预检 ────────────────────────────────────────────────────────────
@@ -415,6 +577,27 @@ describe('视频引用预检', () => {
     });
     expectSafeOutcome(outcome, world);
     expect(world.kuaishou.uploadCalls).toHaveLength(0);
+  });
+
+  it('视频号视频引用解析抛错（含敏感异常文本）时在调用 tencent 模块前阻止', async () => {
+    const world = makeWorld({
+      resolveVideoRef: () => {
+        throw new Error(SECRET_RAW_ERROR);
+      },
+    });
+    const account = addAccount(world, 'tencent', 'wc-video-throw');
+    const outcome = await world.executor(
+      attemptInput('wechat-channels', account.id, { videoRef: 'local://renders/越界/../../secret.mp4' }),
+    );
+    expect(outcome).toEqual({
+      kind: 'needs_user_action',
+      errorCode: 'adapter_video_preflight_failed',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(outcome, world);
+    expect(world.spy.withDecryptedStorageState).not.toHaveBeenCalled();
+    expect(world.tencent.cookieChecks).toHaveLength(0);
+    expect(world.tencent.uploadCalls).toHaveLength(0);
   });
 });
 
@@ -484,6 +667,23 @@ describe('短时会话与登录探针', () => {
     expectSafeOutcome(outcome, world);
     expect(world.douyin.uploadCalls).toHaveLength(0);
   });
+
+  it('小红书探针返回 false（扫码会话失效 / 风控需人工）时返回 needs_login，明文清理且不上传', async () => {
+    const world = makeWorld();
+    const account = addAccount(world, 'xiaohongshu', 'xhs-probe-false');
+    world.xiaohongshu.cookieResult = false;
+    const outcome = await world.executor(attemptInput('xiaohongshu', account.id));
+    expect(outcome).toEqual({
+      kind: 'needs_login',
+      errorCode: 'adapter_session_probe_failed',
+      confirmedNotSubmitted: true,
+    });
+    expectSafeOutcome(outcome, world);
+    expect(world.xiaohongshu.cookieChecks).toHaveLength(1);
+    expect(world.xiaohongshu.cookieChecks[0]?.startsWith(world.tmpBase + sep)).toBe(true);
+    expect(existsSync(world.xiaohongshu.cookieChecks[0] as string)).toBe(false);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(0);
+  });
 });
 
 // ─── 上传调用与未知提交语义 ──────────────────────────────────────────────────
@@ -544,6 +744,75 @@ describe('上传调用与未知提交语义', () => {
     expect(existsSync(ksCall.options.storageStatePath)).toBe(false);
   });
 
+  it('视频号 / 小红书上传 void 返回一律 unknown，且分别路由到 tencent / xiaohongshu 模块', async () => {
+    const world = makeWorld();
+    const wcAccount = addAccount(world, 'tencent', 'wc-happy');
+    const xhsAccount = addAccount(world, 'xiaohongshu', 'xhs-happy');
+
+    const wcOutcome = await world.executor(
+      attemptInput('wechat-channels', wcAccount.id, {
+        metadata: {
+          title: '视频号标题',
+          description: '视频号描述',
+          tags: ['w1', 'w2'],
+          coverRefs: ['local://covers/wc.png'],
+          scheduleAt: 1_800_000_000_000,
+        },
+      }),
+    );
+    const xhsOutcome = await world.executor(attemptInput('xiaohongshu', xhsAccount.id));
+
+    expect(wcOutcome).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_unverified' });
+    expect(xhsOutcome).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_unverified' });
+    expect('remoteId' in wcOutcome).toBe(false);
+    expect('remoteId' in xhsOutcome).toBe(false);
+    expectSafeOutcome(wcOutcome, world);
+    expectSafeOutcome(xhsOutcome, world);
+
+    // 路由正确性：视频号只进 tencent 模块，小红书只进 xiaohongshu 模块，其余平台零调用。
+    expect(world.tencent.cookieChecks).toHaveLength(1);
+    expect(world.tencent.uploadCalls).toHaveLength(1);
+    expect(world.xiaohongshu.cookieChecks).toHaveLength(1);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(1);
+    expect(world.douyin.uploadCalls).toHaveLength(0);
+    expect(world.kuaishou.uploadCalls).toHaveLength(0);
+
+    const wcCall = world.tencent.uploadCalls[0] as UploadCall;
+    const xhsCall = world.xiaohongshu.uploadCalls[0] as UploadCall;
+    expect(wcCall.options.title).toBe('视频号标题');
+    expect(wcCall.options.desc).toBe('视频号描述');
+    expect(wcCall.options.tags).toEqual(['w1', 'w2']);
+    expect(wcCall.options.scheduleAt).toBe(1_800_000_000_000);
+    expect(wcCall.options.headless).toBe(true);
+    expect(wcCall.options.filePath).toBe(world.resolveCalls[0]?.resolved);
+    expect(wcCall.options.storageStatePath).toBe(world.tencent.cookieChecks[0]);
+    expect(xhsCall.options.title).toBe('测试标题');
+    expect(xhsCall.options.desc).toBe('测试描述');
+    expect(xhsCall.options.tags).toEqual(['tag-a', 'tag-b']);
+    expect(xhsCall.options.scheduleAt).toBeUndefined();
+    expect(xhsCall.options.filePath).toBe(world.resolveCalls[1]?.resolved);
+    expect(xhsCall.options.storageStatePath).toBe(world.xiaohongshu.cookieChecks[0]);
+    // resolveVideoRef 上下文携带队列契约名（视频号是 'wechat-channels'，不是 'tencent'）。
+    expect(world.resolveCalls[0]?.context).toEqual({
+      accountId: wcAccount.id,
+      platform: 'wechat-channels',
+      videoVariantId: 'variant-1',
+    });
+    expect(world.resolveCalls[1]?.context).toEqual({
+      accountId: xhsAccount.id,
+      platform: 'xiaohongshu',
+      videoVariantId: 'variant-1',
+    });
+    // 两账号短时明文互不串用，调用后全部清理。
+    expect(wcCall.storageStateContent).toContain(`${SECRET_COOKIE}-wc-happy`);
+    expect(wcCall.storageStateContent).not.toContain(`${SECRET_COOKIE}-xhs-happy`);
+    expect(xhsCall.storageStateContent).toContain(`${SECRET_COOKIE}-xhs-happy`);
+    expect(xhsCall.storageStateContent).not.toContain(`${SECRET_COOKIE}-wc-happy`);
+    expect(existsSync(wcCall.options.storageStatePath)).toBe(false);
+    expect(existsSync(xhsCall.options.storageStatePath)).toBe(false);
+    expect(readdirSync(world.tmpBase)).toEqual([]);
+  });
+
   it('headless 由依赖注入透传，默认无头', async () => {
     const world = makeWorld({ headless: false });
     const account = addAccount(world, 'douyin', 'headful');
@@ -585,6 +854,23 @@ describe('上传调用与未知提交语义', () => {
     expect(world.douyin.uploadCompleted).toBe(true);
   });
 
+  it('视频号上传开始后取消：等待 tencent 模块结束、返回 unknown，不盲重发', async () => {
+    const world = makeWorld();
+    const account = addAccount(world, 'tencent', 'wc-abort-during');
+    const controller = new AbortController();
+    world.tencent.uploadImpl = async () => {
+      controller.abort();
+    };
+    const outcome = await world.executor(
+      attemptInput('wechat-channels', account.id, { signal: controller.signal }),
+    );
+    expect(outcome).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_aborted_unconfirmed' });
+    expect((outcome as { confirmedNotSubmitted?: boolean }).confirmedNotSubmitted).toBeUndefined();
+    expectSafeOutcome(outcome, world);
+    expect(world.tencent.uploadCalls).toHaveLength(1);
+    expect(world.tencent.uploadCompleted).toBe(true);
+  });
+
   it('上传过程中抛异常：返回 unknown，异常文本不泄露，不能确认未提交', async () => {
     const world = makeWorld();
     const account = addAccount(world, 'kuaishou', 'upload-throw');
@@ -597,6 +883,22 @@ describe('上传调用与未知提交语义', () => {
     expectSafeOutcome(outcome, world);
     expect(world.kuaishou.uploadCalls).toHaveLength(1);
     const usedPath = world.kuaishou.uploadCalls[0]?.options.storageStatePath as string;
+    expect(existsSync(usedPath)).toBe(false);
+  });
+
+  it('小红书上传中抛异常（验证码 / 风控等原始文本）：返回 unknown 且脱敏，明文已清理', async () => {
+    const world = makeWorld();
+    const account = addAccount(world, 'xiaohongshu', 'xhs-upload-throw');
+    world.xiaohongshu.uploadImpl = async () => {
+      throw new Error(SECRET_RAW_ERROR);
+    };
+    const outcome = await world.executor(attemptInput('xiaohongshu', account.id));
+    expect(outcome).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_failed_unconfirmed' });
+    expect((outcome as { confirmedNotSubmitted?: boolean }).confirmedNotSubmitted).toBeUndefined();
+    expectSafeOutcome(outcome, world);
+    expect(world.xiaohongshu.uploadCalls).toHaveLength(1);
+    const usedPath = world.xiaohongshu.uploadCalls[0]?.options.storageStatePath as string;
+    expect(usedPath.startsWith(world.tmpBase + sep)).toBe(true);
     expect(existsSync(usedPath)).toBe(false);
   });
 
@@ -662,5 +964,41 @@ describe('上传调用与未知提交语义', () => {
     expect(readdirSync(world.tmpBase)).toEqual([]);
     expectSafeOutcome(outcomeA, world, [pathA, pathB]);
     expectSafeOutcome(outcomeB, world, [pathA, pathB]);
+  });
+
+  it('快手 / 视频号 / 小红书：同平台两个内部 UUID 的短时明文路径彼此独立且互不串用', async () => {
+    for (const platform of ['kuaishou', 'wechat-channels', 'xiaohongshu'] as const) {
+      const world = makeWorld();
+      const vaultPlatform = QUEUE_TO_VAULT_PLATFORM[platform];
+      const accountA = addAccount(world, vaultPlatform, `${platform}-uuid-a`);
+      const accountB = addAccount(world, vaultPlatform, `${platform}-uuid-b`);
+      expect(accountA.id).not.toBe(accountB.id);
+      expect(accountA.platform).toBe(vaultPlatform);
+
+      const outcomeA = await world.executor(attemptInput(platform, accountA.id));
+      const outcomeB = await world.executor(attemptInput(platform, accountB.id));
+      expect(outcomeA).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_unverified' });
+      expect(outcomeB).toEqual({ kind: 'unknown', errorCode: 'adapter_upload_unverified' });
+
+      const mod = moduleFor(world, platform);
+      expect(mod.cookieChecks).toHaveLength(2);
+      expect(mod.uploadCalls).toHaveLength(2);
+      const callA = mod.uploadCalls[0] as UploadCall;
+      const callB = mod.uploadCalls[1] as UploadCall;
+      const pathA = callA.options.storageStatePath;
+      const pathB = callB.options.storageStatePath;
+      expect(pathA).not.toBe(pathB);
+      expect(pathA.startsWith(world.tmpBase + sep)).toBe(true);
+      expect(pathB.startsWith(world.tmpBase + sep)).toBe(true);
+      expect(callA.storageStateContent).toContain(`${SECRET_COOKIE}-${platform}-uuid-a`);
+      expect(callA.storageStateContent).not.toContain(`${SECRET_COOKIE}-${platform}-uuid-b`);
+      expect(callB.storageStateContent).toContain(`${SECRET_COOKIE}-${platform}-uuid-b`);
+      expect(callB.storageStateContent).not.toContain(`${SECRET_COOKIE}-${platform}-uuid-a`);
+      expect(existsSync(pathA)).toBe(false);
+      expect(existsSync(pathB)).toBe(false);
+      expect(readdirSync(world.tmpBase)).toEqual([]);
+      expectSafeOutcome(outcomeA, world, [pathA, pathB]);
+      expectSafeOutcome(outcomeB, world, [pathA, pathB]);
+    }
   });
 });

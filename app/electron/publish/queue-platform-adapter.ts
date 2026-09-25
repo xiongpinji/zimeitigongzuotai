@@ -1,5 +1,5 @@
 /**
- * P1-3 第一段：抖音 / 快手普通发布的保守队列适配层（离线边界，**未接线**）。
+ * P1-3 / P1-4 第一段：四平台普通发布的保守队列适配层（离线边界，**未接线**）。
  *
  * 职责：
  * - 把 P1-2 `DurablePublishQueue` 的安全任务投影（`PublishAttemptInput`）翻译成现有
@@ -24,8 +24,12 @@
  * - 视频路径只通过注入的 `resolveVideoRef` 解析（本模块不自行拼接 / 探测任意路径）；
  * - 不读写 Cookie 文件、不新建浏览器、不发网络请求、不落盘任何会话或限制数据。
  *
- * 平台范围：仅 `douyin` / `kuaishou`。视频号（`tencent`）/ 小红书等其他平台任务
- * 显式返回 `adapter_unsupported_platform`，绝不做隐式映射。
+ * 平台范围：阶段一四个队列契约平台名 `douyin` / `kuaishou` / `wechat-channels` /
+ * `xiaohongshu`（P1-4 第一段把视频号 / 小红书并入 P1-3 的同一适配器接口）。
+ * `wechat-channels`（视频号）映射到上游 `tencent` 平台模块与账号仓 `tencent` 平台名，
+ * 其余三平台两侧同名。映射是单向的、只发生在本适配层：输入侧绝不接受上游名，
+ * `tencent` / `bilibili` 等非契约平台名仍显式返回 `adapter_unsupported_platform`，
+ * 绝不做反向隐式映射。
  *
  * 未接线原因：主库 P1-2 运行时仍有「租约超时释放账号锁但上传 Promise 未停止」
  * 的缺陷，且四平台真实登录 / 提交 / 远端 ID / 最终状态均未验收；本模块只提供
@@ -37,12 +41,36 @@ import type {
   PublishAttemptOutcome,
   PublishExecutor,
 } from './durable-queue';
-import type { PlatformModule, UploadVideoOptions } from './types';
+import type { PlatformModule, PublishPlatform, UploadVideoOptions } from './types';
 
-/** 本适配层支持的平台（普通发布）。 */
-export const QUEUE_PLATFORM_ADAPTER_PLATFORMS = ['douyin', 'kuaishou'] as const;
+/** 本适配层支持的队列契约平台名（普通发布）。 */
+export const QUEUE_PLATFORM_ADAPTER_PLATFORMS = [
+  'douyin',
+  'kuaishou',
+  'wechat-channels',
+  'xiaohongshu',
+] as const;
 
 export type QueuePlatformAdapterPlatform = (typeof QUEUE_PLATFORM_ADAPTER_PLATFORMS)[number];
+
+/**
+ * 队列契约平台名 → 上游 `PlatformModule.platform` / 账号仓 `AccountVaultPlatform`。
+ * 视频号在队列契约（production-contracts）里叫 `wechat-channels`，上游平台模块与
+ * 账号仓都叫 `tencent`；其余三平台两侧同名。这里是全项目唯一映射点：工厂注入
+ * 校验与账号平台一致性检查都以本表为准，任何一侧改名都必须先改这里并补测试。
+ */
+export const QUEUE_PLATFORM_ADAPTER_MODULE_PLATFORMS: Readonly<
+  Record<QueuePlatformAdapterPlatform, PublishPlatform>
+> = {
+  douyin: 'douyin',
+  kuaishou: 'kuaishou',
+  'wechat-channels': 'tencent',
+  xiaohongshu: 'xiaohongshu',
+};
+
+function isQueuePlatformAdapterPlatform(value: string): value is QueuePlatformAdapterPlatform {
+  return (QUEUE_PLATFORM_ADAPTER_PLATFORMS as readonly string[]).includes(value);
+}
 
 /** 稳定安全错误码枚举；全部匹配队列审计的 [a-z0-9_.-]{1,64} 规则。 */
 export const QUEUE_PLATFORM_ADAPTER_ERROR_CODES = [
@@ -137,7 +165,9 @@ export function createQueuePlatformExecutor(deps: QueuePlatformAdapterDeps): Pub
   for (const platform of QUEUE_PLATFORM_ADAPTER_PLATFORMS) {
     const candidate = deps.platformModules?.[platform];
     if (candidate === undefined) continue;
-    if (candidate.platform !== platform) {
+    // 注入键是队列契约名；模块自报 platform 必须等于映射后的上游名
+    // （'wechat-channels' 键只接受自报 'tencent' 的模块）。
+    if (candidate.platform !== QUEUE_PLATFORM_ADAPTER_MODULE_PLATFORMS[platform]) {
       throw new TypeError(`queue platform adapter platform module mismatch for ${platform}`);
     }
     modules[platform] = candidate;
@@ -150,9 +180,10 @@ export function createQueuePlatformExecutor(deps: QueuePlatformAdapterDeps): Pub
   return async function executeQueuePlatformAttempt(
     input: PublishAttemptInput,
   ): Promise<PublishAttemptOutcome> {
-    // 1) 平台白名单：视频号 / 小红书等一律显式拒绝，不触碰账号仓。
-    const requested = input.platform;
-    if (requested !== 'douyin' && requested !== 'kuaishou') {
+    // 1) 平台白名单：只接受四平台契约名；上游 'tencent' / 'bilibili' 等非契约名
+    //    一律显式拒绝，不触碰账号仓（绝不做反向隐式映射）。
+    const requested: string = input.platform;
+    if (!isQueuePlatformAdapterPlatform(requested)) {
       return {
         kind: 'needs_user_action',
         errorCode: 'adapter_unsupported_platform',
@@ -160,6 +191,8 @@ export function createQueuePlatformExecutor(deps: QueuePlatformAdapterDeps): Pub
       };
     }
     const platform: QueuePlatformAdapterPlatform = requested;
+    // 账号仓与平台模块用上游名：'wechat-channels' 任务对应 'tencent' 账号与模块。
+    const modulePlatform = QUEUE_PLATFORM_ADAPTER_MODULE_PLATFORMS[platform];
     const module = modules[platform];
     if (!module) {
       return {
@@ -184,7 +217,8 @@ export function createQueuePlatformExecutor(deps: QueuePlatformAdapterDeps): Pub
         confirmedNotSubmitted: true,
       };
     }
-    if (account.platform !== platform) {
+    // 账号仓平台名是上游名（视频号账号注册为 'tencent'），按映射后名字比对。
+    if (account.platform !== modulePlatform) {
       return {
         kind: 'needs_user_action',
         errorCode: 'adapter_account_platform_mismatch',
