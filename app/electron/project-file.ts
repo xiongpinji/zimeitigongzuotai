@@ -104,7 +104,24 @@ async function writeProjectJson(projectDir: string, data: ProjectData): Promise<
   const tmp = `${abs}.tmp-${process.pid}`;
   await fs.writeFile(tmp, jsonStr, 'utf-8');
   try {
-    await fs.rename(tmp, abs);
+    // Windows 上索引器或文件监听器短暂占用目标文件时，rename 可能返回
+    // EPERM / EACCES / EBUSY。保持原子替换语义，只对这些暂时性错误有限重试。
+    const retryDelaysMs = [20, 40, 80, 160, 320];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fs.rename(tmp, abs);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (
+          attempt >= retryDelaysMs.length ||
+          (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')
+        ) {
+          throw error;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelaysMs[attempt]));
+      }
+    }
   } catch (error) {
     await fs.rm(tmp, { force: true }).catch(() => {});
     throw error;

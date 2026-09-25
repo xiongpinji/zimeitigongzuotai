@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -181,5 +181,65 @@ describe('saveProjectSection', () => {
     expect(raw.timeline.podcast.audioPath).toBe('/a.mp3');
     expect(raw.aiAnalysis.coverCandidates).toHaveLength(1);
     expect(raw.script.templateId).toBe('custom');
+  });
+
+  it('Windows 暂时占用目标文件时重试原子重命名并保存新内容', async () => {
+    await loadProjectFile(tmpDir);
+    const projectFile = path.join(tmpDir, 'project.json');
+    const originalRename = fs.rename.bind(fs);
+    let attempts = 0;
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (to === projectFile && ++attempts === 1) {
+        throw Object.assign(new Error('target temporarily locked'), { code: 'EPERM' });
+      }
+      return originalRename(from, to);
+    });
+
+    try {
+      await saveProjectSection(tmpDir, 'publish', {
+        title: '重试后的标题',
+        desc: '',
+        tagsInput: '',
+        thumbnail: '',
+        overrides: {},
+      });
+      expect(attempts).toBe(2);
+      const saved = JSON.parse(await fs.readFile(projectFile, 'utf8'));
+      expect(saved.publish.title).toBe('重试后的标题');
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
+  it('Windows 持续拒绝重命名时保留原工程并报告失败', async () => {
+    await loadProjectFile(tmpDir);
+    const projectFile = path.join(tmpDir, 'project.json');
+    const original = await fs.readFile(projectFile, 'utf8');
+    const originalRename = fs.rename.bind(fs);
+    let attempts = 0;
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (to === projectFile) {
+        attempts += 1;
+        throw Object.assign(new Error('target remains locked'), { code: 'EPERM' });
+      }
+      return originalRename(from, to);
+    });
+
+    try {
+      await expect(
+        saveProjectSection(tmpDir, 'publish', {
+          title: '不得覆盖原工程',
+          desc: '',
+          tagsInput: '',
+          thumbnail: '',
+          overrides: {},
+        }),
+      ).rejects.toThrow(/target remains locked/);
+      expect(attempts).toBeGreaterThan(1);
+      expect(await fs.readFile(projectFile, 'utf8')).toBe(original);
+      expect((await fs.readdir(tmpDir)).some((name) => name.startsWith('project.json.tmp-'))).toBe(false);
+    } finally {
+      rename.mockRestore();
+    }
   });
 });
