@@ -253,6 +253,22 @@ export function PublishAccountsTab() {
         leading={<Share2 size={24} className={styles.platformIcon} />}
       />
 
+      {/* 未切换边界：此处仍是旧账号体系，新安全账号不接入旧发布链。 */}
+      <div
+        role="note"
+        style={{
+          padding: '10px 12px',
+          borderRadius: 8,
+          border: '1px solid var(--color-border-control)',
+          background: 'var(--color-fill-tertiary)',
+          color: 'var(--color-text-secondary-strong)',
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}
+      >
+        这里仍使用旧账号体系；新安全账号暂未接入发布。新账号请到「设置 → 安全账号」管理，旧发布工作台也仍只识别下方旧账号。
+      </div>
+
       {/* ── Account list ── */}
       {accounts.length === 0 ? (
         <p className={styles.emptyState}>暂无发布账号，请在下方添加。</p>

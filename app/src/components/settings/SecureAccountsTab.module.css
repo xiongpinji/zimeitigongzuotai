@@ -1,0 +1,166 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.platformIcon {
+  color: var(--color-system-blue);
+}
+
+.boundaryNotice {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-control);
+  background: var(--color-fill-tertiary);
+  color: var(--color-text-secondary-strong);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.accountList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.accountRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-control);
+  background: var(--color-panel-elevated);
+}
+
+.accountInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.accountName {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accountId {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+  font-family: var(--font-family-mono, monospace);
+  word-break: break-all;
+}
+
+.accountMeta {
+  color: var(--color-text-secondary-strong);
+  font-size: var(--font-size-sm);
+}
+
+.accountActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.qrcodeWrap {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.qrcodeLabel {
+  color: var(--color-text-secondary-strong);
+  font-size: var(--font-size-sm);
+}
+
+.qrcodeImg {
+  width: 180px;
+  height: 180px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-control);
+  object-fit: contain;
+  background: var(--color-text-primary);
+}
+
+.feedback {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-text-secondary-strong);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.feedbackError {
+  color: var(--color-destructive);
+}
+
+.feedbackSuccess {
+  color: var(--color-system-green, var(--color-success, #32d74b));
+}
+
+.emptyState {
+  color: var(--color-text-placeholder);
+  font-size: var(--font-size-md);
+  padding: 20px 0;
+}
+
+.addSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.addRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.addSelectWrap {
+  flex: 0 0 160px;
+}
+
+.addInputWrap {
+  flex: 1;
+  min-width: 140px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.loginModeRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.loginModeHint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

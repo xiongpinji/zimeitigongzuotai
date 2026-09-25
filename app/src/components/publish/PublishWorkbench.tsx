@@ -939,6 +939,22 @@ export function PublishWorkbench({ projectDir }: { projectDir: string | null }) 
             {projectDir}
           </p>
         )}
+        {/* 未切换边界：旧发布工作台只识别旧账号 ID，新安全账号不进入本 runner。 */}
+        <div
+          role="note"
+          style={{
+            marginTop: 10,
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--color-border-subtle, rgba(0,0,0,0.08))',
+            background: 'var(--color-bg-elevated)',
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          这里仍使用旧账号体系；新安全账号暂未接入发布。下方「发布到」只列出旧账号，新账号请到「设置 → 安全账号」管理。
+        </div>
       </div>
 
       {/* Form */}

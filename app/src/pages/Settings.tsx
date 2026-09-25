@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Cpu, DatabaseBackup, Heart, MessageCircle, Server, Share2, Sparkles, Volume2 } from 'lucide-react';
+import { ArrowLeft, Bot, Cpu, DatabaseBackup, Heart, MessageCircle, Server, Share2, ShieldCheck, Sparkles, Volume2 } from 'lucide-react';
 import { ConfigBackupTab } from '../components/settings/ConfigBackupTab';
 import { AIConfigTab } from '../components/settings/AIConfigTab';
 import { TTSConfigTab } from '../components/settings/TTSConfigTab';
@@ -7,6 +7,7 @@ import { AgentSettingsTab } from '../components/settings/AgentSettingsTab';
 import { McpSettingsTab } from '../components/settings/McpSettingsTab';
 import { PromptsConfigTab } from '../components/settings/PromptsConfigTab';
 import { PublishAccountsTab } from '../components/settings/PublishAccountsTab';
+import { SecureAccountsTab } from '../components/settings/SecureAccountsTab';
 import { SupportAuthorTab } from '../components/settings/SupportAuthorTab';
 import { ContactAuthorTab } from '../components/settings/ContactAuthorTab';
 import { Button, Tabs, TabsContent } from '../ui';
@@ -21,6 +22,7 @@ export type SettingsTab =
   | 'prompts'
   | 'backup'
   | 'publish-accounts'
+  | 'secure-accounts'
   | 'support-author'
   | 'contact-author';
 
@@ -32,6 +34,7 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Bot }[] = [
   { id: 'prompts', label: '提示词配置', icon: Sparkles },
   { id: 'backup', label: '配置备份', icon: DatabaseBackup },
   { id: 'publish-accounts', label: '发布账号', icon: Share2 },
+  { id: 'secure-accounts', label: '安全账号', icon: ShieldCheck },
   { id: 'contact-author', label: '联系作者', icon: MessageCircle },
   { id: 'support-author', label: '支持作者', icon: Heart },
 ];
@@ -136,6 +139,13 @@ export function Settings({ onBack, initialTab }: SettingsProps) {
         </TabsContent>
         <TabsContent value="publish-accounts" className={styles.contentPanel}>
           <PublishAccountsTab />
+        </TabsContent>
+        <TabsContent value="secure-accounts" className={styles.contentPanel}>
+          <SecureAccountsTab
+            onRegisterLeaveGuard={(guard) => {
+              tabLeaveGuardRef.current = guard;
+            }}
+          />
         </TabsContent>
         <TabsContent value="contact-author" className={styles.contentPanel}>
           <ContactAuthorTab />
