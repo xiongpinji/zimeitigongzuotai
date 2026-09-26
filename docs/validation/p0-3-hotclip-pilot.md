@@ -1,6 +1,6 @@
 # HotClip 隔离试验（P0-3 进行中）
 
-2026-09-25 在仓库外的参考副本测试 [HotClip](https://github.com/xixihhhh/hotclip) 固定提交 `62aef3919fdd7d8a974f80a9b721e0177eb408c2`，版本 `0.32.0`。主库和当前 Windows 安装包**没有**包含 HotClip 源码、模型或运行包。测试素材是本机用 FFmpeg 生成的 6 秒视频及两句自写 SRT，不涉及用户录屏、真实账号或云端 LLM。
+2026-09-25 在仓库外的参考副本测试 [HotClip](https://github.com/xixihhhh/hotclip) 固定提交 `62aef3919fdd7d8a974f80a9b721e0177eb408c2`，版本 `0.32.0`。主库和当前 Windows 安装包**没有**包含 HotClip 源码、模型或运行包。测试素材是本机用 FFmpeg 生成的 6 秒视频及两句自写 SRT，不涉及用户录屏、真实账号或云端 LLM。2026-09-26 将固定版本源码与合成素材复制到仓库内被 Git 忽略的本机 `data/` 运行区并验证字幕导入，见[本地运行区记录](p0-3-local-runtime-layout.md)；这不改变主库或安装包的分发边界。
 
 | 检查 | 本机结果 | 证据边界 |
 | --- | --- | --- |
