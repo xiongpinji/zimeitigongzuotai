@@ -26,7 +26,8 @@
   - [x] S2b2b 有界并发调度、AbortSignal 到合成 sidecar 子进程、单录屏失败隔离与显式重试已在主库 `5e2327f` 交付；Windows 相关套件 108 passed、1 个 symlink 用例 skipped，类型检查与 Electron 构建通过。前段 GLM 增量复审因会话轮数问题未形成最终报告，本段未另起模型审查；Codex 自审和产品边界见[验证记录](../validation/p2-2-highlight-batch-scheduler.md)。目前只提交结果 ID，候选正文/高光投影及人工审核记录尚无原子持久化，不能称为产品批量高光生产。
 - [ ] H1-S2c：故障注入与恢复：从“已排队/运行中/候选已算出但未提交/提交后未回执”四个持久点重开，证明状态不误报成功、结果不重复；Windows 双进程写者测试保持 RED 或经产品单实例门槛证明产品路径单一写者。在接真实 sidecar 前保留 H1-S3 门槛。
   - [x] S2c1 本地产物回执与合成故障恢复核心已在主库 `3471243` 交付：文件提交后补队列 ID、缺失/损坏/失配拒绝、旧尝试不冒充完成、源哈希观察端口及内容摘要。相关 Windows 套件 122 passed、1 skipped，类型检查和 Electron 构建通过；GLM 只读作业超时，未形成独立最终报告。见[验证记录](../validation/p2-2-highlight-batch-recovery.md)。
-  - [ ] S2c2 产品持锁 Electron main 单写者入口、双进程写者/打包启动核对、真实源摘要观察器接线与真实样本盲审仍未完成，不启用自动高光生产。
+  - [ ] S2c2 产品持锁 Electron main 单写者入口、双进程写者/打包启动核对、真实样本盲审仍未完成，不启用自动高光生产。
+    - [x] S2c2a 用户授权媒体根目录下的本地文件逐字节 SHA-256 观察器及持久 runner 组合端口已在主库 `d40606f` 交付；合成文件改写阻止 sidecar 二次启动。Windows 相关套件 126 passed、2 个 symlink 断言 skipped，类型检查和构建通过，见[验证记录](../validation/p2-2-highlight-local-source-observer.md)。产品配置和真实样本仍未接线。
 
 # Validation strategy
 
