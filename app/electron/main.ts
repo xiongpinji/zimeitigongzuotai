@@ -80,6 +80,7 @@ import { registerMcpIpc } from './mcp/ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
+import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
 import { configureBiliupRoot } from './publish/biliup-runtime';
@@ -2853,6 +2854,21 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     writeAppLog('warn', 'user-prompts', '迁移旧口播模板失败', String(err));
+  }
+  // A2-S4b：只读旧账号迁移预览。它只读取旧 registry 元数据，不构造旧仓或新 vault；
+  // 独立注册，避免加密账号仓不可用时把只读检查也一并阻断。
+  try {
+    registerLegacyMigrationPreviewIpc({
+      ipc: ipcMain,
+      legacyRoot: path.join(app.getPath('userData'), 'publish'),
+    });
+  } catch (err) {
+    writeAppLog(
+      'error',
+      'account-v2',
+      '旧账号只读迁移预览注册失败',
+      err instanceof Error ? err.name : 'unknown error',
+    );
   }
   // A2-S2：安全账号服务（account-v2）——只在 ready 之后、首次 createWindow 之前
   // 注册一次。新仓固定 <userData>/publish-v2（与旧 publish 分离），加密强制走

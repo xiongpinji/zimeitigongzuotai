@@ -826,6 +826,7 @@ contextBridge.exposeInMainWorld('accountV2API', {
     }),
   check: (accountId: string) => ipcRenderer.invoke('account-v2:check', { accountId }),
   delete: (accountId: string) => ipcRenderer.invoke('account-v2:delete', { accountId }),
+  migrationPreview: () => ipcRenderer.invoke('account-v2:migration-preview'),
   onQrcode: (callback: (event: AccountV2QrcodeEvent) => void) => {
     const handler = (_event: unknown, payload: AccountV2QrcodeEvent) => callback(payload);
     ipcRenderer.on('account-v2:qrcode', handler);

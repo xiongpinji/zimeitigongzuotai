@@ -32,6 +32,7 @@ import {
   bootstrapAccountsV2,
   createAccountsV2PlatformFactory,
 } from '../../electron/publish/accounts-v2-bootstrap';
+import { LEGACY_MIGRATION_PREVIEW_CHANNEL } from '../../electron/publish/legacy-migration-preview';
 import type { LoginOptions } from '../../electron/publish/types';
 
 // ─── preload electron 假注入（vi.mock 提升；假 contextBridge / ipcRenderer） ──
@@ -426,8 +427,9 @@ describe('accountV2 preload 桥：通道映射与退订', () => {
       login: (input: unknown) => Promise<unknown>;
       check: (id: string) => Promise<unknown>;
       delete: (id: string) => Promise<unknown>;
+      migrationPreview: () => Promise<unknown>;
     };
-    expect(Object.keys(api).sort()).toEqual(['check', 'create', 'delete', 'list', 'login', 'onQrcode']);
+    expect(Object.keys(api).sort()).toEqual(['check', 'create', 'delete', 'list', 'login', 'migrationPreview', 'onQrcode']);
     expect(preloadBridge.exposed.accountV2API === preloadBridge.exposed.publishAPI).toBe(false);
 
     preloadBridge.invocations.length = 0;
@@ -437,6 +439,7 @@ describe('accountV2 preload 桥：通道映射与退订', () => {
     await api.login({ accountId: 'a', requestId: 'r', headless: false });
     await api.check('a');
     await api.delete('a');
+    await api.migrationPreview();
     expect(preloadBridge.invocations.map((i) => i.channel)).toEqual([
       ACCOUNT_V2_IPC_CHANNELS.create,
       ACCOUNT_V2_IPC_CHANNELS.list,
@@ -444,6 +447,7 @@ describe('accountV2 preload 桥：通道映射与退订', () => {
       ACCOUNT_V2_IPC_CHANNELS.login,
       ACCOUNT_V2_IPC_CHANNELS.check,
       ACCOUNT_V2_IPC_CHANNELS.delete,
+      LEGACY_MIGRATION_PREVIEW_CHANNEL,
     ]);
     expect(preloadBridge.invocations[0].args[0]).toEqual({
       platform: 'douyin',
@@ -459,6 +463,7 @@ describe('accountV2 preload 桥：通道映射与退订', () => {
     });
     expect(preloadBridge.invocations[4].args[0]).toEqual({ accountId: 'a' });
     expect(preloadBridge.invocations[5].args[0]).toEqual({ accountId: 'a' });
+    expect(preloadBridge.invocations[6].args).toEqual([]);
     expect(preloadBridge.invocations.every((i) => i.channel.startsWith('account-v2:'))).toBe(true);
   });
 

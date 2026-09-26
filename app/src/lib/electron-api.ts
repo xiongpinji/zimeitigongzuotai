@@ -42,6 +42,7 @@ import type {
   AccountV2LoginResult,
   AccountV2QrcodeEvent,
 } from '../../electron/publish/accounts-v2-ipc';
+import type { LegacyMigrationPreviewResult } from '../../electron/publish/legacy-migration-preview';
 
 export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish';
 
@@ -803,8 +804,8 @@ export interface AccountV2LoginInput {
 }
 
 /**
- * `window.accountV2API`：只映射固定 `account-v2:create/list/login/check/delete`
- * 通道与 `account-v2:qrcode` 事件；结果 / 事件与 A2-S1 的安全 DTO 联合类型一致，
+ * `window.accountV2API`：只映射固定 `account-v2:create/list/login/check/delete/migration-preview`
+ * 通道与 `account-v2:qrcode` 事件；结果 / 事件与安全 DTO 联合类型一致，
  * 绝不含 sessionRef、文件系统路径、Cookie / Token 或平台原文。
  */
 export interface AccountV2API {
@@ -817,6 +818,8 @@ export interface AccountV2API {
   login(input: AccountV2LoginInput): Promise<AccountV2LoginResult>;
   check(accountId: string): Promise<AccountV2CheckResult>;
   delete(accountId: string): Promise<AccountV2DeleteResult>;
+  /** 只读旧账号元数据预览；无参数，不能指定磁盘路径或触发迁移。 */
+  migrationPreview(): Promise<LegacyMigrationPreviewResult>;
   /** 订阅 `account-v2:qrcode`；返回的函数真实执行 removeListener。 */
   onQrcode(callback: (event: AccountV2QrcodeEvent) => void): () => void;
 }
