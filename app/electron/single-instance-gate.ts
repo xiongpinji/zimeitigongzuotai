@@ -47,6 +47,14 @@ export interface SingleInstanceGateOutcome {
 export type SecondInstanceFocusHandler = () => void;
 
 let secondInstanceFocusHandler: SecondInstanceFocusHandler | null = null;
+let singleInstanceOwner = false;
+
+/** Only the Electron process that passed the startup gate may construct product writers. */
+export function assertSingleInstanceOwner(): void {
+  if (!singleInstanceOwner) {
+    throw new Error('Single-instance lock owner required');
+  }
+}
 
 /** 主运行时（main.ts）加载后注册二次启动时的聚焦/恢复回调。 */
 export function registerSecondInstanceFocus(handler: SecondInstanceFocusHandler): void {
@@ -75,6 +83,9 @@ export function getRegisteredSecondInstanceFocusHandler(): SecondInstanceFocusHa
 export async function runSingleInstanceGate(
   options: SingleInstanceGateOptions,
 ): Promise<SingleInstanceGateOutcome> {
+  // Clear any earlier local assertion before a new lock attempt. The real entry calls once;
+  // this also prevents a prior fake owner from authorizing a later loser in tests.
+  singleInstanceOwner = false;
   const acquiredLock = options.app.requestSingleInstanceLock();
 
   if (!acquiredLock) {
@@ -93,6 +104,12 @@ export async function runSingleInstanceGate(
     }
   });
 
-  await options.loadMainRuntime();
+  singleInstanceOwner = true;
+  try {
+    await options.loadMainRuntime();
+  } catch (error) {
+    singleInstanceOwner = false;
+    throw error;
+  }
   return { acquiredLock: true, loadedMainRuntime: true, quitRequested: false };
 }

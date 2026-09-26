@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  assertSingleInstanceOwner,
   clearSecondInstanceFocusHandler,
   getRegisteredSecondInstanceFocusHandler,
   registerSecondInstanceFocus,
@@ -170,6 +171,45 @@ describe('runSingleInstanceGate', () => {
     expect(getRegisteredSecondInstanceFocusHandler()).toBe(handler);
     clearSecondInstanceFocusHandler();
     expect(getRegisteredSecondInstanceFocusHandler()).toBeNull();
+  });
+});
+
+describe('single-instance owner assertion', () => {
+  it('denies before a lock win and after a losing gate call', async () => {
+    const loser = createFakeApp(false);
+    await runSingleInstanceGate({ app: loser.app, loadMainRuntime: () => undefined });
+    expect(assertSingleInstanceOwner).toThrow('Single-instance lock owner required');
+    expect(loser.calls).toEqual(['requestSingleInstanceLock', 'quit']);
+  });
+
+  it('grants ownership before the owner runtime loads, then clears it for a later loser', async () => {
+    const owner = createFakeApp(true);
+    let assertedDuringLoad = false;
+    await runSingleInstanceGate({
+      app: owner.app,
+      loadMainRuntime: () => {
+        assertSingleInstanceOwner();
+        assertedDuringLoad = true;
+      },
+    });
+    expect(assertedDuringLoad).toBe(true);
+    expect(assertSingleInstanceOwner).not.toThrow();
+
+    const loser = createFakeApp(false);
+    await runSingleInstanceGate({ app: loser.app, loadMainRuntime: () => undefined });
+    expect(assertSingleInstanceOwner).toThrow('Single-instance lock owner required');
+  });
+
+  it('revokes ownership when loading the main runtime fails', async () => {
+    await runSingleInstanceGate({ app: createFakeApp(false).app, loadMainRuntime: () => undefined });
+    await expect(runSingleInstanceGate({
+      app: createFakeApp(true).app,
+      loadMainRuntime: () => {
+        assertSingleInstanceOwner();
+        throw new Error('synthetic load failure');
+      },
+    })).rejects.toThrow('synthetic load failure');
+    expect(assertSingleInstanceOwner).toThrow('Single-instance lock owner required');
   });
 });
 
