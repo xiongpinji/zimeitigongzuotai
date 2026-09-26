@@ -9,7 +9,7 @@
 - TDD：新门禁断言先出现 **3 failed、10 passed**，因断言尚不存在而失败；实现后门禁套件 **13/13**。队列工厂测试先因文件缺失无法加载，补最小桩后出现 **3/3 断言失败**，再实现工厂后通过。未将模块加载错误计作有效 RED。
 - Windows Node 22.23.3 聚焦回归：`single-instance-gate` 13、真实双 Electron 进程 fixture 2、Vite 入口配置 5、新队列工厂 3、既有持久队列 41，共 **64/64 通过、无跳过**。
 - `tsc --noEmit --project app/tsconfig.json` 与 `electron-vite build` 退出码均为 0。构建后 `dist-electron/main.js` 保持对 `app-main.js` 的延迟加载，两个入口引用同一个 `single-instance-gate-*.js` chunk；目前该 chunk 中的新增断言被树摇优化掉，因为产品入口尚未调用工厂。
-- 截至本记录，GLM-5.3 只读审查作业 `qwen-code-review-20260926-055157-5be921` 正在运行，不能写成已通过审查。
+- GLM-5.3 只读审查作业 `qwen-code-review-20260926-055157-5be921` 已结束；在四文件范围内未发现开放的 P0/P1。Codex 独立确认该提交的 `git show --stat` 恰为四文件、审查工作树干净，并接受其有界报告。审查提出的 P3 接线注意项是：产品不能吞掉 owner 拒绝；应加入构建后共享 gate chunk 断言；应保留门禁只调用一次的契约。报告中“未调用任何工具”的表述与作业流里的只读检索调用不符，不能拿来当无工具审查证据。
 
 ## 仍需完成
 

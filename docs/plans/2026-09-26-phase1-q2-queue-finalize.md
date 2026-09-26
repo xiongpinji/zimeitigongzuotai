@@ -68,8 +68,8 @@ API 的跨进程不安全事实，也不假设 Electron 锁以 `userData` 路径
 - [ ] Q2-R3b2：P1 产品接线必须限制所有队列写入口为持锁 Electron main，
   再在打包启动路径验证所有权；R3b1 不能代替该检查。
   子项 R3b2a 的进程内 owner 断言和队列工厂已在 `8aa79d8` 落库，Windows
-  聚焦回归 64/64、类型检查与构建通过；但产品主运行时还未引用新工厂，
-  GLM 只读审查尚未结束。见[工厂验证记录](../validation/p1-2-owned-queue-factory.md)。
+  聚焦回归 64/64、类型检查与构建通过，GLM 只读审查无开放 P0/P1；但产品
+  主运行时还未引用新工厂。见[工厂验证记录](../validation/p1-2-owned-queue-factory.md)。
 
 # Validation strategy
 
