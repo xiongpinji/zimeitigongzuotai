@@ -1,9 +1,9 @@
 import type { WebContents } from 'electron';
 import type { PublishJob } from './types';
 import { getPlatform } from './platforms';
-import { parseAccountId } from './account-id';
 import { AccountStore } from './accounts';
 import { LoginExpiredError } from './errors';
+import { preflightPublishTargets, PublishPreflightError } from './preflight';
 
 export async function runPublishJob(
   job: PublishJob,
@@ -12,10 +12,19 @@ export async function runPublishJob(
   isCancelled: () => boolean,
   headless: boolean,
 ): Promise<void> {
-  for (const target of job.targets) {
+  // One legacy registry snapshot and one whole-job validation before resolving
+  // even the first platform module. Missing/UUID/duplicate targets never cause
+  // a partial upload or a silently skipped Renderer row.
+  let accountSnapshot: ReturnType<AccountStore['list']>;
+  try {
+    accountSnapshot = store.list();
+  } catch {
+    throw new PublishPreflightError('publish_preflight_accounts_unavailable');
+  }
+  const boundTargets = preflightPublishTargets(job, accountSnapshot);
+
+  for (const { target, account } of boundTargets) {
     if (isCancelled()) break;
-    const acc = store.list().find((a) => a.id === target.accountId);
-    if (!acc) continue;
     const send = (state: string, percent?: number, message?: string) =>
       sender.send('publish:progress', {
         jobId: job.id,
@@ -26,9 +35,8 @@ export async function runPublishJob(
       });
     send('running', 0);
     try {
-      const { platform } = parseAccountId(target.accountId);
-      await getPlatform(platform).uploadVideo({
-        storageStatePath: acc.storageStatePath,
+      await getPlatform(account.platform).uploadVideo({
+        storageStatePath: account.storageStatePath,
         filePath: job.filePath,
         title: target.overrides?.title ?? job.shared.title,
         desc: target.overrides?.desc ?? job.shared.desc,

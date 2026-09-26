@@ -6,6 +6,9 @@ import { useTaskProgressStore } from './task-progress';
 /** 账号终态：进度计数与落盘历史据此判断「该账号本次已结束」。 */
 const TERMINAL_STATES = new Set(['success', 'failed', 'login-expired']);
 
+/** Fixed UI fallback for an IPC-level whole-job failure; never includes raw errors. */
+export const PUBLISH_JOB_FAILED_MESSAGE = '发布任务未完成，请检查账号或任务配置';
+
 export interface PublishResult {
   state: 'pending' | 'running' | 'success' | 'failed' | 'login-expired';
   percent?: number;
@@ -118,7 +121,7 @@ export const usePublishStore = create<PublishState>((set, get) => ({
 
     // ── Subscribe to per-target progress events ──
     const unsubscribe = window.publishAPI.onProgress((payload: PublishProgressPayload) => {
-      if (payload.jobId !== jobId) return;
+      if (payload.jobId !== jobId || get().job?.id !== jobId) return;
       const now = Date.now();
       set((s) => {
         const prev = s.results[payload.accountId] ?? { state: 'pending' };
@@ -166,13 +169,27 @@ export const usePublishStore = create<PublishState>((set, get) => ({
       );
       // Complete the parent task
       useTaskProgressStore.getState().completeTask(taskId);
-    } catch (err) {
-      useTaskProgressStore
-        .getState()
-        .failTask(taskId, err instanceof Error ? err.message : String(err));
+    } catch {
+      const finishedAt = Date.now();
+      set((state) => {
+        if (state.job?.id !== jobId) return state;
+        const results = { ...state.results };
+        for (const target of targets) {
+          const current = results[target.accountId];
+          if (current && TERMINAL_STATES.has(current.state)) continue;
+          results[target.accountId] = {
+            ...current,
+            state: 'failed',
+            message: PUBLISH_JOB_FAILED_MESSAGE,
+            finishedAt,
+          };
+        }
+        return { results };
+      });
+      useTaskProgressStore.getState().failTask(taskId, PUBLISH_JOB_FAILED_MESSAGE);
     } finally {
       unsubscribe();
-      set({ job: null });
+      set((state) => (state.job?.id === jobId ? { job: null } : state));
     }
   },
 
