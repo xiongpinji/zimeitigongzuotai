@@ -1,7 +1,7 @@
 /**
  * H1-S2b1: durable identity and storage for batches of recording highlights.
  * This core never starts HotClip, reads media, or approves a candidate for use.
- * Execution, cancellation and retry belong to the next scheduler slice.
+ * Execution and child-process cancellation belong to the next scheduler slice.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -23,7 +23,21 @@ export const HIGHLIGHT_BATCH_SCHEMA_VERSION = 1 as const;
 const TASK_ID_DOMAIN = 'lingji-highlight-batch-task-v1';
 const TASK_ID_PATTERN = /^hbatch_[0-9a-f]{64}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const SAFE_ERROR_CODE_PATTERN = /^[a-z0-9_.-]{1,64}$/;
+const CANDIDATE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const HIGHLIGHT_ID_PATTERN = /^hlcv1-[0-9a-f]{64}$/;
+const MAX_RESULT_IDS = 12;
+export const HIGHLIGHT_BATCH_FAILURE_CODES = [
+  'source_unavailable',
+  'sidecar_executable_missing',
+  'sidecar_spawn_failed',
+  'sidecar_timeout',
+  'sidecar_nonzero_exit',
+  'sidecar_output_too_large',
+  'sidecar_invalid_output',
+  'projection_failed',
+  'process_interrupted',
+  'internal_error',
+] as const;
 const ACTIVE_WRITERS = new Set<string>();
 const TASK_STATES = ['queued', 'running', 'interrupted', 'completed', 'failed', 'cancelled'] as const;
 
@@ -81,6 +95,14 @@ export const HIGHLIGHT_BATCH_ERROR_CODES = [
   'recording_conflict',
   'invalid_clock',
   'closed',
+  'task_not_found',
+  'invalid_transition',
+  'stale_attempt',
+  'invalid_attempt_limit',
+  'attempt_limit_reached',
+  'invalid_result',
+  'result_conflict',
+  'invalid_error_code',
 ] as const;
 export type HighlightBatchErrorCode = (typeof HIGHLIGHT_BATCH_ERROR_CODES)[number];
 const ERROR_MESSAGES: Readonly<Record<HighlightBatchErrorCode, string>> = {
@@ -101,6 +123,14 @@ const ERROR_MESSAGES: Readonly<Record<HighlightBatchErrorCode, string>> = {
   recording_conflict: 'Recording metadata changed for an existing highlight task',
   invalid_clock: 'Highlight batch clock returned an invalid time',
   closed: 'Highlight batch store is closed',
+  task_not_found: 'Highlight batch task does not exist',
+  invalid_transition: 'Highlight batch task cannot enter the requested state',
+  stale_attempt: 'Highlight batch attempt is no longer current',
+  invalid_attempt_limit: 'Highlight batch attempt limit must be between one and five',
+  attempt_limit_reached: 'Highlight batch attempt limit has been reached',
+  invalid_result: 'Highlight batch result identifiers are invalid',
+  result_conflict: 'Highlight batch completed result conflicts with the saved result',
+  invalid_error_code: 'Highlight batch failure code is invalid',
 };
 
 export class HighlightBatchQueueError extends Error {
@@ -132,12 +162,51 @@ function isTime(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
-function isSafeIdArray(value: unknown): value is string[] {
+function isSafeIdArray(value: unknown, pattern: RegExp): value is string[] {
   return (
     Array.isArray(value) &&
-    value.every((id) => typeof id === 'string' && id.length > 0) &&
+    value.length <= MAX_RESULT_IDS &&
+    value.every((id) => typeof id === 'string' && pattern.test(id)) &&
     new Set(value).size === value.length
   );
+}
+
+function copyResultIds(value: unknown, pattern: RegExp): string[] {
+  if (!Array.isArray(value) || value.length > MAX_RESULT_IDS ||
+      Reflect.ownKeys(value).length !== value.length + 1) fail('invalid_result');
+  const ids: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !('value' in descriptor) ||
+        typeof descriptor.value !== 'string' || !pattern.test(descriptor.value)) fail('invalid_result');
+    ids.push(descriptor.value);
+  }
+  if (new Set(ids).size !== ids.length) fail('invalid_result');
+  return ids;
+}
+
+function normalizeResult(value: unknown): { candidateIds: string[]; highlightIds: string[] } {
+  try {
+    if (!isPlainObject(value) || !exactKeys(value, ['candidateIds', 'highlightIds'])) fail('invalid_result');
+    const candidates = Object.getOwnPropertyDescriptor(value, 'candidateIds');
+    const highlights = Object.getOwnPropertyDescriptor(value, 'highlightIds');
+    if (!candidates || !highlights || !('value' in candidates) || !('value' in highlights) ||
+        !Array.isArray(candidates.value) || !Array.isArray(highlights.value)) fail('invalid_result');
+    const candidateIds = copyResultIds(candidates.value, CANDIDATE_ID_PATTERN);
+    const highlightIds = copyResultIds(highlights.value, HIGHLIGHT_ID_PATTERN);
+    return { candidateIds, highlightIds };
+  } catch {
+    fail('invalid_result');
+  }
+}
+
+function isAttemptLimit(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === 'number' && value >= 1 && value <= 5;
+}
+
+function isFailureCode(value: unknown): value is (typeof HIGHLIGHT_BATCH_FAILURE_CODES)[number] {
+  return typeof value === 'string' &&
+    (HIGHLIGHT_BATCH_FAILURE_CODES as readonly string[]).includes(value);
 }
 
 function clone<T>(value: T): T {
@@ -252,10 +321,12 @@ function parseSnapshot(raw: string | null): HighlightBatchTaskV1[] {
         !isCanonicalOptions(rawTask.options) ||
         !TASK_STATES.includes(rawTask.state as HighlightBatchState) ||
         !isTime(rawTask.attempt) ||
-        !isSafeIdArray(rawTask.candidateIds) ||
-        !isSafeIdArray(rawTask.highlightIds) ||
-        (rawTask.lastErrorCode !== null &&
-          (typeof rawTask.lastErrorCode !== 'string' || !SAFE_ERROR_CODE_PATTERN.test(rawTask.lastErrorCode))) ||
+        !isSafeIdArray(rawTask.candidateIds, CANDIDATE_ID_PATTERN) ||
+        !isSafeIdArray(rawTask.highlightIds, HIGHLIGHT_ID_PATTERN) ||
+        (rawTask.options.maxClips !== null &&
+          (rawTask.candidateIds.length > rawTask.options.maxClips ||
+           rawTask.highlightIds.length > rawTask.options.maxClips)) ||
+        (rawTask.lastErrorCode !== null && !isFailureCode(rawTask.lastErrorCode)) ||
         !isTime(rawTask.createdAt) || !isTime(rawTask.updatedAt) || rawTask.updatedAt < rawTask.createdAt ||
         rawTask.updatedAt > value.updatedAt
       ) fail('store_corrupt');
@@ -269,10 +340,12 @@ function parseSnapshot(raw: string | null): HighlightBatchTaskV1[] {
       }
       if (
         (rawTask.state === 'queued' &&
-          (rawTask.attempt !== 0 || rawTask.lastErrorCode !== null || rawTask.candidateIds.length > 0)) ||
+          (rawTask.lastErrorCode !== null || rawTask.candidateIds.length > 0)) ||
         (['running', 'interrupted', 'completed', 'failed'].includes(rawTask.state as string) && rawTask.attempt === 0) ||
         (rawTask.state === 'failed' && rawTask.lastErrorCode === null) ||
-        (rawTask.state !== 'completed' && rawTask.highlightIds.length > 0)
+        (rawTask.state !== 'failed' && rawTask.state !== 'interrupted' && rawTask.lastErrorCode !== null) ||
+        (rawTask.state !== 'completed' &&
+          (rawTask.candidateIds.length > 0 || rawTask.highlightIds.length > 0))
       ) fail('store_corrupt');
       ids.add(rawTask.id);
       tasks.push(rawTask as unknown as HighlightBatchTaskV1);
@@ -352,6 +425,104 @@ export class HighlightBatchQueue {
     return task ? clone(task) : null;
   }
 
+  private requiredTask(id: string): HighlightBatchTaskV1 {
+    this.assertOpen();
+    if (typeof id !== 'string' || !TASK_ID_PATTERN.test(id)) fail('task_not_found');
+    const task = this.tasks.find((entry) => entry.id === id);
+    if (!task) fail('task_not_found');
+    return task;
+  }
+
+  private nextTimestamp(): number {
+    let timestamp: number;
+    try { timestamp = this.now(); } catch { fail('invalid_clock'); }
+    if (!isTime(timestamp) || this.tasks.some((task) => task.updatedAt > timestamp)) fail('invalid_clock');
+    return timestamp;
+  }
+
+  private assertStoreUnchanged(): void {
+    if (readRawStore(this.storePath) !== this.rawStore) fail('store_changed');
+  }
+
+  private commitTasks(nextTasks: HighlightBatchTaskV1[], timestamp: number): void {
+    this.assertStoreUnchanged();
+    const nextRaw = writeSnapshot(this.storePath, {
+      schemaVersion: HIGHLIGHT_BATCH_SCHEMA_VERSION,
+      updatedAt: timestamp,
+      tasks: nextTasks,
+    });
+    this.rawStore = nextRaw;
+    this.tasks = nextTasks;
+  }
+
+  private transition(task: HighlightBatchTaskV1, patch: Partial<HighlightBatchTaskV1>): HighlightBatchTaskV1 {
+    const timestamp = this.nextTimestamp();
+    const next = { ...task, ...patch, updatedAt: timestamp };
+    const nextTasks = this.tasks.map((entry) => entry.id === task.id ? next : entry);
+    this.commitTasks(nextTasks, timestamp);
+    return clone(next);
+  }
+
+  /** Claim one task. The returned attempt number is the token for terminal callbacks. */
+  claim(id: string, maxAttempts: number): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (!isAttemptLimit(maxAttempts)) fail('invalid_attempt_limit');
+    if (task.state !== 'queued') fail('invalid_transition');
+    if (task.attempt >= maxAttempts) fail('attempt_limit_reached');
+    return this.transition(task, { state: 'running', attempt: task.attempt + 1 });
+  }
+
+  /** Commit only identifiers from the currently running attempt; no candidate payload. */
+  complete(
+    id: string,
+    attempt: number,
+    result: { candidateIds: string[]; highlightIds: string[] },
+  ): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt !== task.attempt) fail('stale_attempt');
+    if (task.state !== 'running' && task.state !== 'completed') fail('invalid_transition');
+    const normalized = normalizeResult(result);
+    if (task.options.maxClips !== null &&
+        (normalized.candidateIds.length > task.options.maxClips ||
+         normalized.highlightIds.length > task.options.maxClips)) fail('invalid_result');
+    if (task.state === 'completed') {
+      if (JSON.stringify(task.candidateIds) !== JSON.stringify(normalized.candidateIds) ||
+          JSON.stringify(task.highlightIds) !== JSON.stringify(normalized.highlightIds)) fail('result_conflict');
+      this.assertStoreUnchanged();
+      return clone(task);
+    }
+    return this.transition(task, { state: 'completed', ...normalized, lastErrorCode: null });
+  }
+
+  fail(id: string, attempt: number, errorCode: string): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt !== task.attempt) fail('stale_attempt');
+    if (task.state !== 'running') fail('invalid_transition');
+    if (!isFailureCode(errorCode)) fail('invalid_error_code');
+    return this.transition(task, { state: 'failed', lastErrorCode: errorCode });
+  }
+
+  cancel(id: string): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (task.state === 'cancelled') {
+      this.assertStoreUnchanged();
+      return clone(task);
+    }
+    if (task.state !== 'queued' && task.state !== 'running') fail('invalid_transition');
+    return this.transition(task, { state: 'cancelled', lastErrorCode: null });
+  }
+
+  /** Explicit caller retry only; reopening the queue never starts work by itself. */
+  retry(id: string, maxAttempts: number): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (!isAttemptLimit(maxAttempts)) fail('invalid_attempt_limit');
+    if (task.state !== 'failed' && task.state !== 'interrupted') fail('invalid_transition');
+    if (task.attempt >= maxAttempts) fail('attempt_limit_reached');
+    return this.transition(task, {
+      state: 'queued', lastErrorCode: null, candidateIds: [], highlightIds: [],
+    });
+  }
+
   enqueueBatch(inputs: readonly HighlightBatchInput[]): HighlightBatchTaskV1[] {
     this.assertOpen();
     let batch: HighlightBatchInput[];
@@ -378,10 +549,7 @@ export class HighlightBatchQueue {
     }
     const additions = normalized.filter((entry) => !byId.has(entry.id));
     if (additions.length > 0) {
-      let timestamp: number;
-      try { timestamp = this.now(); } catch { fail('invalid_clock'); }
-      if (!isTime(timestamp)) fail('invalid_clock');
-      if (this.tasks.some((task) => task.updatedAt > timestamp)) fail('invalid_clock');
+      const timestamp = this.nextTimestamp();
       const nextTasks = [...this.tasks];
       for (const entry of additions) {
         const task: HighlightBatchTaskV1 = {
@@ -397,14 +565,9 @@ export class HighlightBatchQueue {
         nextTasks.push(task);
         byId.set(task.id, task);
       }
-      if (readRawStore(this.storePath) !== this.rawStore) fail('store_changed');
-      const nextRaw = writeSnapshot(this.storePath, {
-        schemaVersion: HIGHLIGHT_BATCH_SCHEMA_VERSION,
-        updatedAt: timestamp,
-        tasks: nextTasks,
-      });
-      this.rawStore = nextRaw;
-      this.tasks = nextTasks;
+      this.commitTasks(nextTasks, timestamp);
+    } else {
+      this.assertStoreUnchanged();
     }
     return normalized.map((entry) => clone(byId.get(entry.id)!));
   }

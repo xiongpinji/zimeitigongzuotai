@@ -306,4 +306,256 @@ describe('HighlightBatchQueue durable core（合成录屏，不调用 HotClip）
     expect(second.list()).toEqual([]);
     second.close();
   });
+
+  it('领取一个排队任务持久化 running 与尝试序号；重开不自动执行或重复领取', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    expect(claimed).toMatchObject({ id: queued.id, state: 'running', attempt: 1 });
+    expectCode(() => queue.claim(queued.id, 3), 'invalid_transition');
+    queue.close();
+
+    const reopened = open(storePath);
+    expect(reopened.get(queued.id)).toEqual(claimed);
+    expectCode(() => reopened.claim(queued.id, 3), 'invalid_transition');
+    reopened.close();
+  });
+
+  it('完成结果只接受当前尝试，重复相同回执幂等，取消或冲突结果不能覆盖', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const result = { candidateIds: ['clip_1'], highlightIds: [`hlcv1-${HASH_A}`] };
+    const completed = queue.complete(queued.id, claimed.attempt, result);
+    expect(completed).toMatchObject({ state: 'completed', attempt: 1, ...result });
+    expect(queue.complete(queued.id, claimed.attempt, result)).toEqual(completed);
+    expectCode(() => queue.complete(queued.id, claimed.attempt, { ...result, candidateIds: [] }), 'result_conflict');
+    expectCode(() => queue.cancel(queued.id), 'invalid_transition');
+    queue.close();
+
+    const reopened = open(storePath);
+    expect(reopened.get(queued.id)).toEqual(completed);
+    reopened.close();
+  });
+
+  it('失败只持久化安全错误码；手工重试有上限且旧尝试不能覆盖新尝试', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [first, second] = queue.enqueueBatch([input('first'), input('second')]);
+    const claimed = queue.claim(first.id, 2);
+    const failed = queue.fail(first.id, claimed.attempt, 'sidecar_timeout');
+    expect(failed).toMatchObject({ state: 'failed', attempt: 1, lastErrorCode: 'sidecar_timeout' });
+    expect(queue.get(second.id)?.state).toBe('queued');
+    const retried = queue.retry(first.id, 2);
+    expect(retried).toMatchObject({ state: 'queued', attempt: 1, lastErrorCode: null });
+    const next = queue.claim(first.id, 2);
+    expect(next.attempt).toBe(2);
+    expectCode(() => queue.complete(first.id, claimed.attempt, { candidateIds: [], highlightIds: [] }), 'stale_attempt');
+    queue.fail(first.id, next.attempt, 'sidecar_timeout');
+    expectCode(() => queue.retry(first.id, 2), 'attempt_limit_reached');
+    queue.close();
+
+    const reopened = open(storePath);
+    expect(reopened.get(first.id)).toMatchObject({ state: 'failed', attempt: 2 });
+    expect(reopened.get(second.id)?.state).toBe('queued');
+    reopened.close();
+  });
+
+  it('取消运行中任务后迟到完成拒绝，非法结果/错误码不改磁盘与内存', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const before = readFileSync(storePath, 'utf8');
+    expectCode(() => queue.complete(queued.id, claimed.attempt, {
+      candidateIds: ['clip_1'], highlightIds: ['bad-highlight'], visualEvidence: MARKER,
+    } as never), 'invalid_result');
+    expectCode(() => queue.fail(queued.id, claimed.attempt, MARKER), 'invalid_error_code');
+    expect(readFileSync(storePath, 'utf8')).toBe(before);
+    expect(queue.get(queued.id)).toEqual(claimed);
+
+    const cancelled = queue.cancel(queued.id);
+    expect(cancelled.state).toBe('cancelled');
+    expectCode(() => queue.complete(queued.id, claimed.attempt, { candidateIds: [], highlightIds: [] }), 'invalid_transition');
+    expect(readFileSync(storePath, 'utf8')).not.toContain(MARKER);
+    queue.close();
+
+    const reopened = open(storePath);
+    expect(reopened.get(queued.id)?.state).toBe('cancelled');
+    reopened.close();
+  });
+
+  it('结果必须是真数组且错误码来自封闭集合，不能把任意字符串伪装成候选或失败原因', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const before = readFileSync(storePath, 'utf8');
+    expectCode(() => queue.complete(queued.id, claimed.attempt, {
+      candidateIds: 'clip_1', highlightIds: [],
+    } as never), 'invalid_result');
+    expectCode(() => queue.fail(queued.id, claimed.attempt, 'secretkey123'), 'invalid_error_code');
+    expect(readFileSync(storePath, 'utf8')).toBe(before);
+    expect(queue.get(queued.id)).toEqual(claimed);
+    queue.close();
+  });
+
+  it('结果字段访问器不能在形态检查后翻转为另一批标识', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const before = readFileSync(storePath, 'utf8');
+    let reads = 0;
+    const result = { highlightIds: [] as string[] } as { candidateIds: string[]; highlightIds: string[] };
+    Object.defineProperty(result, 'candidateIds', {
+      enumerable: true,
+      get() { reads += 1; return reads === 1 ? ['clip_1'] : 'abc'; },
+    });
+    expectCode(() => queue.complete(queued.id, claimed.attempt, result), 'invalid_result');
+    expect(readFileSync(storePath, 'utf8')).toBe(before);
+    expect(queue.get(queued.id)).toEqual(claimed);
+    queue.close();
+  });
+
+  it('单个任务的候选 ID 数量有界，超量结果不分配并持久化', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const before = readFileSync(storePath, 'utf8');
+    expectCode(() => queue.complete(queued.id, claimed.attempt, {
+      candidateIds: Array.from({ length: 13 }, (_, index) => `clip_${index}`),
+      highlightIds: [],
+    }), 'invalid_result');
+    expect(readFileSync(storePath, 'utf8')).toBe(before);
+    expect(queue.get(queued.id)).toEqual(claimed);
+    queue.close();
+  });
+
+  it('完成结果不能超过该任务明确指定的 maxClips', () => {
+    const queue = open(tempStore());
+    const [queued] = queue.enqueueBatch([input('bounded', HASH_A, 4)]);
+    const claimed = queue.claim(queued.id, 3);
+    expectCode(() => queue.complete(queued.id, claimed.attempt, {
+      candidateIds: ['clip_1', 'clip_2', 'clip_3', 'clip_4', 'clip_5'],
+      highlightIds: [],
+    }), 'invalid_result');
+    expect(queue.get(queued.id)).toEqual(claimed);
+    queue.close();
+  });
+
+  it('外部改写存储后，重复完成回执、重复取消和重复入队都不能假报持久成功', () => {
+    const completedPath = tempStore();
+    const completedQueue = open(completedPath);
+    const [completedTask] = completedQueue.enqueueBatch([input('completed')]);
+    const claimed = completedQueue.claim(completedTask.id, 3);
+    const result = { candidateIds: [], highlightIds: [] };
+    completedQueue.complete(completedTask.id, claimed.attempt, result);
+    writeFileSync(completedPath, '{outside edit}', 'utf8');
+    expectCode(() => completedQueue.complete(completedTask.id, claimed.attempt, result), 'store_changed');
+    completedQueue.close();
+
+    const cancelledPath = tempStore();
+    const cancelledQueue = open(cancelledPath);
+    const [cancelledTask] = cancelledQueue.enqueueBatch([input('cancelled')]);
+    cancelledQueue.cancel(cancelledTask.id);
+    writeFileSync(cancelledPath, '{outside edit}', 'utf8');
+    expectCode(() => cancelledQueue.cancel(cancelledTask.id), 'store_changed');
+    cancelledQueue.close();
+
+    const dedupPath = tempStore();
+    const dedupQueue = open(dedupPath);
+    dedupQueue.enqueueBatch([input('dedup')]);
+    writeFileSync(dedupPath, '{outside edit}', 'utf8');
+    expectCode(() => dedupQueue.enqueueBatch([input('dedup')]), 'store_changed');
+    dedupQueue.close();
+  });
+
+  it('排队时取消的 attempt 0 终态可重开；中断态可显式重试但不会自动执行', () => {
+    const cancelledPath = tempStore();
+    const cancelledQueue = open(cancelledPath);
+    const [queued] = cancelledQueue.enqueueBatch([input('queued-cancel')]);
+    expect(cancelledQueue.cancel(queued.id)).toMatchObject({ state: 'cancelled', attempt: 0 });
+    cancelledQueue.close();
+    const cancelledReopen = open(cancelledPath);
+    expect(cancelledReopen.get(queued.id)).toMatchObject({ state: 'cancelled', attempt: 0 });
+    cancelledReopen.close();
+
+    const interruptedPath = tempStore();
+    const active = open(interruptedPath);
+    const [running] = active.enqueueBatch([input('interrupted')]);
+    active.claim(running.id, 3);
+    active.close();
+    const snapshot = JSON.parse(readFileSync(interruptedPath, 'utf8'));
+    snapshot.tasks[0].state = 'interrupted';
+    snapshot.tasks[0].lastErrorCode = 'process_interrupted';
+    writeFileSync(interruptedPath, JSON.stringify(snapshot), 'utf8');
+    const reopened = open(interruptedPath);
+    expect(reopened.get(running.id)).toMatchObject({ state: 'interrupted', attempt: 1 });
+    expect(reopened.retry(running.id, 3)).toMatchObject({ state: 'queued', attempt: 1 });
+    reopened.close();
+  });
+
+  it('迟到完成先按尝试序号拒绝，即使迟到载荷也已损坏', () => {
+    const queue = open(tempStore());
+    const [queued] = queue.enqueueBatch([input()]);
+    const first = queue.claim(queued.id, 3);
+    queue.fail(queued.id, first.attempt, 'sidecar_timeout');
+    queue.retry(queued.id, 3);
+    const current = queue.claim(queued.id, 3);
+    expectCode(() => queue.complete(queued.id, first.attempt, {
+      candidateIds: 'bad', highlightIds: [],
+    } as never), 'stale_attempt');
+    expect(queue.get(queued.id)).toEqual(current);
+    queue.close();
+  });
+
+  it('结果数组不能通过自定义迭代器替换待落盘 ID', () => {
+    const queue = open(tempStore());
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const candidateIds = ['clip_1'];
+    candidateIds[Symbol.iterator] = function* () { yield MARKER; };
+    expectCode(() => queue.complete(queued.id, claimed.attempt, {
+      candidateIds, highlightIds: [],
+    }), 'invalid_result');
+    expect(queue.get(queued.id)).toEqual(claimed);
+    queue.close();
+  });
+
+  it('迟到失败先按尝试序号拒绝，即使错误码也已损坏', () => {
+    const queue = open(tempStore());
+    const [queued] = queue.enqueueBatch([input()]);
+    const first = queue.claim(queued.id, 3);
+    queue.fail(queued.id, first.attempt, 'sidecar_timeout');
+    queue.retry(queued.id, 3);
+    const current = queue.claim(queued.id, 3);
+    expectCode(() => queue.fail(queued.id, first.attempt, MARKER), 'stale_attempt');
+    expect(queue.get(queued.id)).toEqual(current);
+    queue.close();
+  });
+
+  it('零候选完成可持久重开，非法尝试上限和时钟回拨不产生部分状态', () => {
+    const storePath = tempStore();
+    let now = 2_000;
+    const queue = new HighlightBatchQueue({ storePath, now: () => now });
+    const [queued] = queue.enqueueBatch([input()]);
+    const before = readFileSync(storePath, 'utf8');
+    expectCode(() => queue.claim(queued.id, 0), 'invalid_attempt_limit');
+    now = 1_000;
+    expectCode(() => queue.claim(queued.id, 3), 'invalid_clock');
+    expect(readFileSync(storePath, 'utf8')).toBe(before);
+    expect(queue.get(queued.id)).toEqual(queued);
+    now = 2_001;
+    const claimed = queue.claim(queued.id, 3);
+    const completed = queue.complete(queued.id, claimed.attempt, { candidateIds: [], highlightIds: [] });
+    expect(completed).toMatchObject({ state: 'completed', candidateIds: [], highlightIds: [] });
+    queue.close();
+    const reopened = open(storePath);
+    expect(reopened.get(queued.id)).toEqual(completed);
+    reopened.close();
+  });
 });
