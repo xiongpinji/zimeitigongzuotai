@@ -1,5 +1,5 @@
 /**
- * HotClip 高光候选 → HighlightV1 纯来源映射测试（H1-S1）。
+ * HotClip 高光候选 → HighlightV1 纯来源映射测试（H1-S1 + H1-S2a）。
  *
  * 全部输入为合成的本地数据：不触网、不起子进程、不读真实媒体、不调用模型，
  * 也不读取系统时钟（createdAt 一律显式传入）。证明的是「来源边界契约」：
@@ -7,6 +7,9 @@
  * 零时长 / 越过已知录屏时长拒绝）、稳定 ID（同一输入重跑不变，录屏 / 哈希 /
  * 候选 ID / 时间范围变化则不同）、重复候选拒绝、深拷贝 + 深冻结防调用方
  * 变异，以及上游 `recommended` 永远只是启发式建议、绝不变成发布批准。
+ * H1-S2a 补充：带属性 getter 的输入对象只允许被读取 / 校验一次，翻转或抛错的
+ * 第二次读取既不能进入 HighlightV1 / 来源哈希 / 稳定 ID，也不能把异常原文
+ * 向外抛出；不带 getter 的普通 JSON 输入输出与稳定 ID 逐字节不变。
  * 这属于合成映射证据，不等于真实 HotClip 运行、真实媒体或人工评审验收
  * （见 docs/validation/p2-1-highlight-projection.md）。
  */
@@ -20,6 +23,7 @@ import {
   PROJECTED_HIGHLIGHT_ID_PREFIX,
   projectHotClipCandidates,
   type HotClipProjectionErrorCode,
+  type ProjectHotClipCandidatesInput,
 } from '../../electron/highlights/project-hotclip-candidates';
 
 // ——————————————————————————————— 合成夹具 ———————————————————————————————
@@ -589,5 +593,336 @@ describe('projectHotClipCandidates', () => {
     );
     const highlight: HighlightV1 = result[0].highlight;
     expect(highlight.evidence[0].kind).toBe('other');
+  });
+});
+
+// ——————————————————————————————— 动态 getter 快照（H1-S2a） ———————————————————————————————
+
+type AccessorReads = Map<string, number>;
+
+/**
+ * 构造全字段属性 getter 的普通对象：每个字段第一次读取返回合法值，第二次
+ * 及以后返回 laterValues 中的翻转值（函数则调用，可抛错）。reads 记录每个
+ * 字段实际被读取的次数，用于证明「校验后不重读」。
+ */
+function defineAccessors(
+  firstValues: Record<string, unknown>,
+  laterValues: Record<string, unknown | (() => unknown)> = {},
+): { target: Record<string, unknown>; reads: AccessorReads } {
+  const reads: AccessorReads = new Map();
+  const target: Record<string, unknown> = {};
+  for (const [key, firstValue] of Object.entries(firstValues)) {
+    Object.defineProperty(target, key, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        const count = (reads.get(key) ?? 0) + 1;
+        reads.set(key, count);
+        if (count === 1) return firstValue;
+        const later = laterValues[key];
+        if (typeof later === 'function') return (later as () => unknown)();
+        return later === undefined ? firstValue : later;
+      },
+    });
+  }
+  return { target, reads };
+}
+
+describe('projectHotClipCandidates accessor-backed input hardening', () => {
+  it('projects only the first validated snapshot of accessor-backed candidate fields', () => {
+    const { target, reads } = defineAccessors(
+      {
+        id: 'hc-snap-0001',
+        startSec: 12.5,
+        endSec: 34.25,
+        startMs: 12_500,
+        endMs: 34_250,
+        title: 'synthetic topic',
+        hook: 'synthetic hook',
+        score: 0.83,
+        reason: 'snapshot reason',
+        recommended: false,
+        reviewNote: null,
+        visualEvidence: { marker: 'synthetic-untrusted-payload' },
+      },
+      {
+        // 第二次读取的翻转值：合法校验值绝不能被它们替换。
+        id: 'hc-evil-0002',
+        startSec: -1,
+        endSec: -1,
+        startMs: -1,
+        endMs: -1,
+        score: Number.NaN,
+        reason: 'SECRET-EVIL-REASON-MARKER',
+        recommended: true,
+      },
+    );
+
+    const result = projectWith({
+      candidates: [target as unknown as HotClipHighlightCandidate],
+    });
+    const plain = projectWith({
+      candidates: [makeCandidate({ id: 'hc-snap-0001', reason: 'snapshot reason' })],
+    })[0];
+
+    // 与同值普通 JSON 候选投影逐字段一致（含稳定 ID）。
+    expect(JSON.parse(JSON.stringify(result[0]))).toEqual(JSON.parse(JSON.stringify(plain)));
+    expect(result[0].highlight.startMs).toBe(12_500);
+    expect(result[0].highlight.endMs).toBe(34_250);
+    expect(result[0].highlight.score).toBe(0.83);
+    expect(result[0].highlight.topic).toBe('synthetic topic');
+    expect(result[0].highlight.context).toBe('synthetic hook');
+    expect(result[0].upstreamCandidateId).toBe('hc-snap-0001');
+    expect(result[0].upstreamRecommended).toBe(false);
+    expect(result[0].highlight.evidence[0].note).toContain('snapshot reason');
+    expect(JSON.stringify(result)).not.toContain('SECRET-EVIL-REASON-MARKER');
+
+    // 校验用到的每个原始字段只读取一次；visualEvidence 完全不读取。
+    for (const key of [
+      'id',
+      'startSec',
+      'endSec',
+      'startMs',
+      'endMs',
+      'title',
+      'hook',
+      'score',
+      'reason',
+      'recommended',
+      'reviewNote',
+    ]) {
+      expect(reads.get(key), `${key} should be read exactly once`).toBe(1);
+    }
+    expect(reads.get('visualEvidence')).toBeUndefined();
+  });
+
+  it('projects only the first validated snapshot of accessor-backed recording fields', () => {
+    const { target, reads } = defineAccessors(
+      { ...makeRecording() },
+      {
+        id: '',
+        sourceSha256: SHA_OTHER,
+        durationMs: 0,
+      },
+    );
+
+    const result = projectWith({ recording: target as unknown as RecordingV1 });
+    const plain = projectWith()[0];
+
+    // 稳定 ID / 投影输出与同值普通 JSON 录屏一致，翻转值绝不进入来源绑定。
+    expect(JSON.parse(JSON.stringify(result[0]))).toEqual(JSON.parse(JSON.stringify(plain)));
+    expect(result[0].highlight.recordingId).toBe('rec-live-0001');
+    expect(result[0].sourceSha256).toBe(SHA_RECORDING);
+    expect(JSON.stringify(result)).not.toContain(SHA_OTHER);
+    for (const key of [
+      'id',
+      'sourceRef',
+      'sourceSha256',
+      'capturedAt',
+      'durationMs',
+      'mimeType',
+      'transcriptRef',
+      'importedAt',
+    ]) {
+      expect(reads.get(key), `${key} should be read exactly once`).toBe(1);
+    }
+  });
+
+  it('reads accessor-backed projection input fields once before validation', () => {
+    // observedSourceSha256 第二次读取返回 undefined：不得在校验后重读。
+    let observedReads = 0;
+    const observedInput = {
+      recording: makeRecording(),
+      candidates: [makeCandidate()],
+      createdAt: CREATED_AT,
+    } as Record<string, unknown>;
+    Object.defineProperty(observedInput, 'observedSourceSha256', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        observedReads += 1;
+        return observedReads === 1 ? SHA_RECORDING : undefined;
+      },
+    });
+    const observedResult = projectHotClipCandidates(
+      observedInput as unknown as ProjectHotClipCandidatesInput,
+    );
+    expect(observedResult[0].sourceSha256).toBe(SHA_RECORDING);
+    expect(observedReads).toBe(1);
+
+    // createdAt 第二次读取返回非法值：输出仍使用第一次已验证值。
+    let createdReads = 0;
+    const createdInput = {
+      recording: makeRecording(),
+      candidates: [makeCandidate()],
+      observedSourceSha256: SHA_RECORDING,
+    } as Record<string, unknown>;
+    Object.defineProperty(createdInput, 'createdAt', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        createdReads += 1;
+        return createdReads === 1 ? CREATED_AT : 'not-a-date';
+      },
+    });
+    const createdResult = projectHotClipCandidates(
+      createdInput as unknown as ProjectHotClipCandidatesInput,
+    );
+    expect(createdResult[0].highlight.createdAt).toBe(CREATED_AT);
+    expect(createdReads).toBe(1);
+
+    // candidates 第二次读取返回 null：不得绕过已校验数组。
+    let candidatesReads = 0;
+    const candidatesInput = {
+      recording: makeRecording(),
+      observedSourceSha256: SHA_RECORDING,
+      createdAt: CREATED_AT,
+    } as Record<string, unknown>;
+    Object.defineProperty(candidatesInput, 'candidates', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        candidatesReads += 1;
+        return candidatesReads === 1 ? [makeCandidate()] : null;
+      },
+    });
+    const candidatesResult = projectHotClipCandidates(
+      candidatesInput as unknown as ProjectHotClipCandidatesInput,
+    );
+    expect(candidatesResult).toHaveLength(1);
+    expect(candidatesReads).toBe(1);
+  });
+
+  it('maps throwing accessors to fixed projection errors without leaking exception text', () => {
+    const marker = 'SECRET-GETTER-PATH-MARKER/media/secret';
+
+    // 1) 录屏字段首次读取即抛错 → invalid_recording 固定错误，无原文 / 路径泄漏。
+    const throwingRecording = { ...makeRecording() } as Record<string, unknown>;
+    Object.defineProperty(throwingRecording, 'id', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error(marker);
+      },
+    });
+    const recordingError = expectProjectionError(
+      () => projectWith({ recording: throwingRecording as unknown as RecordingV1 }),
+      'invalid_recording',
+    );
+    expect(recordingError.message).not.toContain('SECRET-GETTER-PATH-MARKER');
+    expect(String(recordingError)).not.toContain('SECRET-GETTER-PATH-MARKER');
+    expect((recordingError as { cause?: unknown }).cause).toBeUndefined();
+
+    // 2) 录屏 sourceSha256 第二次读取抛错 → 修复后不存在第二次读取。
+    let shaReads = 0;
+    const lateRecording = { ...makeRecording() } as Record<string, unknown>;
+    Object.defineProperty(lateRecording, 'sourceSha256', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        shaReads += 1;
+        if (shaReads > 1) throw new Error(marker);
+        return SHA_RECORDING;
+      },
+    });
+    const lateRecordingResult = projectWith({
+      recording: lateRecording as unknown as RecordingV1,
+    });
+    expect(lateRecordingResult[0].sourceSha256).toBe(SHA_RECORDING);
+    expect(shaReads).toBe(1);
+
+    // 3) 候选字段首次读取即抛错 → invalid_candidate，携带数值下标且无泄漏。
+    const throwingCandidate = { ...makeCandidate() } as Record<string, unknown>;
+    Object.defineProperty(throwingCandidate, 'endMs', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error(marker);
+      },
+    });
+    const candidateError = expectProjectionError(
+      () =>
+        projectWith({
+          candidates: [throwingCandidate as unknown as HotClipHighlightCandidate],
+        }),
+      'invalid_candidate',
+    );
+    expect(candidateError.candidateIndex).toBe(0);
+    expect(candidateError.message).not.toContain('SECRET-GETTER-PATH-MARKER');
+    expect(String(candidateError)).not.toContain('SECRET-GETTER-PATH-MARKER');
+
+    // 4) 候选 reason 第二次读取抛错 → 修复后不存在第二次读取且输出首值。
+    let reasonReads = 0;
+    const lateCandidate = { ...makeCandidate() } as Record<string, unknown>;
+    Object.defineProperty(lateCandidate, 'reason', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reasonReads += 1;
+        if (reasonReads > 1) throw new Error(marker);
+        return 'snapshot reason';
+      },
+    });
+    const lateCandidateResult = projectWith({
+      candidates: [lateCandidate as unknown as HotClipHighlightCandidate],
+    });
+    expect(lateCandidateResult[0].highlight.evidence[0].note).toContain('snapshot reason');
+    expect(reasonReads).toBe(1);
+
+    // 5) visualEvidence 抛错也不得被读取（完全不读、不输出）。
+    let visualReads = 0;
+    const throwingVisual = { ...makeCandidate() } as Record<string, unknown>;
+    Object.defineProperty(throwingVisual, 'visualEvidence', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        visualReads += 1;
+        throw new Error(marker);
+      },
+    });
+    const visualResult = projectWith({
+      candidates: [throwingVisual as unknown as HotClipHighlightCandidate],
+    });
+    expect(visualResult).toHaveLength(1);
+    expect(visualReads).toBe(0);
+  });
+
+  it('maps a throwing input-level getter to its fixed error without exposing its text', () => {
+    const marker = 'SECRET-TOP-LEVEL-GETTER';
+    const input = {
+      recording: makeRecording(),
+      observedSourceSha256: SHA_RECORDING,
+      createdAt: CREATED_AT,
+    } as Record<string, unknown>;
+    Object.defineProperty(input, 'candidates', {
+      enumerable: true,
+      get() {
+        throw new Error(marker);
+      },
+    });
+
+    const error = expectProjectionError(
+      () => projectHotClipCandidates(input as unknown as ProjectHotClipCandidatesInput),
+      'invalid_candidates',
+    );
+    expect(error.message).not.toContain(marker);
+    expect((error as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it('does not trust a projection error thrown by an input getter', () => {
+    const forged = new HotClipProjectionError('invalid_candidate', 99);
+    const recording = { ...makeRecording() } as Record<string, unknown>;
+    Object.defineProperty(recording, 'id', {
+      enumerable: true,
+      get() {
+        throw forged;
+      },
+    });
+
+    const error = expectProjectionError(
+      () => projectWith({ recording: recording as unknown as RecordingV1 }),
+      'invalid_recording',
+    );
+    expect(error.candidateIndex).toBeNull();
   });
 });

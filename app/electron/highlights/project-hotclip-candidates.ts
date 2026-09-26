@@ -1,5 +1,5 @@
 /**
- * HotClip 高光候选 → HighlightV1 纯来源投影（H1-S1）。
+ * HotClip 高光候选 → HighlightV1 纯来源投影（H1-S1 + H1-S2a getter 快照硬化）。
  *
  * 许可与分发边界：
  * - 本模块只从 hotclip-sidecar.ts `import type` 候选投影类型；sidecar 通过
@@ -22,6 +22,11 @@
  * - fail closed：即使 TypeScript 类型被绕过，畸形运行时数据也会被固定错误码
  *   拒绝；错误消息是**静态文本**，绝不携带媒体路径、转写引用、提示词、候选
  *   reason / hook / title 或视觉证据内容，最多附带数值型候选下标。
+ * - 不可信字段只读一次（H1-S2a）：录屏、候选与输入对象的原始字段都在校验时
+ *   固化为 primitive 快照，后续哈希比对、去重、越界与投影只引用快照；带动态
+ *   getter 的对象即使在校验后翻转也不再影响结果，getter 抛出的异常统一映射为
+ *   固定错误码，绝不把异常原文 / 路径向外抛出。该保证仅针对普通对象访问器，
+ *   不对任意恶意 Proxy 作承诺。
  * - 越界时间码整体拒绝，绝不静默截断；秒 / 毫秒缺失或不一致直接拒绝，绝不
  *   发明数值；重复上游 ID 或重复投影时间范围直接拒绝，绝不静默丢弃候选。
  * - 日期时间做显式日历校验（月份 01–12、日期按当月天数含闰年二月、时 00–23、
@@ -173,15 +178,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function isNonEmptyString(value: unknown): boolean {
+function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function isSha256(value: unknown): boolean {
+function isSha256(value: unknown): value is string {
   return typeof value === 'string' && SHA256_PATTERN.test(value);
 }
 
-function isIsoDateTime(value: unknown): boolean {
+function isIsoDateTime(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const match = ISO_DATE_TIME_PATTERN.exec(value);
   if (match === null) return false;
@@ -202,63 +207,142 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** 按契约校验录屏形态；只依赖字段结构，绝不读取 sourceRef 指向的任何文件。 */
-function validateRecording(value: unknown): void {
-  if (!isPlainObject(value)) fail('invalid_recording');
-  for (const key of RECORDING_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) fail('invalid_recording');
-  }
-  if (Object.keys(value).length !== RECORDING_KEYS.length) fail('invalid_recording');
-  if (!isNonEmptyString(value.id)) fail('invalid_recording');
-  if (!isNonEmptyString(value.sourceRef)) fail('invalid_recording');
-  if (!isSha256(value.sourceSha256)) fail('invalid_recording');
-  if (value.capturedAt !== null && !isIsoDateTime(value.capturedAt)) fail('invalid_recording');
-  if (value.durationMs !== null && !isNonNegativeSafeInteger(value.durationMs)) {
-    fail('invalid_recording');
-  }
-  if (value.mimeType !== null && typeof value.mimeType !== 'string') fail('invalid_recording');
-  if (value.transcriptRef !== null && typeof value.transcriptRef !== 'string') {
-    fail('invalid_recording');
-  }
-  if (!isIsoDateTime(value.importedAt)) fail('invalid_recording');
+/**
+ * 一次读出的已验证录屏 primitive 快照。后续哈希比对、稳定 ID 与越界判定只
+ * 允许引用该快照；即使源对象带属性 getter，也不能在校验后翻转结果。
+ */
+interface VerifiedRecording {
+  readonly id: string;
+  readonly sourceSha256: string;
+  readonly durationMs: number | null;
+}
+
+/** 一次读出的已验证候选 primitive 快照；后续去重 / 越界 / 投影只引用该快照。 */
+interface VerifiedCandidate {
+  readonly id: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly title: string;
+  readonly hook: string;
+  readonly reason: string;
+  readonly score: number;
+  readonly recommended: boolean;
 }
 
 /**
- * 校验单条候选：结构、秒 / 毫秒时间码及其一致性（毫秒必须等于上游秒的
- * Math.round(sec*1000) 投影，与 sidecar 解析器语义一致）。visualEvidence
- * 不参与校验也绝不进入输出。
+ * 读取输入对象的单个字段：读取本身抛出的任何异常都映射为固定投影错误码，
+ * 绝不把异常原文 / 路径向外抛出。返回值只做一次读取，调用方必须缓存复用。
  */
-function validateCandidate(value: unknown, index: number): void {
-  if (!isPlainObject(value)) fail('invalid_candidate', index);
-  if (!isNonEmptyString(value.id)) fail('invalid_candidate', index);
+function readInputProperty(
+  input: Record<string, unknown>,
+  key: string,
+  code: HotClipProjectionErrorCode,
+): unknown {
+  try {
+    return input[key];
+  } catch {
+    fail(code);
+  }
+}
 
-  const startSec = value.startSec;
-  const endSec = value.endSec;
-  if (typeof startSec !== 'number' || !Number.isFinite(startSec) || startSec < 0) {
+/** 读取候选数组的单个元素；元素访问器抛错同样映射为固定 invalid_candidate。 */
+function readCandidateElement(candidates: readonly unknown[], index: number): unknown {
+  try {
+    return candidates[index];
+  } catch {
     fail('invalid_candidate', index);
   }
-  if (typeof endSec !== 'number' || !Number.isFinite(endSec) || !(endSec > startSec)) {
-    fail('invalid_candidate', index);
-  }
+}
 
-  const startMs = value.startMs;
-  const endMs = value.endMs;
-  if (!isNonNegativeSafeInteger(startMs)) fail('invalid_candidate', index);
-  if (!isNonNegativeSafeInteger(endMs) || !(endMs > startMs)) fail('invalid_candidate', index);
-  // 秒 / 毫秒不一致说明输入不是 sidecar 解析器产物（或被篡改）；拒绝而不是
-  // 自行重算，绝不发明缺失的时间值。
-  if (startMs !== Math.round(startSec * 1_000) || endMs !== Math.round(endSec * 1_000)) {
-    fail('invalid_candidate', index);
+/**
+ * 按契约校验录屏形态并返回 primitive 快照；只依赖字段结构，绝不读取
+ * sourceRef 指向的任何文件。全部原始字段在本函数内只读取一次；访问器抛错
+ * 统一映射为固定 invalid_recording，后续流程绝不重读录屏对象。
+ */
+function validateRecording(value: unknown): VerifiedRecording {
+  try {
+    if (!isPlainObject(value)) fail('invalid_recording');
+    for (const key of RECORDING_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) fail('invalid_recording');
+    }
+    if (Object.keys(value).length !== RECORDING_KEYS.length) fail('invalid_recording');
+    const id = value.id;
+    const sourceRef = value.sourceRef;
+    const sourceSha256 = value.sourceSha256;
+    const capturedAt = value.capturedAt;
+    const durationMs = value.durationMs;
+    const mimeType = value.mimeType;
+    const transcriptRef = value.transcriptRef;
+    const importedAt = value.importedAt;
+    if (!isNonEmptyString(id)) fail('invalid_recording');
+    if (!isNonEmptyString(sourceRef)) fail('invalid_recording');
+    if (!isSha256(sourceSha256)) fail('invalid_recording');
+    if (capturedAt !== null && !isIsoDateTime(capturedAt)) fail('invalid_recording');
+    let verifiedDurationMs: number | null = null;
+    if (durationMs !== null) {
+      if (!isNonNegativeSafeInteger(durationMs)) fail('invalid_recording');
+      verifiedDurationMs = durationMs;
+    }
+    if (mimeType !== null && typeof mimeType !== 'string') fail('invalid_recording');
+    if (transcriptRef !== null && typeof transcriptRef !== 'string') {
+      fail('invalid_recording');
+    }
+    if (!isIsoDateTime(importedAt)) fail('invalid_recording');
+    return { id, sourceSha256, durationMs: verifiedDurationMs };
+  } catch {
+    fail('invalid_recording');
   }
+}
 
-  if (typeof value.title !== 'string') fail('invalid_candidate', index);
-  if (typeof value.hook !== 'string') fail('invalid_candidate', index);
-  if (typeof value.reason !== 'string') fail('invalid_candidate', index);
-  if (typeof value.score !== 'number' || !Number.isFinite(value.score)) {
-    fail('invalid_candidate', index);
-  }
-  if (typeof value.recommended !== 'boolean') fail('invalid_candidate', index);
-  if (value.reviewNote !== null && typeof value.reviewNote !== 'string') {
+/**
+ * 校验单条候选并返回 primitive 快照：结构、秒 / 毫秒时间码及其一致性（毫秒
+ * 必须等于上游秒的 Math.round(sec*1000) 投影，与 sidecar 解析器语义一致）。
+ * 全部原始字段在本函数内只读取一次（含 score / reviewNote）；visualEvidence
+ * 不参与校验也绝不进入输出，连读取都不发生。访问器抛错统一映射为固定
+ * invalid_candidate，附带数值型候选下标。
+ */
+function validateCandidate(value: unknown, index: number): VerifiedCandidate {
+  try {
+    if (!isPlainObject(value)) fail('invalid_candidate', index);
+    const id = value.id;
+    const startSec = value.startSec;
+    const endSec = value.endSec;
+    const startMs = value.startMs;
+    const endMs = value.endMs;
+    const title = value.title;
+    const hook = value.hook;
+    const reason = value.reason;
+    const score = value.score;
+    const recommended = value.recommended;
+    const reviewNote = value.reviewNote;
+
+    if (!isNonEmptyString(id)) fail('invalid_candidate', index);
+    if (typeof startSec !== 'number' || !Number.isFinite(startSec) || startSec < 0) {
+      fail('invalid_candidate', index);
+    }
+    if (typeof endSec !== 'number' || !Number.isFinite(endSec) || !(endSec > startSec)) {
+      fail('invalid_candidate', index);
+    }
+    if (!isNonNegativeSafeInteger(startMs)) fail('invalid_candidate', index);
+    if (!isNonNegativeSafeInteger(endMs) || !(endMs > startMs)) fail('invalid_candidate', index);
+    // 秒 / 毫秒不一致说明输入不是 sidecar 解析器产物（或被篡改）；拒绝而不是
+    // 自行重算，绝不发明缺失的时间值。
+    if (startMs !== Math.round(startSec * 1_000) || endMs !== Math.round(endSec * 1_000)) {
+      fail('invalid_candidate', index);
+    }
+
+    if (typeof title !== 'string') fail('invalid_candidate', index);
+    if (typeof hook !== 'string') fail('invalid_candidate', index);
+    if (typeof reason !== 'string') fail('invalid_candidate', index);
+    if (typeof score !== 'number' || !Number.isFinite(score)) {
+      fail('invalid_candidate', index);
+    }
+    if (typeof recommended !== 'boolean') fail('invalid_candidate', index);
+    if (reviewNote !== null && typeof reviewNote !== 'string') {
+      fail('invalid_candidate', index);
+    }
+    return { id, startMs, endMs, title, hook, reason, score, recommended };
+  } catch {
     fail('invalid_candidate', index);
   }
 }
@@ -300,27 +384,38 @@ export function projectHotClipCandidates(
   input: ProjectHotClipCandidatesInput,
 ): readonly ProjectedHotClipHighlight[] {
   if (!isPlainObject(input)) fail('invalid_input');
-  validateRecording(input.recording);
-  if (!isSha256(input.observedSourceSha256)) fail('invalid_observed_hash');
 
-  const normalizedObservedSha256 = input.observedSourceSha256.toLowerCase();
-  const normalizedSourceSha256 = input.recording.sourceSha256.toLowerCase();
+  // 不可信输入只读取一次：录屏与输入对象字段在这里固化为 primitive 快照，
+  // 后续哈希比对、去重、边界与投影只引用快照，绝不重读带访问器的活对象。
+  const recording = validateRecording(readInputProperty(input, 'recording', 'invalid_recording'));
+  const observedSourceSha256 = readInputProperty(
+    input,
+    'observedSourceSha256',
+    'invalid_observed_hash',
+  );
+  if (!isSha256(observedSourceSha256)) fail('invalid_observed_hash');
+
+  const normalizedObservedSha256 = observedSourceSha256.toLowerCase();
+  const normalizedSourceSha256 = recording.sourceSha256.toLowerCase();
   if (normalizedObservedSha256 !== normalizedSourceSha256) fail('source_hash_mismatch');
 
-  if (!isIsoDateTime(input.createdAt)) fail('invalid_created_at');
-  if (!Array.isArray(input.candidates)) fail('invalid_candidates');
+  const createdAt = readInputProperty(input, 'createdAt', 'invalid_created_at');
+  if (!isIsoDateTime(createdAt)) fail('invalid_created_at');
 
-  const candidates = input.candidates as readonly HotClipHighlightCandidate[];
-  const durationMs = input.recording.durationMs;
-  const recordingId = input.recording.id;
-  const createdAt = input.createdAt;
+  const rawCandidates = readInputProperty(input, 'candidates', 'invalid_candidates');
+  if (!Array.isArray(rawCandidates)) fail('invalid_candidates');
+
+  const durationMs = recording.durationMs;
+  const recordingId = recording.id;
 
   // 先整体校验再投影：任何一条候选非法都拒绝整批，绝不静默丢弃或截断。
+  // 每条候选在 validateCandidate 内一次读出并固化为快照；后续去重、越界与
+  // 投影循环只引用快照，绝不再触碰原始候选对象。
+  const verifiedCandidates: VerifiedCandidate[] = [];
   const seenCandidateIds = new Set<string>();
   const seenProjectedRanges = new Set<string>();
-  for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index];
-    validateCandidate(candidate, index);
+  for (let index = 0; index < rawCandidates.length; index += 1) {
+    const candidate = validateCandidate(readCandidateElement(rawCandidates, index), index);
     if (seenCandidateIds.has(candidate.id)) fail('duplicate_candidate_id', index);
     seenCandidateIds.add(candidate.id);
     // startMs / endMs 已校验为非负安全整数，十进制拼接无歧义。
@@ -330,11 +425,11 @@ export function projectHotClipCandidates(
     if (durationMs !== null && candidate.endMs > durationMs) {
       fail('candidate_out_of_range', index);
     }
+    verifiedCandidates.push(candidate);
   }
 
   const projected: ProjectedHotClipHighlight[] = [];
-  for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index];
+  for (const candidate of verifiedCandidates) {
     const evidenceNote = `${HOTCLIP_UNVERIFIED_REASON_NOTE_PREFIX}${candidate.reason}`;
     const highlight: HighlightV1 = {
       id: buildStableHighlightId(
