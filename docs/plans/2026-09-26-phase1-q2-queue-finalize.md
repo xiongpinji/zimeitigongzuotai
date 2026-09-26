@@ -44,17 +44,21 @@ API 的跨进程不安全事实，也不假设 Electron 锁以 `userData` 路径
 
 # Checklist
 
-- [ ] Q2-R1：在 `zimeitijuzhen-ao-q2-finalize` 仅修 `durable-queue.ts` 的
+- [x] Q2-R1：在 `zimeitijuzhen-ao-q2-finalize` 仅修 `durable-queue.ts` 的
   读取失败类型化和必要边界，保持 41 项测试全部绿色；补精确验证记录，明示
   跨进程竞态仍红。Codex 再跑聚焦测试、`tsc --noEmit`、精确 diff，审查后才
   选择性合入主库。
-- [ ] Q2-R2：GLM 只读核查当前 Electron 启动路径、队列调用者和跨进程
+- [x] Q2-R2：GLM 只读核查当前 Electron 启动路径、队列调用者和跨进程
   时间线，比较产品级单实例门槛与存储级锁的覆盖范围，给出 Windows 双进程
   故障注入和崩溃恢复的最小验收方案；不修改代码。
-- [ ] Q2-R3a：实现早于 `main.ts` 加载的 Electron 产品单实例门槛；以
+- [x] Q2-R3a：实现早于 `main.ts` 加载的 Electron 产品单实例门槛；以
   Windows 两个真实 Electron 进程核验一个 owner、loser 不载入写者、
   owner 收到第二实例事件以及退出后锁可再获取。入口构建产物必须证明
   `main.ts` 的顶层副作用不会提前执行。
+  主库 `147c78e` 的 Windows 真双进程 fixture 17/17（无跳过）、类型检查与
+  `electron-vite build` 退出码 0，构建产物晚加载断言通过；见
+  [门禁验证记录](../validation/p1-2-single-writer-gate.md)。打包后启动、R3b 与
+  P1 队列接线仍属独立检查。
 - [ ] Q2-R3b：在 Windows 两个独立进程上复现队列的崩溃/重启租约路径：
   上传中强制结束第一个进程，新进程在租约到期后只进
   `unknown_submission` 和核对，不自动重发；另验证产品入口拒绝第二
