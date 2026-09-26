@@ -1,6 +1,6 @@
 # 阶段一主库进度快照（2026-09-26）
 
-本页核对的主库业务源码截至 `d40606f`。它是阶段进度记录，不是 [R1–R5、R6-P 验收](../roadmap-and-acceptance.md)结论。商品挂载按已确认范围只保留请求契约和拒绝路径；四平台商品 ID、资格与接口仍待另行研究。
+本页核对的主库业务源码截至 `8aa79d8`。它是阶段进度记录，不是 [R1–R5、R6-P 验收](../roadmap-and-acceptance.md)结论。商品挂载按已确认范围只保留请求契约和拒绝路径；四平台商品 ID、资格与接口仍待另行研究。
 
 | 主线 | 当前可复核结果 | 仍需完成或验证 |
 | --- | --- | --- |
@@ -14,6 +14,8 @@ Codex 在 Windows Node v22.23.3 对 `de404e9` 的预检、生产契约和 Agent 
 
 后续主库增量验证：`d7d3325` 的 Windows 队列崩溃/重启及门禁套件 **44/44**、无跳过，类型检查通过；`b03a5bc` 的旧发布预检聚焦 **33/33**、类型检查通过；`65d705d` 的高光队列、投影和 sidecar 合跑 **83 passed、1 skipped**、类型检查通过，GLM 修复后复审无开放 P0/P1；`99c6099` 的旧账号预览与账号桥聚焦 **18 passed、1 skipped**、类型检查和 `electron-vite build` 退出码 0，GLM 审查无开放 P0/P1；`9dc5014` 的高光状态转移、投影和 sidecar 合跑 **97 passed、1 skipped**，类型检查与 Electron 构建通过，GLM 增量复审因会话轮数限制未完成，Codex 核对见[本项验证记录](p2-2-highlight-batch-transitions.md)；`5e2327f` 的有界调度、队列、投影和 sidecar 合跑 **108 passed、1 skipped**，类型检查与 Electron 构建通过，本段未另起模型审查，Codex 核对见[调度记录](p2-2-highlight-batch-scheduler.md)；`3471243` 的本地产物/恢复、调度、队列、投影及 sidecar 合跑 **122 passed、1 skipped**，类型检查与 Electron 构建通过，GLM 只读作业超时无最终报告，Codex 核对见[恢复记录](p2-2-highlight-batch-recovery.md)；`d40606f` 的授权本地来源观察、产物/恢复、调度、队列、投影及 sidecar 合跑 **126 passed、2 skipped**，类型检查与 Electron 构建通过，见[来源观察记录](p2-2-highlight-local-source-observer.md)。本次两个 skipped 分别是原有 Windows symlink 建链权限用例和新增观察器在 Windows 显式跳过的 symlink 断言；均不计入通过项。这些仍是聚焦离线结果，未形成最新主库的全量测试或发行验收。
 
-当前 Windows 安装包是本地构建产物，未提交到 Git；它绑定 `737a920`，并非对后续 `d40606f` 的发行验收。该安装器经 NSIS 编译和合成安装/卸载试验验证不会删除预存用户文件，但尚无完整真实安装/卸载、签名和许可证审查通过的证据。详见[安装包记录](p6-2-current-windows-artifact-2026-09-26.md)与[安全卸载记录](p6-2-safe-windows-uninstall.md)。
+`8aa79d8` 的持锁者队列工厂在 Windows 聚焦回归 **64/64**（含 2 项真实双 Electron 进程用例）、类型检查和 Electron 构建均通过，见[工厂验证记录](p1-2-owned-queue-factory.md)。它尚未被 `main.ts` 调用，GLM 只读审查仍在运行，不能当作产品单写者接线通过。[项目内本地 HotClip 运行区](p0-3-local-runtime-layout.md)的合成字幕导入退出码为 0，也不等于真实高光验收。当前主库仍未重跑全量测试。
+
+当前 Windows 安装包是本地构建产物，未提交到 Git；它绑定 `737a920`，并非对后续 `8aa79d8` 的发行验收。该安装器经 NSIS 编译和合成安装/卸载试验验证不会删除预存用户文件，但尚无完整真实安装/卸载、签名和许可证审查通过的证据。详见[安装包记录](p6-2-current-windows-artifact-2026-09-26.md)与[安全卸载记录](p6-2-safe-windows-uninstall.md)。
 
 下一步的依赖顺序是：A2-S4a/b 离线安全收口已完成，旧账号实际迁移须另做备份和加密回读验证；Q2-R3a/R3b1 已验证，继续 R3b2 产品队列单写者接线与打包启动核对，在此之前不把持久队列接入自动发布。媒体链路已完成 H1-S2c1 离线产物/恢复核心和 S2c2a 本地逐字节摘要端口，继续 S2c2 产品单写者与配置接线，再做 H1-S3 授权真实样本盲审，随后补素材权利过滤、时间线回写与渲染。真实会话、来源权利、产物完整性和逐平台权限检查均通过后，才把 Agent 预授权、本地预检、持久队列与远端最终状态串起来。每个平台只有在授权账号取得远端最终状态后才能标记真实普通发布通过；局部模块落库不等于阶段完整验收。
