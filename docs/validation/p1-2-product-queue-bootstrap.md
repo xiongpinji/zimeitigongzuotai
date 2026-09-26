@@ -11,6 +11,7 @@
 - TDD：产品接线测试先为 **10 passed、1 failed**（`main.ts` 没有启动调用），补调用后转绿；相对 `userDataPath` 用例先失败，再加入绝对路径断言后通过。构建守卫曾以顶层动态导入负例先失败，再收紧 `loadMainRuntime` 检查。
 - Windows Node 22.23.3 聚焦合跑 9 个测试文件：**95/95 passed、0 skipped**。其中有真实双 Electron 进程单实例 fixture 2 项、队列双进程崩溃恢复 1 项、原持久队列 41 项、新产品引导 12 项和构建守卫 14 项。
 - `tsc --noEmit --project app/tsconfig.json` 退出码 0；`npm run build` 退出码 0。最终源码的预混淆守卫输出 `OK: shared gate chunk single-instance-gate-B6E0rn1Y.js retains the owner assertion`，随后 JS 混淆完成。`git diff --check` 通过。
+- 另以 Windows Node 22 对**混淆后**的 `single-instance-gate-B6E0rn1Y.js` 运行一次独立烟测：loser 不调用主运行时 loader 且退出，owner 可通过断言，loader 抛错后 owner 状态被撤销；退出码 0。这只覆盖共享 chunk 运行行为，不等于完整 Electron/asar 启动。
 - 代码提交只含 `main.ts`、产品队列引导、`package.json`、构建守卫及两个新测试文件，共六文件。Qwen `claude-bailian-20260926-061254-e4e12a` 超时无候选；DeepSeek `opencode-bailian-20260926-062856-cfa110` 超时只留下未调用的候选，不能计为成功。Codex 根据用户明确选择直接补全并独立运行上述验证；另一个 DeepSeek 构建守卫候选也超时，Codex 修复测试清理边界和顶层动态导入漏检后合入。
 
 ## 只读审查
@@ -20,6 +21,6 @@ GLM-5.3 作业 `qwen-code-review-20260926-070534-5fcc96` 已成功结束，无�
 ## 尚未验收
 
 - 目前的 Windows 双进程测试运行的是合成 fixture；还未从 `app.asar` 内的正式打包应用实测 owner/loser 与异常退出。**Q2-R3b2 总门槛仍待打包启动验收**。
-- 本次 `npm run package:win`（系统 Node 24）在 Electron packager 输出 `Packaging app for platform win32 x64 using electron v41.1.0` 后以 `Windows packaging stopped before completion` 退出码 1 结束，未生成新便携包。改用 Node 22.23.3 直接运行同一打包脚本，约 15 分钟仍停在同一阶段，进程只读了部分打包目录、未产生新发行目录；Codex 停止了该次尝试。原有 `release/灵机剪影-win32-x64` 已原位恢复，旧安装器未改动。打包失败原因尚未定位，不能把构建成功写成发行成功。
-- 本次生成的 `app/.tmp/package-stage/win32-x64` 和系统临时目录中的 `electron-packager/tmp-Oeday7` 仍在本机；自动审批审查以 `blocked by policy` 拒绝了针对它们的递归删除，未改用其他命令绕过。它们是被 Git 忽略的临时产物，不在代码提交中。
+- 本次 `npm run package:win`（系统 Node 24）在 Electron packager 输出 `Packaging app for platform win32 x64 using electron v41.1.0` 后以 `Windows packaging stopped before completion` 退出码 1 结束，未生成新便携包。改用 Node 22.23.3 直接运行同一打包脚本，约 15 分钟仍停在同一阶段，未产生新发行目录；Codex 停止了该次尝试。对留下的完整 staging 目录只读统计为约 **953 MB、61,131 个文件**；再用同一 `@electron/packager` 配置直接打包该 staging，约 15 分钟后仍无 `app.asar` 或输出目录，虽有持续但缓慢的读取 I/O，故停止。打包停滞根因尚未定位；不能把构建成功写成发行成功。原有 `release/灵机剪影-win32-x64` 已原位恢复，旧安装器未改动。
+- 本次生成的 `app/.tmp/package-stage/win32-x64` 与系统临时目录中的 `electron-packager/tmp-1dUcw2` 仍在本机；自动审批审查此前以 `blocked by policy` 拒绝了对已生成 staging 与另一打包临时目录的递归删除，Codex 未换命令绕过。先前的 `tmp-Oeday7` 后续由 packager 自行移除。当前残留的是被 Git 忽略的临时产物，不在代码提交中。
 - 队列未开放给 Renderer/Agent 调度，也未绑定四个平台的真实上传、会话、远端核对或账号授权；这些能力不能从本次构建或合成测试推断。通用 `openDurableQueue` 仍不是跨 OS 进程的原子 CAS；非 Electron 写者需要另外的存储级锁。
