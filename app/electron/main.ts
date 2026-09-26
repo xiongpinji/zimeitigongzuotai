@@ -166,6 +166,7 @@ import { createWorkbenchTabContextMenuTemplate } from './workbench-tab-context-m
 import { getWindowChromeOptions } from './window-chrome';
 import { getPipelineService, attachTaskProgressBridge } from './pipeline';
 import { setActiveProjectPath } from './pipeline/context';
+import { registerSecondInstanceFocus } from './single-instance-gate';
 
 const execFileAsync = promisify(execFile);
 
@@ -2809,6 +2810,20 @@ registerPublishIpc();
 
 // 设置 macOS 系统菜单栏应用名称
 app.setName('灵机剪影');
+
+// Q2-R3a：应用二次启动时聚焦/恢复已有窗口（不新建第二主窗口）。
+// 监听器由 single-instance-gate 在取得单实例锁后、加载本模块之前注册；
+// 本回调在本模块（主运行时）加载时登记。只有 lock owner 进程会执行到这里：
+// loser 实例在薄入口 single-instance-entry.ts 中已 quit，绝不加载本模块。
+// 仅做窗口聚焦/恢复，不改变任何旧发布行为。
+registerSecondInstanceFocus(() => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
 
 app.whenReady().then(async () => {
   refreshAppConfig();
