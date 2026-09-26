@@ -59,11 +59,14 @@ API 的跨进程不安全事实，也不假设 Electron 锁以 `userData` 路径
   `electron-vite build` 退出码 0，构建产物晚加载断言通过；见
   [门禁验证记录](../validation/p1-2-single-writer-gate.md)。打包后启动、R3b 与
   P1 队列接线仍属独立检查。
-- [ ] Q2-R3b：在 Windows 两个独立进程上复现队列的崩溃/重启租约路径：
+- [x] Q2-R3b1：在 Windows 两个独立进程上复现队列的崩溃/重启租约路径：
   上传中强制结束第一个进程，新进程在租约到期后只进
   `unknown_submission` 和核对，不自动重发；另验证产品入口拒绝第二
   个同时写者。通用 Node 队列双写的已知竞争保留为明确不支持的负例。
-  P1 接线必须限制所有产品队列写入口为持锁 Electron main。
+  主库 `d7d3325` 的合成 Windows 双进程故障注入与既有 Electron 单实例门禁
+  合跑 44/44、无跳过，详见[验证记录](../validation/p1-2-queue-crash-restart.md)。
+- [ ] Q2-R3b2：P1 产品接线必须限制所有队列写入口为持锁 Electron main，
+  再在打包启动路径验证所有权；R3b1 不能代替该检查。
 
 # Validation strategy
 

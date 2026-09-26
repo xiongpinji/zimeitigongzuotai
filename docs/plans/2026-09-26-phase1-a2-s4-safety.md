@@ -31,8 +31,8 @@
 
 # Checklist
 
-- [ ] S4a：旧 runner 在任何上传前整单校验目标；未知/UUID、畸形、重复或空目标零上传，Renderer 显示明确失败；离线 RED→GREEN 验收。
-- [ ] S4b：新增完全只读的旧账号迁移预览及安全 IPC；旧/新目录字节不变、B 站排除、symlink/损坏注册表安全拒绝；真实迁移不触发。
+- [x] S4a：旧 runner 在任何上传前整单校验目标；未知/UUID、畸形、重复或空目标零上传，Renderer 显示明确失败；离线 RED→GREEN 验收。主库 `b03a5bc`，聚焦 33/33、类型检查通过，详见[验证记录](../validation/p1-1-old-runner-preflight.md)；真实平台发布仍未验收。
+- [x] S4b：新增完全只读的旧账号迁移预览及安全 IPC；旧/新目录字节不变、B 站排除、symlink/损坏注册表安全拒绝；真实迁移不触发。主库 `99c6099`，Windows 聚焦 18 passed、1 个 symlink 用例 skipped，类型检查与构建通过，GLM 无开放 P0/P1；详见[验证记录](../validation/p1-1-legacy-migration-preview.md)。
 
 # Completion criteria
 
