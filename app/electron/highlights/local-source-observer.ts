@@ -10,7 +10,7 @@ import {
 import type { HighlightBatchRunner } from './highlight-batch-scheduler';
 
 export interface LocalSourceObservationOptions {
-  /** Explicitly authorized media directory, outside the Git checkout. */
+  /** Explicitly authorized media directory outside Git tracking (for example, ignored data/). */
   rootDir: string;
   videoPath: string;
   signal: AbortSignal;

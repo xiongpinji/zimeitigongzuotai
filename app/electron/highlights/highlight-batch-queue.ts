@@ -73,7 +73,7 @@ interface HighlightBatchFileV1 {
   tasks: HighlightBatchTaskV1[];
 }
 export interface HighlightBatchQueueOptions {
-  /** Absolute, caller-owned path outside the repository. */
+  /** Absolute, caller-owned path outside Git tracking (for example, ignored data/). */
   storePath: string;
   now: () => number;
 }

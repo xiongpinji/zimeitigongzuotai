@@ -1,6 +1,6 @@
 # P2-2 / H1-S2c：候选产物回执与崩溃恢复（离线核心）
 
-`HighlightArtifactStore` 在调用方指定的仓库外绝对目录中，为每个高光任务原子写入一份候选契约。sidecar 的上游候选 ID 在落盘前转换为任务域内稳定的 `hcand_<sha256>`；视觉证据载荷与 `reviewNote` 不读取、不落盘。标题、钩子和启发式理由属于候选契约文本，会保存在调用方本地数据目录供人工审核，不能放入 Git 或日志。每份文件带规范化正文的 SHA-256 内容校验；读取时先校验，再执行 `projectHotClipCandidates`，生成来源哈希与时间码绑定的 `HighlightV1`；所有返回的候选仍标记 `reviewRequired: true`，不等于剪辑成片或发布批准。
+`HighlightArtifactStore` 在调用方指定的绝对本地目录中，为每个高光任务原子写入一份候选契约。该目录必须位于 Git 跟踪之外，可使用仓库内被忽略的 `data/` 运行区。sidecar 的上游候选 ID 在落盘前转换为任务域内稳定的 `hcand_<sha256>`；视觉证据载荷与 `reviewNote` 不读取、不落盘。标题、钩子和启发式理由属于候选契约文本，会保存在调用方本地数据目录供人工审核，不能放入 Git 或日志。每份文件带规范化正文的 SHA-256 内容校验；读取时先校验，再执行 `projectHotClipCandidates`，生成来源哈希与时间码绑定的 `HighlightV1`；所有返回的候选仍标记 `reviewRequired: true`，不等于剪辑成片或发布批准。
 
 显式的 `createDurableHotClipRunner` 使用调用方提供的 HotClip 可执行文件、视频路径、受控环境和**源文件摘要观察者**。执行前必须重新观察源摘要并与排队任务记录比对；失配或观察失败以固定码失败且不启动 sidecar。成功时先提交产物文件，再由调度器提交队列 ID。不存在跨两个文件的原子事务，因此 `recoverHighlightBatch` 在**确认旧进程和 runner 已退出并独占队列写者之后**做补偿核对：
 
