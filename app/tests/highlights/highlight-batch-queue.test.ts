@@ -499,6 +499,22 @@ describe('HighlightBatchQueue durable core（合成录屏，不调用 HotClip）
     reopened.close();
   });
 
+  it('恢复器可把上次进程遗留的 running 显式标为 interrupted，重开后仍须手工重试', () => {
+    const storePath = tempStore();
+    const queue = open(storePath);
+    const [queued] = queue.enqueueBatch([input()]);
+    const claimed = queue.claim(queued.id, 3);
+    const interrupted = queue.interrupt(queued.id, claimed.attempt);
+    expect(interrupted).toMatchObject({ state: 'interrupted', attempt: 1, lastErrorCode: 'process_interrupted' });
+    expectCode(() => queue.complete(queued.id, claimed.attempt, { candidateIds: [], highlightIds: [] }), 'invalid_transition');
+    queue.close();
+
+    const reopened = open(storePath);
+    expect(reopened.get(queued.id)).toEqual(interrupted);
+    expect(reopened.retry(queued.id, 3)).toMatchObject({ state: 'queued', attempt: 1 });
+    reopened.close();
+  });
+
   it('迟到完成先按尝试序号拒绝，即使迟到载荷也已损坏', () => {
     const queue = open(tempStore());
     const [queued] = queue.enqueueBatch([input()]);

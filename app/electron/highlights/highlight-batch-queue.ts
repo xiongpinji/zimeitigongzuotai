@@ -28,6 +28,7 @@ const HIGHLIGHT_ID_PATTERN = /^hlcv1-[0-9a-f]{64}$/;
 const MAX_RESULT_IDS = 12;
 export const HIGHLIGHT_BATCH_FAILURE_CODES = [
   'source_unavailable',
+  'source_hash_mismatch',
   'sidecar_executable_missing',
   'sidecar_spawn_failed',
   'sidecar_timeout',
@@ -500,6 +501,14 @@ export class HighlightBatchQueue {
     if (task.state !== 'running') fail('invalid_transition');
     if (!isFailureCode(errorCode)) fail('invalid_error_code');
     return this.transition(task, { state: 'failed', lastErrorCode: errorCode });
+  }
+
+  /** Recovery-only: mark an abandoned running attempt; never infer this from mere reopening. */
+  interrupt(id: string, attempt: number): HighlightBatchTaskV1 {
+    const task = this.requiredTask(id);
+    if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt !== task.attempt) fail('stale_attempt');
+    if (task.state !== 'running') fail('invalid_transition');
+    return this.transition(task, { state: 'interrupted', lastErrorCode: 'process_interrupted' });
   }
 
   cancel(id: string): HighlightBatchTaskV1 {

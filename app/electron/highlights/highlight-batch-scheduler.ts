@@ -43,6 +43,13 @@ const MESSAGES: Readonly<Record<HighlightBatchSchedulerErrorCode, string>> = {
 const HIGHLIGHT_ID_PATTERN = /^hlcv1-[a-f0-9]{64}$/;
 const CANDIDATE_ID_DOMAIN = 'lingji-hotclip-candidate-v1';
 
+/** Shared deterministic identity for an upstream candidate inside one durable task. */
+export function buildOpaqueCandidateId(taskId: string, upstreamId: string): string {
+  return `hcand_${createHash('sha256')
+    .update(JSON.stringify([CANDIDATE_ID_DOMAIN, taskId, upstreamId]), 'utf8')
+    .digest('hex')}`;
+}
+
 class InvalidRunResult extends Error {}
 
 function ownStringArray(value: unknown, maxLength: number, pattern?: RegExp): string[] {
@@ -77,9 +84,7 @@ function safeRunResult(task: HighlightBatchTaskV1, value: unknown): HighlightBat
     const upstreamIds = ownStringArray(candidates.value, 512);
     const highlightIds = ownStringArray(highlights.value, 71, HIGHLIGHT_ID_PATTERN);
     if (upstreamIds.length !== highlightIds.length) throw new InvalidRunResult();
-    const candidateIds = upstreamIds.map((upstreamId) => `hcand_${createHash('sha256')
-      .update(JSON.stringify([CANDIDATE_ID_DOMAIN, task.id, upstreamId]), 'utf8')
-      .digest('hex')}`);
+    const candidateIds = upstreamIds.map((upstreamId) => buildOpaqueCandidateId(task.id, upstreamId));
     return { candidateIds, highlightIds };
   } catch {
     throw new InvalidRunResult();
@@ -96,7 +101,20 @@ export class HighlightBatchSchedulerError extends Error {
   }
 }
 
+export class HighlightBatchSourceError extends Error {
+  readonly code: 'source_unavailable' | 'source_hash_mismatch';
+
+  constructor(code: 'source_unavailable' | 'source_hash_mismatch') {
+    super(code === 'source_unavailable'
+      ? 'Highlight recording source could not be verified'
+      : 'Highlight recording source hash no longer matches the queued task');
+    this.name = 'HighlightBatchSourceError';
+    this.code = code;
+  }
+}
+
 function safeFailureCode(error: unknown): string {
+  if (error instanceof HighlightBatchSourceError) return error.code;
   if (!(error instanceof HotClipSidecarError)) return 'internal_error';
   switch (error.code) {
     case 'executable_missing': return 'sidecar_executable_missing';
