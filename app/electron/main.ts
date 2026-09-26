@@ -80,6 +80,7 @@ import { registerMcpIpc } from './mcp/ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
+import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
@@ -220,6 +221,7 @@ const activeTtsRequests = new Map<string, AbortController>();
 let isAppQuitting = false;
 const videoImportService = getVideoImportService();
 let appConfig: ResolvedAppConfig | null = null;
+let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 
 function sendMenuEvent(event: MenuEvent) {
   mainWindow?.webContents.send('menu-action', event);
@@ -2828,6 +2830,20 @@ registerSecondInstanceFocus(() => {
 
 app.whenReady().then(async () => {
   refreshAppConfig();
+  // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
+  // 队列不可读或所有权断言失败时停止启动，避免以无保护写者继续运行。
+  try {
+    productPublishQueue = bootstrapProductQueue(app.getPath('userData'));
+  } catch (err) {
+    writeAppLog(
+      'error',
+      'publish-queue',
+      '产品发布队列启动失败，应用停止启动',
+      err instanceof Error ? err.name : 'unknown error',
+    );
+    app.exit(1);
+    return;
+  }
   // biliup 二进制按需下载到用户可写目录，注入该目录作为解析根
   configureBiliupRoot(getBiliupDestRoot());
   // 开发模式下显式设置 Dock 图标；打包后 macOS 会使用 .app 自带的 icns

@@ -10,7 +10,7 @@
     "ensure:electron": "node scripts/ensure-electron-binary.cjs",
     "dev": "node scripts/ensure-electron-binary.cjs && node scripts/dev-windows-utf8.cjs",
     "clean:build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});require('node:fs').rmSync('dist-electron',{recursive:true,force:true});\"",
-    "build": "npm run clean:build && electron-vite build && node scripts/obfuscate-build.cjs",
+    "build": "npm run clean:build && electron-vite build && node scripts/assert-single-instance-build.cjs && node scripts/obfuscate-build.cjs",
     "bundle:remotion": "node scripts/bundle-remotion.cjs",
     "package:win": "node scripts/package-windows.cjs",
     "package:mac": "node scripts/package-mac.cjs",
