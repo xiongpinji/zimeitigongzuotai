@@ -23,7 +23,7 @@
 - [ ] H1-S2b：新增可注入 `HighlightBatchQueue` 及聚焦测试和验证文档。批任务按录屏 ID + 规范化源哈希 + 处理选项的稳定键去重；每个录屏独立状态/尝试次数，已完成高光按稳定 ID 幂等提交。队列持久化 schema 校验、同进程唯一写者、损坏拒绝、有界并发、取消传播、失败隔离与手工/有界重试。
   - [x] S2b1 持久化身份/存储核心已在主库 `65d705d` 交付，Windows 相关套件 83 passed、1 个 symlink 用例因建链权限 skipped；GLM 修复后复审无开放 P0/P1，详见[验证记录](../validation/p2-2-highlight-batch-queue.md)。
   - [x] S2b2a 持久状态转移、尝试令牌、显式有界重试、取消决定及候选/高光 ID 幂等提交已在主库 `9dc5014` 交付，Windows 相关套件 97 passed、1 个 symlink 用例因建链权限 skipped，类型检查和 Electron 构建通过；GLM 首审后的增量复审受 CLI 会话轮数限制未形成最终独立报告，Codex 审查及证据边界见[验证记录](../validation/p2-2-highlight-batch-transitions.md)。
-  - [ ] S2b2b 有界并发调度、真实 AbortSignal/子进程取消传播、不同录屏失败隔离和可审计进度尚未实现；S2b2a 的状态 API 不等于批量高光生产。
+  - [x] S2b2b 有界并发调度、AbortSignal 到合成 sidecar 子进程、单录屏失败隔离与显式重试已在主库 `5e2327f` 交付；Windows 相关套件 108 passed、1 个 symlink 用例 skipped，类型检查与 Electron 构建通过。前段 GLM 增量复审因会话轮数问题未形成最终报告，本段未另起模型审查；Codex 自审和产品边界见[验证记录](../validation/p2-2-highlight-batch-scheduler.md)。目前只提交结果 ID，候选正文/高光投影及人工审核记录尚无原子持久化，不能称为产品批量高光生产。
 - [ ] H1-S2c：故障注入与恢复：从“已排队/运行中/候选已算出但未提交/提交后未回执”四个持久点重开，证明状态不误报成功、结果不重复；Windows 双进程写者测试保持 RED 或经产品单实例门槛证明产品路径单一写者。在接真实 sidecar 前保留 H1-S3 门槛。
 
 # Validation strategy
