@@ -4,7 +4,7 @@
  * 覆盖：
  * 1. 只有单实例锁 owner 能构造产品队列：未过门槛 / loser / owner 加载失败被
  *    撤销所有权时一律抛出，且绝不读取或创建队列存储；
- * 2. owner 的 store 固定为 <userData>/publish-v2/queue.json，构造阶段只读不写；
+ * 2. owner 的 store 固定为 <userData>/publish-v2/queue.json，空 store 构造不写盘；
  * 3. 合成任务只在 owner 的隔离 fixture 中入队、按稳定路径持久化，重新打开新
  *    队列实例仍可见；
  * 4. 惰性 executor fail closed 到 needs_user_action（确认未提交），惰性

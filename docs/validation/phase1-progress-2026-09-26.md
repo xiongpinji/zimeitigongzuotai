@@ -1,12 +1,12 @@
 # 阶段一主库进度快照（2026-09-26）
 
-本页核对的主库业务源码截至 `8aa79d8`。它是阶段进度记录，不是 [R1–R5、R6-P 验收](../roadmap-and-acceptance.md)结论。商品挂载按已确认范围只保留请求契约和拒绝路径；四平台商品 ID、资格与接口仍待另行研究。
+本页核对的主库业务源码截至 `2d423f7`。它是阶段进度记录，不是 [R1–R5、R6-P 验收](../roadmap-and-acceptance.md)结论。商品挂载按已确认范围只保留请求契约和拒绝路径；四平台商品 ID、资格与接口仍待另行研究。
 
 | 主线 | 当前可复核结果 | 仍需完成或验证 |
 | --- | --- | --- |
 | Windows 编辑台 | 已导入固定 Lingji Cut 源码，便携版曾启动并导出 1 秒合成 MP4。`737a920` 后的安装器采用精确文件卸载清单；[当前安装包记录](p6-2-current-windows-artifact-2026-09-26.md)载明本机 NSIS 编译产物与哈希。 | 完整安装、升级、卸载、真实录屏编辑、工程重开和长视频导出未通过；安装包未签名，应用许可证文件尚未正确进入发行根目录。 |
 | 多账号 | 四平台账号 UUID、隔离加密会话引用、A1 有界登录事务、[A2-S1 IPC 服务](p1-1-account-ipc-core.md)、[A2-S2 Electron 安全账号桥](p1-1-account-bridge.md)与 [A2-S3 独立设置页](p1-1-account-settings.md)已落库。[A2-S4a 旧发布整单预检](p1-1-old-runner-preflight.md)拒绝未知/UUID/重复目标后零上传；[A2-S4b 只读旧账号迁移预览](p1-1-legacy-migration-preview.md)已接固定 IPC，离线测试与审查通过。 | 预览不执行迁移，也不核对旧会话可用性。真实四平台扫码/续登、跨重启保持、旧账号实际加密迁移均未通过；新账号 UUID 尚未接旧发布链。 |
-| 批量普通发布 | 持久队列、保守平台适配器、商品请求拒绝及 [本地发布预检](p4-2-local-publish-preflight.md)已落库。[Q2-R3a 产品单实例门禁](p1-2-single-writer-gate.md)在 Windows 真双进程 fixture 验证 17/17；[Q2-R3b1 队列崩溃/重启租约](p1-2-queue-crash-restart.md)与既有门禁合跑 44/44、无跳过，未知提交只进入核对、不自动重发。 | 通用队列 API 的跨 OS 进程同时写入竞态仍存在；产品队列写入口尚未全部接到持锁 Electron main，打包启动所有权未验证。真实平台权限、逐账号授权、远端作品 ID 和最终状态均未通过；模拟并发不是平台许可或真实吞吐。 |
+| 批量普通发布 | 持久队列、保守平台适配器、商品请求拒绝及 [本地发布预检](p4-2-local-publish-preflight.md)已落库。[Q2-R3a 产品单实例门禁](p1-2-single-writer-gate.md)在 Windows 真双进程 fixture 验证 17/17；[Q2-R3b1 队列崩溃/重启租约](p1-2-queue-crash-restart.md)与既有门禁合跑 44/44、无跳过，未知提交只进入核对、不自动重发。[Q2-R3b2b 产品队列启动接线](p1-2-product-queue-bootstrap.md)已限制新队列只能由持锁主进程构造，最终聚焦合跑 95/95、类型检查与构建通过。 | 通用队列 API 的跨 OS 进程同时写入竞态仍存在；正式打包应用的 owner/loser 启动未实测，新队列也未开放真实调度。真实平台权限、逐账号授权、远端作品 ID 和最终状态均未通过；模拟并发不是平台许可或真实吞吐。 |
 | 高光与智能合成 | 生产 sidecar、时间码/引用契约、可选 HotClip 隔离边界、[H1-S1/S2a 候选来源投影](p2-1-highlight-projection.md)、[H1-S2b1 多录屏任务身份及持久存储](p2-2-highlight-batch-queue.md)、[H1-S2b2a 持久状态转移](p2-2-highlight-batch-transitions.md)、[H1-S2b2b 有界调度](p2-2-highlight-batch-scheduler.md)、[H1-S2c1 本地产物回执与崩溃恢复](p2-2-highlight-batch-recovery.md)、[H1-S2c2a 授权本地来源摘要观察](p2-2-highlight-local-source-observer.md)和 [授权素材目录/语义检索端口](p3-1-asset-rights.md)的离线模块已落库；相关高光聚焦套件 126 passed、2 个 Windows symlink 用例 skipped。 | S2c 产品单写者入口、真实 HotClip/录屏盲审、素材检索合成、三版不同叙事、时间线回写与渲染均未完成；不承诺平台认定“原创”。 |
 | Agent | 九类生产动作的离线预授权门控已落库，商品发布默认阻止；普通视频本地预检保持纯函数边界。 | 受信任授权发行和配额持久化、九项任务 API/Skills/MCP 接线、可暂停审计闭环与发布后的远端核验未实现。 |
 
@@ -14,8 +14,8 @@ Codex 在 Windows Node v22.23.3 对 `de404e9` 的预检、生产契约和 Agent 
 
 后续主库增量验证：`d7d3325` 的 Windows 队列崩溃/重启及门禁套件 **44/44**、无跳过，类型检查通过；`b03a5bc` 的旧发布预检聚焦 **33/33**、类型检查通过；`65d705d` 的高光队列、投影和 sidecar 合跑 **83 passed、1 skipped**、类型检查通过，GLM 修复后复审无开放 P0/P1；`99c6099` 的旧账号预览与账号桥聚焦 **18 passed、1 skipped**、类型检查和 `electron-vite build` 退出码 0，GLM 审查无开放 P0/P1；`9dc5014` 的高光状态转移、投影和 sidecar 合跑 **97 passed、1 skipped**，类型检查与 Electron 构建通过，GLM 增量复审因会话轮数限制未完成，Codex 核对见[本项验证记录](p2-2-highlight-batch-transitions.md)；`5e2327f` 的有界调度、队列、投影和 sidecar 合跑 **108 passed、1 skipped**，类型检查与 Electron 构建通过，本段未另起模型审查，Codex 核对见[调度记录](p2-2-highlight-batch-scheduler.md)；`3471243` 的本地产物/恢复、调度、队列、投影及 sidecar 合跑 **122 passed、1 skipped**，类型检查与 Electron 构建通过，GLM 只读作业超时无最终报告，Codex 核对见[恢复记录](p2-2-highlight-batch-recovery.md)；`d40606f` 的授权本地来源观察、产物/恢复、调度、队列、投影及 sidecar 合跑 **126 passed、2 skipped**，类型检查与 Electron 构建通过，见[来源观察记录](p2-2-highlight-local-source-observer.md)。本次两个 skipped 分别是原有 Windows symlink 建链权限用例和新增观察器在 Windows 显式跳过的 symlink 断言；均不计入通过项。这些仍是聚焦离线结果，未形成最新主库的全量测试或发行验收。
 
-`8aa79d8` 的持锁者队列工厂在 Windows 聚焦回归 **64/64**（含 2 项真实双 Electron 进程用例）、类型检查和 Electron 构建均通过，GLM 只读审查无开放 P0/P1，见[工厂验证记录](p1-2-owned-queue-factory.md)。它尚未被 `main.ts` 调用，不能当作产品单写者接线通过。[项目内本地 HotClip 运行区](p0-3-local-runtime-layout.md)的合成字幕导入退出码为 0，也不等于真实高光验收。当前主库仍未重跑全量测试。
+`8aa79d8` 的持锁者队列工厂在 Windows 聚焦回归 **64/64**（含 2 项真实双 Electron 进程用例）、类型检查和 Electron 构建均通过，GLM 只读审查无开放 P0/P1，见[工厂验证记录](p1-2-owned-queue-factory.md)。`2d423f7` 将工厂接到主运行时；Windows 聚焦合跑 **95/95**、类型检查与完整构建通过，详见[产品队列启动接线记录](p1-2-product-queue-bootstrap.md)。[项目内本地 HotClip 运行区](p0-3-local-runtime-layout.md)的合成字幕导入退出码为 0，也不等于真实高光验收。当前主库仍未重跑全量测试。
 
 当前 Windows 安装包是本地构建产物，未提交到 Git；它绑定 `737a920`，并非对后续 `8aa79d8` 的发行验收。该安装器经 NSIS 编译和合成安装/卸载试验验证不会删除预存用户文件，但尚无完整真实安装/卸载、签名和许可证审查通过的证据。详见[安装包记录](p6-2-current-windows-artifact-2026-09-26.md)与[安全卸载记录](p6-2-safe-windows-uninstall.md)。
 
-下一步的依赖顺序是：A2-S4a/b 离线安全收口已完成，旧账号实际迁移须另做备份和加密回读验证；Q2-R3a/R3b1 已验证，继续 R3b2 产品队列单写者接线与打包启动核对，在此之前不把持久队列接入自动发布。媒体链路已完成 H1-S2c1 离线产物/恢复核心和 S2c2a 本地逐字节摘要端口，继续 S2c2 产品单写者与配置接线，再做 H1-S3 授权真实样本盲审，随后补素材权利过滤、时间线回写与渲染。真实会话、来源权利、产物完整性和逐平台权限检查均通过后，才把 Agent 预授权、本地预检、持久队列与远端最终状态串起来。每个平台只有在授权账号取得远端最终状态后才能标记真实普通发布通过；局部模块落库不等于阶段完整验收。
+下一步的依赖顺序是：A2-S4a/b 离线安全收口已完成，旧账号实际迁移须另做备份和加密回读验证；Q2-R3a/R3b1/R3b2b 源码与离线验证已完成，继续正式打包应用的 owner/loser 启动核对，在此之前不把持久队列接入自动发布。媒体链路已完成 H1-S2c1 离线产物/恢复核心和 S2c2a 本地逐字节摘要端口，继续 S2c2 产品单写者与配置接线，再做 H1-S3 授权真实样本盲审，随后补素材权利过滤、时间线回写与渲染。真实会话、来源权利、产物完整性和逐平台权限检查均通过后，才把 Agent 预授权、本地预检、持久队列与远端最终状态串起来。每个平台只有在授权账号取得远端最终状态后才能标记真实普通发布通过；局部模块落库不等于阶段完整验收。

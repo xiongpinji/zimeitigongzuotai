@@ -13,8 +13,8 @@
  * 边界：
  * - 只有经 single-instance-gate 取得锁的 owner 能构造（openOwnedDurableQueue
  *   内断言）；loser / 未过门槛 / 加载失败被撤销所有权时构造抛出；
- * - 构造阶段只读存储：store 不存在时不会创建目录或文件，首次写入发生在
- *   enqueue 等显式写操作时；
+ * - 空 store 构造不会创建目录或文件；已有 store 在加载时可能因隔离违规的
+ *   commerce 任务而原子写盘（沿用 DurablePublishQueue 的恢复语义）；
  * - 通用 DurablePublishQueue 仍非跨进程 CAS；本引导不改变该事实。
  */
 import { isAbsolute, join } from 'node:path';
