@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ import {
   createDurableHotClipRunner,
   recoverHighlightBatch,
 } from '../../electron/highlights/highlight-batch-artifacts';
+import { createAuthorizedLocalHotClipRunner } from '../../electron/highlights/local-source-observer';
 
 const HASH = 'a'.repeat(64);
 const MARKER = 'RAW-VISUAL-PAYLOAD-DO-NOT-STORE';
@@ -236,6 +238,45 @@ describe('HighlightArtifactStore / recovery（仅合成候选）', () => {
     expect(queue.get(task.id)).toMatchObject({ state: 'failed', lastErrorCode: 'source_hash_mismatch' });
     expect(existsSync(marker)).toBe(false);
     expect(artifacts.read(queue.get(task.id)!)).toBeNull();
+  });
+
+  it('真实本地字节观察器接入 sidecar；源文件改写后不再次启动子进程', async () => {
+    const { root, queue, artifacts } = fixture();
+    const mediaRootDir = join(root, 'media');
+    mkdirSync(mediaRootDir);
+    const videoPath = join(mediaRootDir, 'synthetic.mp4');
+    const original = Buffer.from('synthetic-live-recording');
+    writeFileSync(videoPath, original);
+    const observedHash = createHash('sha256').update(original).digest('hex');
+    const recordingInput = (id: string) => {
+      const value = input(id);
+      value.recording.sourceSha256 = observedHash;
+      value.observedSourceSha256 = observedHash;
+      return value;
+    };
+    const script = join(root, 'fake-hotclip.cjs');
+    const marker = join(root, 'started.txt');
+    writeFileSync(script,
+      `require('node:fs').appendFileSync(${JSON.stringify(marker)}, 'started\\n'); process.stdout.write(${JSON.stringify(JSON.stringify([candidate()]))});`,
+      'utf8');
+    const runner = createAuthorizedLocalHotClipRunner({
+      artifacts, mediaRootDir,
+      createdAt: () => '2026-09-26T00:00:00Z',
+      resolveRunOptions: () => ({
+        executable: process.execPath, argsPrefix: [script], cwd: root,
+        videoPath, timeoutMs: 5_000,
+      }),
+    });
+    const scheduler = new HighlightBatchScheduler({ queue, concurrency: 1, maxAttempts: 2, runner });
+    const [first] = queue.enqueueBatch([recordingInput('actual-bytes-1')]);
+    await scheduler.runQueued();
+    expect(queue.get(first.id)?.state).toBe('completed');
+    expect(readFileSync(marker, 'utf8')).toBe('started\n');
+    const [second] = queue.enqueueBatch([recordingInput('actual-bytes-2')]);
+    writeFileSync(videoPath, 'different-recording');
+    await scheduler.runQueued();
+    expect(queue.get(second.id)).toMatchObject({ state: 'failed', lastErrorCode: 'source_hash_mismatch' });
+    expect(readFileSync(marker, 'utf8')).toBe('started\n');
   });
 
   it('源摘要观察失败只落固定错误码，不泄露观察器原始异常', async () => {
