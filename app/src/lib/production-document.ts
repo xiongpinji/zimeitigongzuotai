@@ -31,6 +31,9 @@ import type {
   CommerceRequestV1,
   CompositionPlanSegmentV1,
   CompositionPlanV1,
+  CompositionEditorialV1,
+  CompositionSegmentEditorialV1,
+  CompositionVisualLayerV1,
   CompositionSegmentSourceV1,
   HighlightEvidenceV1,
   HighlightV1,
@@ -157,6 +160,12 @@ const PLAN_KEYS = [
 
 const SEGMENT_KEYS = ['id', 'order', 'description', 'source'] as const;
 
+const PLAN_OPTIONAL_KEYS = ['editorial'] as const;
+const SEGMENT_OPTIONAL_KEYS = ['editorial', 'visualLayer'] as const;
+const PLAN_EDITORIAL_KEYS = ['targetAudience', 'centralQuestion', 'openingClaim', 'endingMessage'] as const;
+const SEGMENT_EDITORIAL_KEYS = ['narrativeRole', 'visualIntent', 'audioIntent'] as const;
+const VISUAL_LAYER_KEYS = ['assetId', 'sourceInMs', 'startAtMs', 'durationMs', 'purpose'] as const;
+
 const SOURCE_KEYS = ['kind', 'sourceId', 'inMs', 'outMs'] as const;
 
 const VARIANT_KEYS = [
@@ -246,6 +255,7 @@ function assertObjectShape(
   value: Record<string, unknown>,
   keys: readonly string[],
   path: string,
+  optionalKeys: readonly string[] = [],
 ): void {
   for (const key of keys) {
     if (!Object.prototype.hasOwnProperty.call(value, key)) {
@@ -253,7 +263,7 @@ function assertObjectShape(
     }
   }
   for (const key of Object.keys(value)) {
-    if (keys.includes(key)) continue;
+    if (keys.includes(key) || optionalKeys.includes(key)) continue;
     if (isCredentialKey(key)) {
       fail(
         'credential_material_forbidden',
@@ -282,6 +292,12 @@ function requireNonEmptyString(
   const text = requireString(value, path, code);
   if (text.trim().length === 0) fail(code, path, '必须是非空白字符串');
   return text;
+}
+
+function requireBoundedText(value: unknown, path: string, maxLength: number): string {
+  const content = requireNonEmptyString(value, path);
+  if (content.length > maxLength) fail('invalid_field', path, `文本不能超过 ${maxLength} 字符`);
+  return content;
 }
 
 function requireNullableString(value: unknown, path: string): string | null {
@@ -542,25 +558,82 @@ function parseSegmentSource(value: unknown, path: string): CompositionSegmentSou
   };
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function parsePlanEditorial(value: unknown, path: string): CompositionEditorialV1 {
+  const obj = requireObject(value, path);
+  assertObjectShape(obj, PLAN_EDITORIAL_KEYS, path);
+  return {
+    targetAudience: requireBoundedText(obj.targetAudience, `${path}.targetAudience`, 2_000),
+    centralQuestion: requireBoundedText(obj.centralQuestion, `${path}.centralQuestion`, 2_000),
+    openingClaim: requireBoundedText(obj.openingClaim, `${path}.openingClaim`, 2_000),
+    endingMessage: requireBoundedText(obj.endingMessage, `${path}.endingMessage`, 2_000),
+  };
+}
+
+function parseSegmentEditorial(value: unknown, path: string): CompositionSegmentEditorialV1 {
+  const obj = requireObject(value, path);
+  assertObjectShape(obj, SEGMENT_EDITORIAL_KEYS, path);
+  return {
+    narrativeRole: requireBoundedText(obj.narrativeRole, `${path}.narrativeRole`, 100),
+    visualIntent: requireBoundedText(obj.visualIntent, `${path}.visualIntent`, 2_000),
+    audioIntent: requireBoundedText(obj.audioIntent, `${path}.audioIntent`, 2_000),
+  };
+}
+
+function parseVisualLayer(value: unknown, path: string): CompositionVisualLayerV1 {
+  const obj = requireObject(value, path);
+  assertObjectShape(obj, VISUAL_LAYER_KEYS, path);
+  const durationMs = requireNonNegativeInteger(obj.durationMs, `${path}.durationMs`, 'invalid_timecode');
+  if (durationMs === 0) {
+    fail('invalid_timecode', `${path}.durationMs`, '视觉覆盖时长必须大于零');
+  }
+  return {
+    assetId: requireNonEmptyString(obj.assetId, `${path}.assetId`),
+    sourceInMs: requireNonNegativeInteger(obj.sourceInMs, `${path}.sourceInMs`, 'invalid_timecode'),
+    startAtMs: requireNonNegativeInteger(obj.startAtMs, `${path}.startAtMs`, 'invalid_timecode'),
+    durationMs,
+    purpose: requireBoundedText(obj.purpose, `${path}.purpose`, 500),
+  };
+}
+
 function parseSegment(value: unknown, path: string): CompositionPlanSegmentV1 {
   const obj = requireObject(value, path);
-  assertObjectShape(obj, SEGMENT_KEYS, path);
+  assertObjectShape(obj, SEGMENT_KEYS, path, SEGMENT_OPTIONAL_KEYS);
   return {
     id: requireNonEmptyString(obj.id, `${path}.id`),
     order: requireNonNegativeInteger(obj.order, `${path}.order`),
     description: requireString(obj.description, `${path}.description`),
     source: parseSegmentSource(obj.source, `${path}.source`),
+    ...(hasOwn(obj, 'editorial')
+      ? { editorial: parseSegmentEditorial(obj.editorial, `${path}.editorial`) }
+      : {}),
+    ...(hasOwn(obj, 'visualLayer')
+      ? { visualLayer: parseVisualLayer(obj.visualLayer, `${path}.visualLayer`) }
+      : {}),
   };
 }
 
 function parsePlan(value: unknown, path: string): CompositionPlanV1 {
   const obj = requireObject(value, path);
-  assertObjectShape(obj, PLAN_KEYS, path);
+  assertObjectShape(obj, PLAN_KEYS, path, PLAN_OPTIONAL_KEYS);
   if (!Array.isArray(obj.segments)) {
     fail('invalid_field', `${path}.segments`, '必须是数组');
   }
   const segments = parseCollection(obj.segments, `${path}.segments`, parseSegment);
   indexCollection(segments, `${path}.segments`);
+  if (hasOwn(obj, 'editorial')) {
+    if (segments.length === 0) {
+      fail('invalid_field', `${path}.segments`, '结构化计划至少需要一个证据分段');
+    }
+    segments.forEach((segment, index) => {
+      if (!segment.editorial) {
+        fail('invalid_field', `${path}.segments[${index}].editorial`, '结构化计划的每段都必须有叙事意图');
+      }
+    });
+  }
   return {
     id: requireNonEmptyString(obj.id, `${path}.id`),
     narrativeSummary: requireString(obj.narrativeSummary, `${path}.narrativeSummary`),
@@ -579,6 +652,9 @@ function parsePlan(value: unknown, path: string): CompositionPlanV1 {
       '画幅比例',
     ),
     segments,
+    ...(hasOwn(obj, 'editorial')
+      ? { editorial: parsePlanEditorial(obj.editorial, `${path}.editorial`) }
+      : {}),
     timelineRef: requireNullableString(obj.timelineRef, `${path}.timelineRef`),
     createdAt: requireIsoDateTime(obj.createdAt, `${path}.createdAt`),
     updatedAt: requireIsoDateTime(obj.updatedAt, `${path}.updatedAt`),
@@ -819,11 +895,35 @@ function checkReferences(doc: ProductionDocumentV1, index: EntityIndex): void {
 
   doc.compositionPlans.forEach((plan, planIndex) => {
     plan.segments.forEach((segment, segmentIndex) => {
+      const segmentPath = `$.compositionPlans[${planIndex}].segments[${segmentIndex}]`;
       checkSegmentSource(
         segment.source,
-        `$.compositionPlans[${planIndex}].segments[${segmentIndex}].source`,
+        `${segmentPath}.source`,
         index,
       );
+      if (segment.visualLayer) {
+        const layer = segment.visualLayer;
+        if (layer.startAtMs + layer.durationMs > segment.source.outMs - segment.source.inMs) {
+          fail('invalid_timecode', `${segmentPath}.visualLayer.durationMs`, '视觉覆盖超出主片段时长');
+        }
+        const asset = index.assets.get(layer.assetId);
+        if (!asset) {
+          fail('dangling_reference', `${segmentPath}.visualLayer.assetId`, '视觉覆盖引用的素材不存在');
+        }
+        if (!asset.authorizedForAutoUse) {
+          fail('invalid_field', `${segmentPath}.visualLayer.assetId`, '视觉覆盖素材未获自动使用授权');
+        }
+        if (asset.mediaType !== 'video' && asset.mediaType !== 'image') {
+          fail('invalid_field', `${segmentPath}.visualLayer.assetId`, '视觉覆盖素材必须是视频或图片');
+        }
+        if (asset.mediaType === 'image' && layer.sourceInMs !== 0) {
+          fail('invalid_timecode', `${segmentPath}.visualLayer.sourceInMs`, '图片视觉覆盖的素材入点必须为零');
+        }
+        if (asset.mediaType === 'video' && asset.durationMs !== null
+          && layer.sourceInMs + layer.durationMs > asset.durationMs) {
+          fail('invalid_timecode', `${segmentPath}.visualLayer.sourceInMs`, '视觉覆盖超出素材总时长');
+        }
+      }
     });
   });
 

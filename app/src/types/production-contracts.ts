@@ -12,8 +12,9 @@
  * - 本文件不 import 上游 `electron/publish/types.ts` 或 `src/types/ai.ts`，
  *   避免契约与上游实现耦合；平台命名映射（如 wechat-channels ↔ 上游 'tencent'）
  *   由未来 Electron main 的适配层负责。
- * - 所有字段在 v1 JSON 中均为必填；“可选”语义一律用 null 显式表达。
- *   解析器（src/lib/production-document.ts）不补默认值、不删字段、不做静默迁移。
+ * - 基础 v1 字段均为必填；“可选”语义用 null 显式表达。R4 新增的
+ *   editorial / visualLayer 是向后兼容的增量字段，旧计划可省略；解析器
+ *   不补默认值、不删字段、不做静默迁移。
  */
 
 /** 当前契约版本。未知 / 未来版本必须被解析器显式拒绝。 */
@@ -181,6 +182,35 @@ export interface CompositionPlanSegmentV1 {
   /** 该分段的叙事 / 镜头描述。 */
   description: string;
   source: CompositionSegmentSourceV1;
+  /** R4 新计划的逐段叙事意图；旧计划可省略。 */
+  editorial?: CompositionSegmentEditorialV1;
+  /** R4 可选的同段视觉覆盖；旧计划可省略。 */
+  visualLayer?: CompositionVisualLayerV1;
+}
+
+export interface CompositionSegmentEditorialV1 {
+  narrativeRole: string;
+  visualIntent: string;
+  audioIntent: string;
+}
+
+export interface CompositionVisualLayerV1 {
+  /** 授权素材库中的视频或图片 ID。 */
+  assetId: string;
+  /** 素材内入点；图片必须为 0。 */
+  sourceInMs: number;
+  /** 主片段内的出现时间。 */
+  startAtMs: number;
+  /** 覆盖时长，不改变主片段的原声。 */
+  durationMs: number;
+  purpose: string;
+}
+
+export interface CompositionEditorialV1 {
+  targetAudience: string;
+  centralQuestion: string;
+  openingClaim: string;
+  endingMessage: string;
 }
 
 /**
@@ -195,6 +225,8 @@ export interface CompositionPlanV1 {
   voiceoverKind: CompositionVoiceoverKind;
   aspectRatio: ProductionAspectRatio;
   segments: CompositionPlanSegmentV1[];
+  /** R4 新计划的可审计叙事主张；旧计划可省略。 */
+  editorial?: CompositionEditorialV1;
   /** 可编辑时间线引用（Lingji 项目内的 opaque 标识）；尚未回写时为 null。 */
   timelineRef: string | null;
   createdAt: string;

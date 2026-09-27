@@ -1,10 +1,11 @@
 # 生产 sidecar 契约 v1（production-v1）
 
-状态（证据分级，截至 2026-09-25）：
+状态（证据分级，截至 2026-09-28）：
 
 - **源码可见**：`app/src/types/production-contracts.ts`（类型与枚举）、
   `app/src/lib/production-document.ts`（纯解析 / 初始化）。
-- **自动化测试**：`app/tests/production-contracts.test.ts`，由 Codex 独立复跑后作为验收证据。
+- **自动化测试**：`app/tests/production-contracts.test.ts` 与
+  `app/tests/composition-plan-contract.test.ts`，由 Codex 独立复跑后作为验收证据。
 - **尚未发生**：持久化接入、Electron 进程接线、真实账号登录、真实平台发布、Windows 安装包验收。
   本契约目前只是**纯 JSON 数据边界**，不代表任何平台侧能力已打通。
 
@@ -71,6 +72,15 @@ createEmptyProductionDocument(projectId, { nowIso? })
 - `CompositionSegmentSourceV1.inMs / outMs` 语义按 `kind` 区分：
   `recording` / `asset` 是来源媒体内 0 起毫秒区间；`highlight` 是所属录屏的绝对毫秒时间码，
   必须落在该高光 `[startMs, endMs]` 内。
+- R4 向后兼容的计划扩展：旧 v1 计划可省略 `editorial` 和逐段
+  `editorial` / `visualLayer`；若计划带 `editorial`，则必须至少有一个分段，
+  且每段都带 `narrativeRole`、`visualIntent`、`audioIntent`。
+  计划 `editorial` 包含目标受众、中心问题、开场主张与结尾信息；这些字段不能为空白，
+  每项上限 2000 字符，逐段 `narrativeRole` 上限 100 字符。
+- `visualLayer` 是同段可选的视频或图片覆盖：保存素材 ID、素材入点、在主段中的起点、
+  覆盖时长与用途（最多 500 字符）。解析器要求素材存在且已标记可自动使用，
+  覆盖不能越出主段或已知素材时长，图片素材入点必须为 0。
+  这些静态检查**不能代替**合成时对授权范围、文件哈希和媒体字节的复核。
 - `PublishJobV1.state`：`draft → preflight → queued → uploading → submitted → verifying → published`，
   另有 `needs_login`、`needs_permission`、`needs_user_action`、`retryable_failure`、
   `terminal_failure`、`unknown_submission`。`unknown_submission` 必须先查远端再决定重试。
@@ -138,6 +148,6 @@ fail-closed 规则：
 
 - v1 字段只增不改语义；任何破坏性调整必须提升 `PRODUCTION_SCHEMA_VERSION`，
   并让解析器对新版本显式失败，等待迁移实现。
-- 新增字段必须同步：类型、解析器（必填 + 严格字段集）、测试夹具、本文档。
+- 新增字段必须同步：类型、解析器（显式兼容规则 + 严格字段集）、测试夹具、本文档。
 - 复制改动到上游发布适配器（平台命名映射）时必须留在 main 适配层，
   不得让契约 import 上游类型。
