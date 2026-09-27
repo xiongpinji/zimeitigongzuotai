@@ -48,6 +48,8 @@ import type {
   HighlightV1RunInput,
   HighlightV1TaskDto,
 } from '../../electron/highlights/product-highlight-ipc';
+import type { ReviewedClipSelection, ReviewedClipExportResult } from '../../electron/highlights/reviewed-clip-exporter';
+import type { ReviewedClipReceipt } from '../../electron/highlights/reviewed-clip-receipts';
 import type { HighlightArtifactBundle } from '../../electron/highlights/highlight-batch-artifacts';
 
 export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights';
@@ -842,6 +844,12 @@ export interface HighlightV1API {
   cancel(id: string): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
   retry(id: string, maxAttempts: number): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
   run(input: HighlightV1RunInput): Promise<HighlightV1Result<{ tasks: HighlightV1TaskDto[] }>>;
+  exportReviewed(input: { reviewConfirmed: boolean; selections: ReviewedClipSelection[]; concurrency: 1 | 2 }):
+    Promise<HighlightV1Result<{ results: Array<Omit<Extract<ReviewedClipExportResult, { status: 'completed' }>, 'outputPath'> |
+      Extract<ReviewedClipExportResult, { status: 'failed' | 'cancelled' }>> }>>;
+  listReviewed(): Promise<HighlightV1Result<{ clips: ReviewedClipReceipt[]; busy: boolean }>>;
+  verifiedOutput(id: string): Promise<HighlightV1Result<{ path: string; durationMs: number }>>;
+  cancelExport(): Promise<HighlightV1Result<{ cancelled: boolean }>>;
 }
 
 declare global {

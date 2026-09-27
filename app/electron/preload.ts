@@ -847,4 +847,8 @@ contextBridge.exposeInMainWorld('highlightV1API', {
   cancel: (id) => ipcRenderer.invoke('highlight-v1:cancel', { id }),
   retry: (id, maxAttempts) => ipcRenderer.invoke('highlight-v1:retry', { id, maxAttempts }),
   run: (input) => ipcRenderer.invoke('highlight-v1:run', input),
+  exportReviewed: (input) => ipcRenderer.invoke('highlight-v1:export-reviewed', input),
+  listReviewed: () => ipcRenderer.invoke('highlight-v1:list-reviewed'),
+  verifiedOutput: (id) => ipcRenderer.invoke('highlight-v1:verified-output', { id }),
+  cancelExport: () => ipcRenderer.invoke('highlight-v1:cancel-export'),
 } satisfies HighlightV1API);

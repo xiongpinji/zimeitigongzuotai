@@ -1,11 +1,12 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSingleInstanceGate } from '../../electron/single-instance-gate';
 import { bootstrapProductHighlights } from '../../electron/highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from '../../electron/highlights/product-highlight-controller';
 import { HIGHLIGHT_V1_CHANNELS, registerProductHighlightIpc } from '../../electron/highlights/product-highlight-ipc';
+import type { ReviewedClipExporter } from '../../electron/highlights/reviewed-clip-exporter';
 
 const roots: string[] = [];
 const runtimes: ReturnType<typeof bootstrapProductHighlights>[] = [];
@@ -30,6 +31,18 @@ function fixture() {
   const runtime = bootstrapProductHighlights(root);
   runtimes.push(runtime);
   const controller = new ProductHighlightController({ runtime, userDataPath: root });
+  const clipId = `hclip_${'c'.repeat(64)}`;
+  const exporter = {
+    exportBatch: vi.fn(async () => [{ status: 'completed', id: clipId,
+      taskId: `hbatch_${'a'.repeat(64)}`, highlightId: `hlcv1-${'b'.repeat(64)}`,
+      outputPath: join(root, 'highlights-v1', 'reviewed-clips', `${clipId}.mp4`),
+      outputSha256: 'd'.repeat(64), outputDurationMs: 1800, reused: false }]),
+    list: vi.fn(() => []),
+    verifiedOutput: vi.fn(async () => ({ path: join(root, 'highlights-v1', 'reviewed-clips', `${clipId}.mp4`),
+      receipt: { id: clipId, outputDurationMs: 1800 } })),
+    cancelActive: vi.fn(() => true),
+    hasActiveWork: false,
+  };
   const handlers = new Map<string, (_event: unknown, input?: unknown) => unknown>();
   const choices: string[][] = [];
   const ipc = {
@@ -40,6 +53,7 @@ function fixture() {
   registerProductHighlightIpc({
     ipc,
     controller,
+    exporter: exporter as unknown as ReviewedClipExporter,
     allowedSender: (event) => event === 'owner',
     pickDirectory: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
     pickFiles: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
@@ -49,7 +63,7 @@ function fixture() {
     if (!handler) throw new Error(`Missing test channel ${channel}`);
     return handler(sender, input);
   };
-  return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller };
+  return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller, exporter, clipId };
 }
 
 beforeEach(async () => {
@@ -148,5 +162,34 @@ describe('owner-only highlight IPC', () => {
     expect(artifact).toMatchObject({ ok: true, artifact: { reviewRequired: true, highlights: [{ startMs: 1000, endMs: 3000 }] } });
     expect(JSON.stringify(result) + JSON.stringify(artifact)).not.toContain('SYNTHETIC-SECRET');
     expect(readFileSync(join(root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain('SYNTHETIC-SECRET');
+  });
+
+  it('requires owner, selected root and explicit review before exporting; never returns source paths', async () => {
+    const { root, media, choices, invoke, exporter, clipId } = fixture();
+    const selection = { taskId: `hbatch_${'a'.repeat(64)}`, highlightId: `hlcv1-${'b'.repeat(64)}`,
+      startMs: 1100, endMs: 2900 };
+    const request = { reviewConfirmed: true, selections: [selection], concurrency: 1,
+      mediaRootDir: root };
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, request, 'foreign'))
+      .toEqual({ ok: false, code: 'forbidden' });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, request))
+      .toEqual({ ok: false, code: 'selection_required' });
+    choices.push([media]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, { ...request, reviewConfirmed: false }))
+      .toEqual({ ok: false, code: 'review_required' });
+    expect(exporter.exportBatch).not.toHaveBeenCalled();
+    const result = await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, request);
+    expect(result).toMatchObject({ ok: true, results: [{ status: 'completed', id: clipId }] });
+    expect(exporter.exportBatch).toHaveBeenCalledWith({ mediaRootDir: media,
+      reviewConfirmed: true, selections: [selection], concurrency: 1 });
+    expect(JSON.stringify(result)).not.toContain(root);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.listReviewed)).toEqual({ ok: true, clips: [], busy: false });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: clipId }, 'foreign'))
+      .toEqual({ ok: false, code: 'forbidden' });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: 'malicious' }))
+      .toEqual({ ok: false, code: 'invalid_request' });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: clipId }))
+      .toMatchObject({ ok: true, path: expect.stringContaining(`${clipId}.mp4`), durationMs: 1800 });
   });
 });

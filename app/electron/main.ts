@@ -83,6 +83,7 @@ import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
 import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
 import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from './highlights/product-highlight-controller';
+import { ReviewedClipExporter } from './highlights/reviewed-clip-exporter';
 import { registerProductHighlightIpc } from './highlights/product-highlight-ipc';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
@@ -227,6 +228,7 @@ let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
+let reviewedClipExporter: ReviewedClipExporter | null = null;
 let highlightShutdownStarted = false;
 
 function sendMenuEvent(event: MenuEvent) {
@@ -2857,9 +2859,15 @@ app.whenReady().then(async () => {
       runtime: productHighlights,
       userDataPath: app.getPath('userData'),
     });
+    const { ffmpegPath, ffprobePath } = resolveRuntimeBinaries();
+    reviewedClipExporter = new ReviewedClipExporter({
+      controller: productHighlightController,
+      userDataPath: app.getPath('userData'), ffmpegPath, ffprobePath,
+    });
     registerProductHighlightIpc({
       ipc: ipcMain,
       controller: productHighlightController,
+      exporter: reviewedClipExporter,
       allowedSender: (event) =>
         !!mainWindow && !mainWindow.isDestroyed() &&
         (event as { sender?: unknown }).sender === mainWindow.webContents &&
@@ -2967,23 +2975,29 @@ app.on('before-quit', (event) => {
     event.preventDefault();
     return;
   }
-  if (productHighlightController?.hasActiveWork) {
+  if (productHighlightController?.hasActiveWork || reviewedClipExporter?.hasActiveWork) {
     event.preventDefault();
     highlightShutdownStarted = true;
-    void productHighlightController.stopForShutdown()
-      .catch(() => writeAppLog('error', 'highlight-batch', '退出时高光任务停止异常'))
-      .then(() => {
-        productHighlights?.close();
-        productHighlights = null;
-        productHighlightController = null;
-        highlightShutdownStarted = false;
-        app.quit();
-      });
+    void Promise.allSettled([
+      productHighlightController?.stopForShutdown(),
+      reviewedClipExporter?.stopForShutdown(),
+    ]).then((results) => {
+      if (results.some((result) => result.status === 'rejected')) {
+        writeAppLog('error', 'highlight-batch', '退出时高光任务停止异常');
+      }
+      productHighlights?.close();
+      productHighlights = null;
+      productHighlightController = null;
+      reviewedClipExporter = null;
+      highlightShutdownStarted = false;
+      app.quit();
+    });
     return;
   }
   productHighlights?.close();
   productHighlights = null;
   productHighlightController = null;
+  reviewedClipExporter = null;
 });
 
 app.on('activate', () => {

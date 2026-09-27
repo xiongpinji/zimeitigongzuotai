@@ -72,8 +72,10 @@ describe('product highlight controller (synthetic sidecar, no LLM call)', () => 
     const firstWindow = main.indexOf('createWindow();');
     expect(controller).toBeGreaterThan(bootstrap);
     expect(controller).toBeLessThan(firstWindow);
-    expect(main).toMatch(/productHighlightController\.stopForShutdown\(\)/);
-    expect(main.indexOf('productHighlights?.close();')).toBeGreaterThan(main.indexOf('productHighlightController.stopForShutdown()'));
+    expect(main).toMatch(/productHighlightController\?\.stopForShutdown\(\)/);
+    expect(main).toMatch(/reviewedClipExporter\?\.stopForShutdown\(\)/);
+    expect(main.indexOf('productHighlights?.close();')).toBeGreaterThan(main.indexOf('productHighlightController?.stopForShutdown()'));
+    expect(main.indexOf('productHighlights?.close();')).toBeGreaterThan(main.indexOf('reviewedClipExporter?.stopForShutdown()'));
   });
 
   it('serializes batch imports and aborts hashing before shutdown closes storage', async () => {

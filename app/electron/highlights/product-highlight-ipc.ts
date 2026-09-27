@@ -5,6 +5,8 @@ import type { HighlightArtifactBundle } from './highlight-batch-artifacts';
 import { HIGHLIGHT_BATCH_FAILURE_CODES, HighlightBatchQueueError, type HighlightBatchTaskV1 } from './highlight-batch-queue';
 import { AuthorizedRecordingImportError } from './authorized-recording-import';
 import { ProductHighlightController, ProductHighlightControllerError } from './product-highlight-controller';
+import type { ReviewedClipExporter } from './reviewed-clip-exporter';
+import { ReviewedClipExportError, type ReviewedClipErrorCode } from './reviewed-clip-receipts';
 
 export const HIGHLIGHT_V1_CHANNELS = {
   chooseRoot: 'highlight-v1:choose-root',
@@ -17,13 +19,18 @@ export const HIGHLIGHT_V1_CHANNELS = {
   cancel: 'highlight-v1:cancel',
   retry: 'highlight-v1:retry',
   run: 'highlight-v1:run',
+  exportReviewed: 'highlight-v1:export-reviewed',
+  listReviewed: 'highlight-v1:list-reviewed',
+  verifiedOutput: 'highlight-v1:verified-output',
+  cancelExport: 'highlight-v1:cancel-export',
 } as const;
 
 export type HighlightV1IpcErrorCode =
   | 'forbidden' | 'busy' | 'stopped' | 'invalid_request' | 'invalid_selection'
   | 'selection_required' | 'consent_required' | 'source_unavailable'
   | 'root_mismatch'
-  | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error';
+  | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error'
+  | ReviewedClipErrorCode;
 export type HighlightV1Result<T> = ({ ok: true } & T) | { ok: false; code: HighlightV1IpcErrorCode };
 
 export interface HighlightV1TaskDto {
@@ -53,6 +60,7 @@ type Handler = (event: unknown, input?: unknown) => unknown;
 export interface ProductHighlightIpcOptions {
   ipc: { handle(channel: string, handler: Handler): void };
   controller: ProductHighlightController;
+  exporter: ReviewedClipExporter;
   /** Only the current, trusted main window can invoke operations. */
   allowedSender(event: unknown): boolean;
   pickDirectory(title: string): Promise<DialogResult>;
@@ -60,6 +68,7 @@ export interface ProductHighlightIpcOptions {
 }
 
 const TASK_ID_RE = /^hbatch_[a-f0-9]{64}$/;
+const CLIP_ID_RE = /^hclip_[a-f0-9]{64}$/;
 const EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 const DISPLAY_UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g;
 const FAILURE_CODES = new Set<string>(HIGHLIGHT_BATCH_FAILURE_CODES);
@@ -103,6 +112,7 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 
 function errorCode(error: unknown): HighlightV1IpcErrorCode {
+  if (error instanceof ReviewedClipExportError) return error.code;
   if (error instanceof ProductHighlightControllerError) {
     return error.code === 'invalid_configuration' ? 'invalid_request' : error.code;
   }
@@ -117,7 +127,7 @@ function errorCode(error: unknown): HighlightV1IpcErrorCode {
 
 /** The selected paths remain in main-process memory; renderer receives only bounded display DTOs. */
 export function registerProductHighlightIpc(options: ProductHighlightIpcOptions): void {
-  const { ipc, controller } = options;
+  const { ipc, controller, exporter } = options;
   let mediaRoot: string | null = null;
   let selectedRecordings: string[] = [];
   let nodeExecutable: string | null = null;
@@ -262,4 +272,37 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     });
     return { ok: true, tasks: tasks.map(dto) };
   });
+
+  handle(HIGHLIGHT_V1_CHANNELS.exportReviewed, async (input) => {
+    if (!mediaRoot) return { ok: false, code: 'selection_required' };
+    if (!object(input)) return { ok: false, code: 'invalid_request' };
+    if (input.reviewConfirmed !== true) return { ok: false, code: 'review_required' };
+    const results = await exporter.exportBatch({
+      mediaRootDir: mediaRoot,
+      reviewConfirmed: true,
+      selections: input.selections,
+      concurrency: input.concurrency,
+    });
+    return { ok: true, results: results.map((result) => result.status === 'completed'
+      ? { status: result.status, id: result.id, taskId: result.taskId,
+        highlightId: result.highlightId, outputSha256: result.outputSha256,
+        outputDurationMs: result.outputDurationMs, reused: result.reused }
+      : result) };
+  });
+
+  handle(HIGHLIGHT_V1_CHANNELS.listReviewed, () => ({
+    ok: true, clips: exporter.list(), busy: exporter.hasActiveWork,
+  }));
+
+  handle(HIGHLIGHT_V1_CHANNELS.verifiedOutput, async (input) => {
+    if (!object(input) || typeof input.id !== 'string' || !CLIP_ID_RE.test(input.id)) {
+      return { ok: false, code: 'invalid_request' };
+    }
+    const { path, receipt } = await exporter.verifiedOutput(input.id);
+    return { ok: true, path, durationMs: receipt.outputDurationMs };
+  });
+
+  handle(HIGHLIGHT_V1_CHANNELS.cancelExport, () => ({
+    ok: true, cancelled: exporter.cancelActive(),
+  }));
 }

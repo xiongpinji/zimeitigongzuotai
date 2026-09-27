@@ -1289,7 +1289,10 @@ export default function App() {
                     <PublishWorkbench projectDir={currentProjectDir} />
                   </div>
                   <div style={{ display: page === 'highlights' ? 'contents' : 'none' }}>
-                    <HighlightWorkbench active={page === 'highlights'} />
+                    <HighlightWorkbench active={page === 'highlights'} onImportClip={(path, durationMs) => {
+                      addAsset(path, 'video', durationMs);
+                      setPage('editor');
+                    }} />
                   </div>
                 </>
               )}

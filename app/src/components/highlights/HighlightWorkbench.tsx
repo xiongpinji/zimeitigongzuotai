@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { HighlightArtifactBundle } from '../../../electron/highlights/highlight-batch-artifacts';
 import type { HighlightV1TaskDto, HighlightV1Result } from '../../../electron/highlights/product-highlight-ipc';
+import type { ReviewedClipReceipt } from '../../../electron/highlights/reviewed-clip-receipts';
 import styles from './HighlightWorkbench.module.css';
 
 const ERROR_TEXT: Record<string, string> = {
@@ -13,6 +14,19 @@ const ERROR_TEXT: Record<string, string> = {
   consent_required: '运行前请确认本地模型下载许可。',
   source_unavailable: '录屏源文件已变化或无法读取，请重新选择。',
   root_mismatch: '排队任务包含其他目录的录屏。请先选择原目录，或取消这些任务。',
+  review_required: '请先人工审核并确认所选片段。',
+  invalid_configuration: '本地 FFmpeg 或 ffprobe 未就绪。',
+  candidate_not_found: '高光候选不存在，请重新读取任务。',
+  source_hash_mismatch: '录屏内容已变化，请重新导入并分析。',
+  invalid_media: '视频无法读取或导出的切片无效。',
+  invalid_timecode: '切片时间超出录屏时长，或短于 0.5 秒。',
+  render_failed: '切片渲染失败，请检查 FFmpeg 与源视频。',
+  render_timeout: '切片渲染超时。',
+  cancelled: '切片导出已取消。',
+  output_conflict: '已有切片与收据不一致，已停止覆盖。',
+  output_missing: '切片文件不存在。',
+  receipt_corrupt: '切片收据损坏，已停止使用。',
+  receipt_write_failed: '切片收据写入失败。',
   task_not_found: '候选产物不存在或尚未完成。',
   invalid_transition: '当前任务状态不支持这个操作。',
   attempt_limit_reached: '已达到该任务的重试次数上限。',
@@ -31,7 +45,12 @@ function stateLabel(state: HighlightV1TaskDto['state']): string {
   }[state];
 }
 
-export function HighlightWorkbench({ active }: { active: boolean }) {
+type ClipSelectionState = { selected: boolean; startMs: number; endMs: number };
+
+export function HighlightWorkbench({ active, onImportClip }: {
+  active: boolean;
+  onImportClip?: (path: string, durationMs: number) => void;
+}) {
   const api = typeof window === 'undefined' ? undefined : window.highlightV1API;
   const [tasks, setTasks] = useState<HighlightV1TaskDto[]>([]);
   const [queueBusy, setQueueBusy] = useState(false);
@@ -50,7 +69,21 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
   const [llmModel, setLlmModel] = useState('');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [allowModelDownload, setAllowModelDownload] = useState(false);
-  const [artifact, setArtifact] = useState<HighlightArtifactBundle | null>(null);
+  const [artifacts, setArtifacts] = useState<HighlightArtifactBundle[]>([]);
+  const [artifactBusy, setArtifactBusy] = useState(false);
+  const [clipSelections, setClipSelections] = useState<Record<string, ClipSelectionState>>({});
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [reviewedClips, setReviewedClips] = useState<ReviewedClipReceipt[]>([]);
+
+  const refreshClips = useCallback(async () => {
+    if (!api) return;
+    try {
+      const result = await api.listReviewed();
+      if (result.ok) setReviewedClips(result.clips);
+      else setMessage(ERROR_TEXT[result.code] || '切片列表读取失败。');
+    } catch { setMessage('切片列表读取失败。'); }
+  }, [api]);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -66,9 +99,10 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
   useEffect(() => {
     if (!active || !api) return;
     void refresh();
+    void refreshClips();
     const timer = window.setInterval(() => void refresh(), 2_000);
     return () => window.clearInterval(timer);
-  }, [active, api, refresh]);
+  }, [active, api, refresh, refreshClips]);
 
   async function select<T>(operation: () => Promise<HighlightV1Result<T>>, onSuccess: (value: T) => void) {
     setActionBusy(true);
@@ -125,17 +159,98 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
 
   async function viewArtifact(id: string) {
     if (!api) return;
+    setArtifactBusy(true);
+    setArtifacts([]);
+    setReviewConfirmed(false);
     try {
       const result = await api.read(id);
-      if (result.ok) setArtifact(result.artifact);
+      if (result.ok) {
+        setArtifacts([result.artifact]);
+        setClipSelections(Object.fromEntries(result.artifact.highlights.map((item) => [item.id, {
+          selected: false, startMs: item.startMs, endMs: item.endMs,
+        }])));
+        setReviewConfirmed(false);
+      }
       else setMessage(ERROR_TEXT[result.code]);
     } catch { setMessage('候选读取失败。'); }
+    finally { setArtifactBusy(false); }
+  }
+
+  async function viewAllArtifacts() {
+    if (!api) return;
+    setArtifactBusy(true);
+    setArtifacts([]);
+    setReviewConfirmed(false);
+    setMessage('正在读取已完成录屏的候选。');
+    try {
+      const completed = tasks.filter((task) => task.state === 'completed').slice(0, 100);
+      const results = await Promise.allSettled(completed.map((task) => api.read(task.id)));
+      const loaded = results.flatMap((result) => result.status === 'fulfilled' && result.value.ok
+        ? [result.value.artifact] : []);
+      setArtifacts(loaded);
+      setClipSelections(Object.fromEntries(loaded.flatMap((bundle) => bundle.highlights.map((item) =>
+        [item.id, { selected: false, startMs: item.startMs, endMs: item.endMs }] as const))));
+      setReviewConfirmed(false);
+      setMessage(`已载入 ${loaded.length} 条录屏的候选；${results.length - loaded.length} 条读取失败。`);
+    } catch { setMessage('批量候选读取失败。'); }
+    finally { setArtifactBusy(false); }
+  }
+
+  function editSelection(id: string, change: Partial<ClipSelectionState>) {
+    setClipSelections((current) => ({ ...current, [id]: { ...current[id], ...change } }));
+    setReviewConfirmed(false);
+  }
+
+  async function exportReviewed() {
+    if (!api || !artifacts.length) return;
+    const selections = artifacts.flatMap((bundle) => bundle.highlights.flatMap((item) => {
+      const choice = clipSelections[item.id];
+      return choice?.selected ? [{ taskId: bundle.taskId, highlightId: item.id,
+        startMs: choice.startMs, endMs: choice.endMs }] : [];
+    }));
+    setExportBusy(true);
+    setMessage('正在生成所选切片；可留在当前工作台查看结果。');
+    try {
+      const result = await api.exportReviewed({ reviewConfirmed: true, selections, concurrency: 2 });
+      if (!result.ok) setMessage(ERROR_TEXT[result.code] || '切片导出失败。');
+      else {
+        const completed = result.results.filter((item) => item.status === 'completed').length;
+        const failed = result.results.filter((item) => item.status === 'failed').length;
+        const cancelled = result.results.filter((item) => item.status === 'cancelled').length;
+        setMessage(`本轮切片：完成 ${completed}，失败 ${failed}，取消 ${cancelled}。请人工检查成片。`);
+        await refreshClips();
+      }
+    } catch { setMessage('切片导出失败，请检查本地运行环境。'); }
+    finally { setExportBusy(false); setReviewConfirmed(false); }
+  }
+
+  async function importClip(id: string) {
+    if (!api || !onImportClip) return;
+    setMessage('');
+    try {
+      const result = await api.verifiedOutput(id);
+      if (!result.ok) setMessage(ERROR_TEXT[result.code] || '切片验证失败。');
+      else {
+        onImportClip(result.path, result.durationMs);
+        setMessage('已加入剪辑台素材，请继续人工剪辑和审片。');
+      }
+    } catch { setMessage('切片导入失败。'); }
   }
 
   const queued = tasks.some((task) => task.state === 'queued');
   const canRun = !!api && queued && !!rootLabel && !!nodeLabel && !!hotClipLabel &&
     !!llmBaseUrl.trim() && !!llmModel.trim() && allowModelDownload &&
     !queueBusy && !runInProgress && !actionBusy;
+  const reviewedCandidates = artifacts.flatMap((bundle) => bundle.highlights);
+  const selectedClips = reviewedCandidates.filter((item) => clipSelections[item.id]?.selected);
+  const validClips = selectedClips.length > 0 && selectedClips.every((item) => {
+    const choice = clipSelections[item.id];
+    return Number.isSafeInteger(choice.startMs) && Number.isSafeInteger(choice.endMs) &&
+      choice.startMs >= 0 && choice.endMs - choice.startMs >= 500 &&
+      choice.endMs - choice.startMs <= 30 * 60_000;
+  });
+  const canExport = !!api && !!rootLabel && validClips && selectedClips.length <= 100 && reviewConfirmed &&
+    !exportBusy && !actionBusy && !artifactBusy;
 
   return (
     <main className={styles.root}>
@@ -158,6 +273,7 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
           <div className={styles.row}>
             <button type="button" onClick={() => api && void select(api.chooseRoot, (result) => {
               setRootLabel(result.label); setSelectedNames([]);
+              setArtifacts([]); setClipSelections({}); setReviewConfirmed(false);
             })} disabled={!api || actionBusy}>选择录屏目录</button>
             <span>{rootLabel || '未选择目录'}</span>
           </div>
@@ -206,14 +322,18 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
 
         <section className={styles.card}>
           <div className={styles.sectionHeader}><span className={styles.step}>03</span><h2>任务与候选</h2>
-            <button type="button" onClick={() => void refresh()} disabled={!api}>刷新</button></div>
+            <button type="button" onClick={() => void refresh()} disabled={!api}>刷新</button>
+            <button type="button" onClick={() => void viewAllArtifacts()}
+              disabled={!api || artifactBusy || !tasks.some((task) => task.state === 'completed')}>
+              汇总已完成候选</button></div>
           {tasks.length === 0 ? <p>暂无任务。先选择并导入录屏。</p> : (
             <div className={styles.taskList}>
               {tasks.map((task) => (
                 <div className={styles.task} key={task.id}>
                   <div><strong>{task.name}</strong><small>{task.sourceSha256.slice(0, 12)} · {stateLabel(task.state)} · 候选 {task.candidateCount}</small></div>
                   <div className={styles.row}>
-                    {task.state === 'completed' && <button type="button" onClick={() => void viewArtifact(task.id)}>查看候选</button>}
+                    {task.state === 'completed' && <button type="button" onClick={() => void viewArtifact(task.id)}
+                      disabled={artifactBusy}>查看候选</button>}
                     {(task.state === 'queued' || task.state === 'running') &&
                       <button type="button" onClick={() => api && void taskAction(() => api.cancel(task.id))}>取消</button>}
                     {(task.state === 'failed' || task.state === 'interrupted') &&
@@ -225,15 +345,50 @@ export function HighlightWorkbench({ active }: { active: boolean }) {
           )}
         </section>
 
-        {artifact && <section className={styles.card}>
-          <div className={styles.sectionHeader}><h2>高光候选</h2><button type="button" onClick={() => setArtifact(null)}>关闭</button></div>
-          <p>候选仅供审核，尚未生成切片视频，也不会自动发布。</p>
-          {artifact.highlights.length === 0 ? <p>该录屏没有符合条件的高光候选。</p> :
-            artifact.highlights.map((highlight) => <div className={styles.candidate} key={highlight.id}>
-              <strong>{formatTime(highlight.startMs)} – {formatTime(highlight.endMs)}</strong>
-              <span>{highlight.topic || '未命名片段'} · 评分 {highlight.score ?? '—'}</span>
-            </div>)}
+        {artifacts.length > 0 && <section className={styles.card}>
+          <div className={styles.sectionHeader}><h2>高光候选</h2><button type="button" onClick={() => setArtifacts([])}>关闭</button></div>
+          <p>候选仅供审核。逐段复核并调整时间码后，才会在本地生成切片；不会自动发布。</p>
+          {reviewedCandidates.length === 0 ? <p>所选录屏没有符合条件的高光候选。</p> :
+            artifacts.flatMap((bundle) => bundle.highlights.map((highlight) => {
+              const index = reviewedCandidates.findIndex((item) => item.id === highlight.id);
+              const sourceName = tasks.find((task) => task.id === bundle.taskId)?.name ?? '录屏';
+              return <div className={styles.candidate} key={highlight.id}>
+              <label><input type="checkbox" aria-label={`选择高光片段 ${index + 1}`}
+                checked={clipSelections[highlight.id]?.selected ?? false}
+                onChange={(event) => editSelection(highlight.id, { selected: event.target.checked })} />
+                <strong>{formatTime(highlight.startMs)} – {formatTime(highlight.endMs)}</strong></label>
+              <span>{sourceName} · {highlight.topic || '未命名片段'} · 评分 {highlight.score ?? '—'}</span>
+              <label>开始毫秒<input aria-label={`片段 ${index + 1} 开始毫秒`} type="number" min="0" step="1"
+                value={clipSelections[highlight.id]?.startMs ?? highlight.startMs}
+                onChange={(event) => editSelection(highlight.id, { startMs: Number(event.target.value) })} /></label>
+              <label>结束毫秒<input aria-label={`片段 ${index + 1} 结束毫秒`} type="number" min="0" step="1"
+                value={clipSelections[highlight.id]?.endMs ?? highlight.endMs}
+                onChange={(event) => editSelection(highlight.id, { endMs: Number(event.target.value) })} /></label>
+            </div> }))}
+          {reviewedCandidates.length > 0 && <>
+            <label className={styles.consent}><input type="checkbox" aria-label="确认已人工审核所选片段"
+              checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} />
+              我已人工审核所选片段及时间边界</label>
+            <div className={styles.row}>
+              <button type="button" data-testid="export-reviewed" className={styles.primary}
+                disabled={!canExport} onClick={() => void exportReviewed()}>生成所选切片</button>
+              {exportBusy && <button type="button" onClick={() => api && void api.cancelExport()}>取消导出</button>}
+              <span>已选 {selectedClips.length} 段；单批最多 100 段，同时最多导出 2 段。</span>
+            </div>
+          </>}
         </section>}
+
+        <section className={styles.card}>
+          <div className={styles.sectionHeader}><span className={styles.step}>04</span><h2>已复核切片</h2>
+            <button type="button" onClick={() => void refreshClips()} disabled={!api}>刷新</button></div>
+          <p>仅显示本地导出收据。加入剪辑台前会再次校验 MP4 摘要。</p>
+          {reviewedClips.length === 0 ? <p>暂无已导出切片。</p> :
+            <div className={styles.taskList}>{reviewedClips.map((clip) => <div className={styles.task} key={clip.id}>
+              <div><strong>{formatTime(clip.startMs)} – {formatTime(clip.endMs)}</strong>
+                <small>候选 {clip.highlightId.slice(0, 16)} · 输出 {clip.outputSha256.slice(0, 12)}</small></div>
+              <button type="button" onClick={() => void importClip(clip.id)} disabled={!onImportClip}>加入剪辑台</button>
+            </div>)}</div>}
+        </section>
       </div>
     </main>
   );
