@@ -83,4 +83,15 @@ describe('getOrCreateSonarToken', () => {
     expect(acl.protected).toBe(true);
     expect(acl.allowedSids).toEqual([acl.selfSid]);
   });
+
+  it.skipIf(process.platform !== 'win32')('Windows ACL 工具不可用时不写入新 token', async () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      await expect(getOrCreateSonarToken(file)).rejects.toThrow('sonar_token_acl_failed');
+      expect(readFileSync(file, 'utf8')).toBe('');
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
