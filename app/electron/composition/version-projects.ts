@@ -67,6 +67,16 @@ function validId(value: unknown): value is string {
   return typeof value === 'string' && ID_PATTERN.test(value) && !DEVICE_NAME_PATTERN.test(value);
 }
 
+function validTimeline(value: unknown): value is TimelineData {
+  if (!value || typeof value !== 'object') return false;
+  const timeline = value as TimelineData;
+  return Number.isSafeInteger(timeline.width) && timeline.width > 0
+    && Number.isSafeInteger(timeline.height) && timeline.height > 0
+    && Number.isSafeInteger(timeline.fps) && timeline.fps > 0
+    && Array.isArray(timeline.tracks) && Array.isArray(timeline.overlays)
+    && timeline.podcast !== null && typeof timeline.podcast === 'object';
+}
+
 function stableJson(value: unknown): string {
   let serialized: string | undefined;
   try {
@@ -185,8 +195,7 @@ function validateVersions(input: CompositionVersionInput): void {
     if (!candidate || !candidate.plan || !validId(candidate.plan.id)
       || ids.has(candidate.plan.id) || !candidate.plan.editorial
       || !Array.isArray(candidate.plan.segments) || candidate.plan.segments.length === 0
-      || !candidate.timeline || !Array.isArray(candidate.timeline.overlays)
-      || candidate.timeline.overlays.length === 0) {
+      || !validTimeline(candidate.timeline) || candidate.timeline.overlays.length === 0) {
       fail('invalid_input', 'invalid or duplicate version');
     }
     ids.add(candidate.plan.id);
@@ -227,7 +236,7 @@ async function readVersionFromRoot(root: string, batchId: string, planId: string
   if (!manifest || manifest.schemaVersion !== 1 || manifest.batchId !== batchId
     || manifest.planId !== planId || !manifest.plan || manifest.plan.id !== planId
     || !manifest.sources || manifest.sources.planId !== planId
-    || !project || project.version !== 1 || !project.timeline
+    || !project || project.version !== 1 || !validTimeline(project.timeline)
     || manifest.planSha256 !== sha256(manifest.plan)
     || manifest.sourcesSha256 !== sha256(manifest.sources)
     || !SHA256_PATTERN.test(manifest.initialTimelineSha256)) {

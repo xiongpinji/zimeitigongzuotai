@@ -175,6 +175,16 @@ describe('R4 independent composition version projects', () => {
       .rejects.toMatchObject({ code: 'corrupt' });
   });
 
+  it('rejects an unreadable edited timeline instead of returning a broken Lingji project', async () => {
+    const records = await persistCompositionVersions({ projectDir, batchId: BATCH_ID, versions: threeVersions() });
+    const projectPath = path.join(records[0].projectDir, 'project.json');
+    const broken = JSON.parse(await fs.readFile(projectPath, 'utf8')) as { timeline: TimelineData };
+    broken.timeline.tracks = null as unknown as TimelineData['tracks'];
+    await fs.writeFile(projectPath, JSON.stringify(broken));
+    await expect(readCompositionVersion({ projectDir, batchId: BATCH_ID, planId: 'plan-1' }))
+      .rejects.toMatchObject({ code: 'corrupt' });
+  });
+
   it('rejects invalid IDs and source mismatches before writing a version', async () => {
     const versions = threeVersions();
     await expect(persistCompositionVersions({ projectDir, batchId: '../outside', versions }))
