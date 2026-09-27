@@ -145,12 +145,34 @@ async function main() {
     assert.deepEqual(finalAccounts, initial.slice(1));
     assert.deepEqual(fs.readdirSync(path.join(vaultDir, 'sessions')), []);
     await page.screenshot({ path: path.join(runDir, 'after-reopen.png') });
+
+    // Open a synthetic project to check the actual Publish workspace target list.
+    await page.getByRole('button', { name: '返回上一级' }).click();
+    await app.evaluate(({ ipcMain }, projectDir) => {
+      ipcMain.removeHandler('select-project-directory');
+      ipcMain.handle('select-project-directory', () => projectDir);
+    }, path.join(runDir, 'project'));
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('menu-action', {
+        type: 'command', action: 'new-project',
+      });
+    });
+    await page.getByRole('button', { name: '发布', exact: true }).click();
+    await page.getByText('暂无账号，请前往「设置 → 发布账号」添加账号')
+      .first().waitFor({ timeout: 15_000 });
+    await page.getByText('这里仍使用旧账号体系', { exact: false })
+      .first().waitFor({ timeout: 15_000 });
+    assert.deepEqual(await listAccounts(page), finalAccounts);
+    await page.getByText('暂无账号，请前往「设置 → 发布账号」添加账号')
+      .first().scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(runDir, 'publish-workspace-isolated.png') });
     assert.deepEqual(pageErrors, []);
     const result = {
       profile, platforms: platforms.map((platform) => platform.key),
       sameNameAccountIds: initial.map((account) => account.id),
       created: 8, persistedAfterRestart: 8, preciseDelete: true,
       persistedAfterSecondRestart: 7, legacyPublishAccountCount: 0,
+      newAccountsUnavailableInPublish: true,
       sessionFiles: 0, safeStorageSyntheticReopen: encryptedProbe ? 'passed' : 'unavailable',
       realLoginAttempted: false, publicationAttempted: false, pageErrors,
     };
