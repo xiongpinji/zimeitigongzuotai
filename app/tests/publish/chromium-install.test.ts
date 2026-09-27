@@ -19,7 +19,7 @@ import {
 
 describe('getChromiumRoot', () => {
   it('落在 userData/publish/chromium', () => {
-    expect(getChromiumRoot()).toBe('/tmp/userData-userData/publish/chromium');
+    expect(getChromiumRoot()).toBe(join('/tmp/userData-userData', 'publish', 'chromium'));
   });
 });
 

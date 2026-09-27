@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { join, sep } from 'node:path';
 import {
   buildPlatformKey,
   biliupBinaryName,
@@ -24,20 +25,21 @@ describe('configureBiliupRoot 注入安装根目录', () => {
   afterEach(() => configureBiliupRoot(null));
 
   it('注入后 resolveBiliupPath 默认从注入目录解析', () => {
-    configureBiliupRoot('/data/userData/publish');
+    const root = '/data/userData/publish';
+    configureBiliupRoot(root);
     const p = resolveBiliupPath();
-    expect(p.startsWith('/data/userData/publish/biliup/')).toBe(true);
+    expect(p.startsWith(`${join(root, 'biliup')}${sep}`)).toBe(true);
     expect(p.endsWith(biliupBinaryName())).toBe(true);
   });
 
   it('显式传入 resourcesRoot 优先于注入值', () => {
     configureBiliupRoot('/data/userData/publish');
-    expect(resolveBiliupPath('/custom').startsWith('/custom/biliup/')).toBe(true);
+    expect(resolveBiliupPath('/custom').startsWith(`${join('/custom', 'biliup')}${sep}`)).toBe(true);
   });
 
   it('清空注入后回退（不再用注入目录）', () => {
     configureBiliupRoot('/data/userData/publish');
     configureBiliupRoot(null);
-    expect(resolveBiliupPath().startsWith('/data/userData/publish/')).toBe(false);
+    expect(resolveBiliupPath().startsWith(`${join('/data/userData/publish')}${sep}`)).toBe(false);
   });
 });

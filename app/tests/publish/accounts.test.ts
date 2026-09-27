@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { AccountStore } from '../../electron/publish/accounts';
 
 function freshStore() {
@@ -17,7 +17,8 @@ describe('AccountStore', () => {
 
   it('storageState 路径为 accounts/<platform>_<account>.json', () => {
     const p = store.storageStatePath('douyin', '一叶知秋');
-    expect(p.endsWith('accounts/douyin_一叶知秋.json')).toBe(true);
+    expect(basename(dirname(p))).toBe('accounts');
+    expect(basename(p)).toBe('douyin_一叶知秋.json');
   });
 
   it('upsert 后 list 能读回，且 id 正确', () => {

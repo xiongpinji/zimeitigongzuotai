@@ -73,11 +73,11 @@ describe('listForeignArchPrunePaths', () => {
 
     expect(targets).toEqual(
       [
-        '@x/clipboard-darwin-x64',
-        '@x/clipboard-win32-x64-msvc',
-        'node-pty/prebuilds/darwin-x64',
-        'node-pty/prebuilds/win32-x64',
-        'pkg/node_modules/pi-tui/native/darwin/prebuilds/darwin-x64',
+        path.join('@x', 'clipboard-darwin-x64'),
+        path.join('@x', 'clipboard-win32-x64-msvc'),
+        path.join('node-pty', 'prebuilds', 'darwin-x64'),
+        path.join('node-pty', 'prebuilds', 'win32-x64'),
+        path.join('pkg', 'node_modules', 'pi-tui', 'native', 'darwin', 'prebuilds', 'darwin-x64'),
       ].sort(),
     );
   });
@@ -87,10 +87,10 @@ describe('listForeignArchPrunePaths', () => {
       path.relative(nodeModulesDir, p),
     );
 
-    expect(targets).not.toContain('@x/clipboard-darwin-arm64');
-    expect(targets).not.toContain('@x/clipboard-darwin-universal');
+    expect(targets).not.toContain(path.join('@x', 'clipboard-darwin-arm64'));
+    expect(targets).not.toContain(path.join('@x', 'clipboard-darwin-universal'));
     expect(targets).not.toContain('plain-pkg');
-    expect(targets).not.toContain('@ffprobe-installer/darwin-arm64');
+    expect(targets).not.toContain(path.join('@ffprobe-installer', 'darwin-arm64'));
     expect(targets).not.toContain(path.join('node-pty', 'prebuilds', 'darwin-arm64'));
   });
 });

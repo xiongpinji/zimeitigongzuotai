@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { FileEntry } from '../src/lib/electron-api';
 
+// 首次动态导入脚本工作台在 Windows 全量套件的模块转换中可能超过 30 秒。
+vi.setConfig({ testTimeout: 60_000 });
+
 function createStorageMock() {
   const storage = new Map<string, string>();
 

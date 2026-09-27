@@ -9,6 +9,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ResolvedAgentSkill } from '../electron/acp/types';
 
+// 首次动态导入 Agent 设置页需加载完整 UI 依赖图。
+vi.setConfig({ testTimeout: 60_000 });
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {

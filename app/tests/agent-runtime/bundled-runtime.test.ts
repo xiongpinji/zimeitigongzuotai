@@ -1,21 +1,24 @@
 import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
 import { resolveBundledEntry, buildBundledNodeSpawn } from '../../electron/agent-runtime/bundled-runtime';
 
 describe('resolveBundledEntry', () => {
   it('prefers app.asar.unpacked when appPath is inside app.asar', () => {
-    const existing = '/App/Contents/Resources/app.asar.unpacked/resources/pi/dist/cli.js';
+    const resourcesPath = join(process.cwd(), 'fixture', 'Contents', 'Resources');
+    const existing = join(resourcesPath, 'app.asar.unpacked', 'resources', 'pi', 'dist', 'cli.js');
     const hit = resolveBundledEntry('resources/pi/dist/cli.js', {
-      appPath: '/App/Contents/Resources/app.asar',
-      resourcesPath: '/App/Contents/Resources',
-      cwd: '/cwd',
+      appPath: join(resourcesPath, 'app.asar'),
+      resourcesPath,
+      cwd: join(process.cwd(), 'fixture'),
       existsSync: (p) => p === existing,
     });
     expect(hit).toBe(existing);
   });
   it('falls back to appPath in dev (no asar)', () => {
-    const existing = '/repo/resources/pi/dist/cli.js';
+    const appPath = join(process.cwd(), 'repo-fixture');
+    const existing = join(appPath, 'resources', 'pi', 'dist', 'cli.js');
     const hit = resolveBundledEntry('resources/pi/dist/cli.js', {
-      appPath: '/repo', resourcesPath: '', cwd: '/repo',
+      appPath, resourcesPath: '', cwd: appPath,
       existsSync: (p) => p === existing,
     });
     expect(hit).toBe(existing);

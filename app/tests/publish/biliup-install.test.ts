@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { join } from 'node:path';
 
 // biliup-install.ts 顶层 import { app } from 'electron'；node 环境下需 mock。
 vi.mock('electron', () => ({
@@ -76,7 +77,7 @@ describe('代理优先 URL 生成', () => {
 
 describe('getBiliupDestRoot', () => {
   it('落在 userData/publish 下', () => {
-    expect(getBiliupDestRoot()).toBe('/tmp/userData-userData/publish');
+    expect(getBiliupDestRoot()).toBe(join('/tmp/userData-userData', 'publish'));
   });
 });
 

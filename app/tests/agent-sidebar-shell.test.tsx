@@ -10,6 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 
+// 首次动态导入 Agent 侧栏需加载完整 UI 依赖图。
+vi.setConfig({ testTimeout: 60_000 });
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('../src/hooks/use-conversation-list', () => ({

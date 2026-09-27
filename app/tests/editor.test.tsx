@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+// 首次动态导入编辑器在 Windows 全量套件的模块转换中可能超过 30 秒。
+vi.setConfig({ testTimeout: 60_000 });
+
 vi.mock('../src/hooks/useViewportSize', () => ({
   useViewportSize: () => ({ width: 1440, height: 900 }),
 }));

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { registerPipelineMcpTools } from '../electron/pipeline/tools/register';
 import { setActiveProjectPath } from '../electron/pipeline/context';
 
@@ -21,11 +23,12 @@ function build(): FakeMcpServer {
 
 describe('lingji_get_active_project', () => {
   it('returns the active project path set via setActiveProjectPath', async () => {
-    setActiveProjectPath('/tmp/some/project');
+    const projectPath = join(tmpdir(), 'some', 'project');
+    setActiveProjectPath(projectPath);
     const handler = build().tools.get('lingji_get_active_project')!.handler;
     const result = (await handler({})) as { content: { text: string }[] };
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.projectPath).toBe('/tmp/some/project');
+    expect(parsed.projectPath).toBe(projectPath);
   });
 
   it('returns null when no active project', async () => {
