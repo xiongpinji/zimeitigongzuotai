@@ -70,6 +70,27 @@ async function waitForBackground() {
   throw new Error('cover did not persist as timeline background');
 }
 
+async function waitForEditedCover() {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(projectFile)) {
+      try {
+        const project = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+        const edited = project.aiAnalysis?.coverCandidates?.find((candidate) =>
+          candidate.editedFrom && candidate.imageUrl !== coverPath);
+        if (edited?.edits?.textOverlays?.some((text) => text.text === '标题')
+          && fs.existsSync(edited.imageUrl) && fs.statSync(edited.imageUrl).size > 0) {
+          return edited;
+        }
+      } catch {
+        // The app may be writing this isolated project file; retry.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error('edited cover did not persist');
+}
+
 async function main() {
   let app;
   let page;
@@ -91,6 +112,16 @@ async function main() {
     await card.click();
     await page.getByRole('button', { name: '设为整期背景' }).click();
     await waitForBackground();
+    await page.locator('[data-ai-cover-grid] button[aria-label="编辑此封面"]').first().click();
+    const editor = page.getByRole('dialog').filter({ hasText: '编辑封面' });
+    await editor.waitFor({ timeout: 15_000 });
+    await editor.getByRole('button', { name: '文字', exact: true }).click();
+    await editor.getByRole('button', { name: '另存为新候选' }).click();
+    await editor.waitFor({ state: 'hidden', timeout: 30_000 });
+    const editedCover = await waitForEditedCover();
+    await page.waitForFunction(() =>
+      document.querySelectorAll('[data-ai-cover-grid] [data-draggable="true"]').length === 2,
+    null, { timeout: 15_000 });
     await page.screenshot({ path: path.join(runDir, 'before-reopen.png') });
     await app.close();
     app = undefined;
@@ -100,10 +131,19 @@ async function main() {
     await page.waitForFunction(() => document.body.textContent?.includes('project'), null, { timeout: 30_000 });
     await openCoverPanel(page);
     await waitForBackground();
+    await page.waitForFunction(() =>
+      document.querySelectorAll('[data-ai-cover-grid] [data-draggable="true"]').length === 2,
+    null, { timeout: 15_000 });
+    const reopenedEditedCover = await waitForEditedCover();
+    if (reopenedEditedCover.imageUrl !== editedCover.imageUrl) {
+      throw new Error('edited cover path changed after reopening');
+    }
     await page.screenshot({ path: path.join(runDir, 'after-reopen.png') });
     if (pageErrors.length > 0) throw new Error(`renderer errors: ${pageErrors.join('; ')}`);
     fs.writeFileSync(path.join(runDir, 'result.json'), JSON.stringify({
-      projectDir, coverPath, backgroundPersisted: true, reopened: true, pageErrors,
+      projectDir, coverPath, editedCoverPath: editedCover.imageUrl,
+      backgroundPersisted: true, editedCoverPersisted: true,
+      editedTextPersisted: true, reopened: true, pageErrors,
     }, null, 2));
     process.stdout.write(`${runDir}\n`);
   } catch (error) {
