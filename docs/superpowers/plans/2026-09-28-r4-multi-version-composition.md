@@ -43,10 +43,11 @@
 
 **文件：** 创建 `app/electron/composition/source-resolver.ts`、`app/tests/composition-source-resolver.test.ts`。
 
-- [ ] 写失败测试：高光必须有人工审核收据，源绝对时间码可映射到切片内相对时间码；收据哈希/视频字节不一致、素材授权撤销/过期、B-roll 类型错误或时间码超界均阻断；渲染前再验证一次。
-- [ ] 运行聚焦测试看红灯。
-- [ ] 通过 `ProductHighlightController`、`ReviewedClipExporter.verifiedOutput`、`LocalAssetLibrary.verifiedForUsage` 取可信路径和权限，不接受 renderer 提供的任意路径。保留录屏原哈希、审核收据、素材授权证据和目标使用上下文的引用。
-- [ ] 聚焦测试与类型检查通过后提交。
+- [x] 写失败测试：高光必须有人工审核收据，源绝对时间码可映射到切片内相对时间码；收据哈希/视频字节不一致、素材授权撤销/过期、B-roll 类型错误或时间码超界均阻断；再次调用时重新验证。
+- [x] 运行聚焦测试看红灯，覆盖异步任务状态、重复顺序、非法平台、篡改高光范围和回填过期授权时间。
+- [x] 通过 `ProductHighlightController`、`ReviewedClipExporter.verifiedOutput`、`LocalAssetLibrary.verifiedForUsage` 取可信路径和权限，不接受 renderer 提供的任意路径。保留录屏原哈希、审核收据、素材授权证据和目标使用上下文的引用。
+- [x] 聚焦测试、全量离线回归、类型检查和源码构建通过后按精确文件提交。证据见 `docs/validation/r4-composition-source-resolver-2026-09-28.md`。
+- [ ] 任务 5 的真实渲染调度必须在启动每版渲染前再次调用解析器；当前仅验证了重复调用的阻断行为。
 
 ## 任务 4：可编辑时间线和独立版本工程
 
