@@ -137,6 +137,7 @@ async function main() {
     if (!previewFrame || previewFrame.width < 200 || previewFrame.height < 100) {
       throw new Error(`preview stage remains too small: ${JSON.stringify(previewFrame)}`);
     }
+    const previewSamples = [];
     for (const [timeMs, label] of [[1400, '1.4s'], [3000, '3s']]) {
       await progress.click({ position: { x: progressBox.width * (timeMs / endMs), y: progressBox.height / 2 } });
       await page.waitForFunction((target) => {
@@ -145,6 +146,16 @@ async function main() {
       }, timeMs, { timeout: 15_000 });
       await page.mouse.move(10, 10);
       await page.waitForTimeout(500);
+      const sample = await page.evaluate(() => {
+        const actualMs = Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow'));
+        const videos = Array.from(document.querySelector('[class*="stageFrame"]')?.querySelectorAll('video') ?? [])
+          .map((video) => ({ src: video.currentSrc, currentTime: video.currentTime, readyState: video.readyState }));
+        return { actualMs, videos };
+      });
+      if (!Number.isFinite(sample.actualMs) || sample.videos.length === 0) {
+        throw new Error(`preview did not expose a video frame at ${timeMs}ms`);
+      }
+      previewSamples.push({ label, requestedMs: timeMs, ...sample, frameIndex: Math.round((sample.actualMs / 1000) * (reopened.timeline.fps ?? 30)) });
       await stageFrame.screenshot({ path: path.join(runDir, `preview-${label}.png`) });
     }
     stage('preview frames captured');
@@ -170,9 +181,9 @@ async function main() {
     ], { encoding: 'utf8', timeout: 20_000 });
     if (probe.status !== 0) throw new Error(`ffprobe failed: ${probe.stderr}`);
     const exportInfo = JSON.parse(probe.stdout);
-    for (const [second, label] of [[1.4, '1.4s'], [3, '3s']]) {
+    for (const { frameIndex, label } of previewSamples) {
       const frame = spawnSync(ffmpeg, [
-        '-v', 'error', '-y', '-ss', String(second), '-i', outputPath,
+        '-v', 'error', '-y', '-i', outputPath, '-vf', `select=eq(n\\,${frameIndex})`, '-vsync', '0',
         '-frames:v', '1', path.join(runDir, `export-${label}.png`),
       ], { encoding: 'utf8', timeout: 20_000 });
       if (frame.status !== 0) throw new Error(`export frame extraction failed: ${frame.stderr}`);
@@ -187,6 +198,7 @@ async function main() {
       visualTracks: reopened.timeline.tracks.filter((track) => track.kind === 'visual').length,
       overlays: reopened.timeline.overlays.length,
       previewFrame: { width: previewFrame.width, height: previewFrame.height },
+      previewSamples,
       outputPath,
       exportInfo,
       pageErrors,

@@ -1,0 +1,110 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+// Run after smoke-editor-multitrack-win.cjs with its isolated runDir.
+// This is a strict acceptance gate: a nonzero exit means preview and export differ.
+if (process.platform !== 'win32') throw new Error('Windows is required');
+const runDir = path.resolve(process.argv[2] ?? '');
+const projectFile = path.join(runDir, 'project', 'project.json');
+const outputPath = path.join(runDir, 'project', 'project.mp4');
+if (!fs.existsSync(projectFile) || !fs.existsSync(outputPath)) {
+  throw new Error('Pass a completed isolated R2 multitrack smoke runDir');
+}
+
+const appRoot = path.resolve(__dirname, '..');
+const { _electron } = require(path.join(appRoot, 'node_modules', 'playwright'));
+const ffmpeg = require(path.join(appRoot, 'node_modules', '@ffmpeg-installer', 'ffmpeg')).path;
+const project = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+const fps = project.timeline.fps ?? 30;
+const endMs = Math.max(...project.timeline.overlays.map((item) => item.startMs + item.durationMs));
+const targets = [1400, 1433, 3000];
+const threshold = 0.92;
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+
+function runFfmpeg(args, label) {
+  const result = spawnSync(ffmpeg, args, { encoding: 'utf8', timeout: 30_000 });
+  if (result.status !== 0) throw new Error(`${label}: ${result.stderr || result.stdout}`);
+  return `${result.stdout}\n${result.stderr}`;
+}
+
+async function main() {
+  const app = await _electron.launch({
+    executablePath: path.join(appRoot, 'node_modules', 'electron', 'dist', 'electron.exe'),
+    args: [appRoot, `--user-data-dir=${path.join(runDir, 'profile')}`, '--disable-gpu', '--force-color-profile=srgb'],
+    env,
+    timeout: 60_000,
+  });
+  const samples = [];
+  try {
+    const page = await app.firstWindow({ timeout: 60_000 });
+    await page.waitForFunction(() => document.body.textContent?.includes('project'), null, { timeout: 30_000 });
+    await page.getByRole('button', { name: '视频编辑器' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-overlay-block]').length === 3, null, { timeout: 30_000 });
+    const progress = page.getByRole('slider', { name: '播放进度' });
+    const progressBox = await progress.boundingBox();
+    if (!progressBox) throw new Error('Progress slider is missing');
+    for (const requestedMs of targets) {
+      await progress.click({ position: { x: progressBox.width * (requestedMs / endMs), y: progressBox.height / 2 } });
+      await page.waitForFunction((target) => {
+        const actual = Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow'));
+        return Math.abs(actual - target) < 200;
+      }, requestedMs, { timeout: 15_000 });
+      await page.mouse.move(10, 10);
+      await page.waitForTimeout(600);
+      const measured = await page.evaluate(() => {
+        const stage = document.querySelector('[class*="stageFrame"]');
+        const video = Array.from(stage?.querySelectorAll('video') ?? []).at(-1);
+        if (!stage || !video) return null;
+        const stageRect = stage.getBoundingClientRect();
+        const videoRect = video.getBoundingClientRect();
+        const dpr = window.devicePixelRatio;
+        return {
+          actualMs: Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow')),
+          videoTime: video.currentTime,
+          videoReadyState: video.readyState,
+          videoSrc: video.currentSrc,
+          crop: {
+            x: Math.round((videoRect.left - stageRect.left) * dpr),
+            y: Math.round((videoRect.top - stageRect.top) * dpr),
+            width: Math.round(videoRect.width * dpr),
+            height: Math.round(videoRect.height * dpr),
+          },
+        };
+      });
+      if (!measured || measured.videoReadyState < 2) {
+        throw new Error(`Video is not decoded at ${requestedMs}ms`);
+      }
+      const frameIndex = Math.round((measured.actualMs / 1000) * fps);
+      const previewPath = path.join(runDir, `parity-preview-${frameIndex}.png`);
+      await page.locator('[class*="stageFrame"]').first().screenshot({ path: previewPath });
+      samples.push({ requestedMs, frameIndex, previewPath, ...measured });
+    }
+  } finally {
+    await app.close();
+  }
+
+  for (const sample of samples) {
+    const exportPath = path.join(runDir, `parity-export-${sample.frameIndex}.png`);
+    runFfmpeg(['-v', 'error', '-y', '-i', outputPath, '-vf', `select=eq(n\\,${sample.frameIndex})`, '-vsync', '0', '-frames:v', '1', exportPath], `extract frame ${sample.frameIndex}`);
+    const { x, y, width, height } = sample.crop;
+    const graph = `[0:v]crop=${width}:${height}:${x}:${y},format=yuv444p[p];[1:v]scale=${width}:${height}:flags=bicubic,format=yuv444p[e];[p][e]ssim`;
+    const log = runFfmpeg(['-hide_banner', '-v', 'info', '-i', sample.previewPath, '-i', exportPath, '-filter_complex', graph, '-frames:v', '1', '-f', 'null', 'NUL'], `compare frame ${sample.frameIndex}`);
+    const match = log.match(/SSIM Y:[^\n]*All:([0-9.]+)/);
+    if (!match) throw new Error(`SSIM result missing for frame ${sample.frameIndex}`);
+    sample.exportPath = exportPath;
+    sample.ssim = Number(match[1]);
+    sample.passed = sample.ssim >= threshold;
+  }
+
+  const report = { runDir, fps, threshold, flags: ['--disable-gpu', '--force-color-profile=srgb'], samples, passed: samples.every((sample) => sample.passed) };
+  fs.writeFileSync(path.join(runDir, 'parity-result.json'), JSON.stringify(report, null, 2));
+  process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  if (!report.passed) process.exitCode = 1;
+}
+
+main().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);
+  process.exitCode = 1;
+});
