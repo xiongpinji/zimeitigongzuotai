@@ -11,6 +11,10 @@ const { _electron } = require(path.join(appRoot, 'node_modules', 'playwright'));
 const ffmpeg = require(path.join(appRoot, 'node_modules', '@ffmpeg-installer', 'ffmpeg')).path;
 const ffprobe = require(path.join(appRoot, 'node_modules', '@ffprobe-installer', 'ffprobe')).path;
 const validationDir = path.join(repoRoot, 'data', 'runtime', 'validation');
+const sourceFps = Number(process.env.LINGJI_R2_SOURCE_FPS ?? '15');
+if (!Number.isInteger(sourceFps) || sourceFps < 1 || sourceFps > 120) {
+  throw new Error('LINGJI_R2_SOURCE_FPS must be an integer from 1 to 120');
+}
 const runDir = path.join(validationDir, `r2-multitrack-${Date.now()}`);
 const projectDir = path.join(runDir, 'project');
 const profile = path.join(runDir, 'profile');
@@ -49,8 +53,8 @@ async function waitForClipCount(page, count) {
 }
 
 async function main() {
-  generate(sourceA, 'testsrc2=size=640x360:rate=15');
-  generate(sourceB, 'color=c=blue:size=640x360:rate=15');
+  generate(sourceA, `testsrc2=size=640x360:rate=${sourceFps}`);
+  generate(sourceB, `color=c=blue:size=640x360:rate=${sourceFps}`);
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   let app;
@@ -192,6 +196,7 @@ async function main() {
 
     const report = {
       runDir,
+      sourceFps,
       sourceA,
       sourceB,
       splitPieces: saved.timeline.overlays.filter((item) => item.assetPath === sourceA).length,

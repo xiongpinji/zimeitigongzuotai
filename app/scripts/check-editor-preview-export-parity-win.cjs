@@ -42,6 +42,32 @@ async function main() {
     await page.waitForFunction(() => document.body.textContent?.includes('project'), null, { timeout: 30_000 });
     await page.getByRole('button', { name: '视频编辑器' }).click();
     await page.waitForFunction(() => document.querySelectorAll('[data-overlay-block]').length === 3, null, { timeout: 30_000 });
+    await page.evaluate(() => {
+      const stage = document.querySelector('[class*="stageFrame"]');
+      if (!stage) return;
+      const seen = new WeakSet();
+      const attach = () => {
+        for (const video of stage.querySelectorAll('video')) {
+          if (seen.has(video)) continue;
+          seen.add(video);
+          video.addEventListener('seeked', () => {
+            video.__r2LastSeeked = { currentTime: video.currentTime, at: performance.now() };
+          });
+          if (typeof video.requestVideoFrameCallback !== 'function') continue;
+          const observeFrame = (_now, metadata) => {
+            video.__r2LastPresented = {
+              mediaTime: metadata.mediaTime,
+              presentedFrames: metadata.presentedFrames,
+              at: performance.now(),
+            };
+            video.requestVideoFrameCallback(observeFrame);
+          };
+          video.requestVideoFrameCallback(observeFrame);
+        }
+      };
+      new MutationObserver(attach).observe(stage, { childList: true, subtree: true });
+      attach();
+    });
     const progress = page.getByRole('slider', { name: '播放进度' });
     const progressBox = await progress.boundingBox();
     if (!progressBox) throw new Error('Progress slider is missing');
@@ -65,6 +91,8 @@ async function main() {
           videoTime: video.currentTime,
           videoReadyState: video.readyState,
           videoSrc: video.currentSrc,
+          lastPresented: video.__r2LastPresented ?? null,
+          lastSeeked: video.__r2LastSeeked ?? null,
           crop: {
             x: Math.round((videoRect.left - stageRect.left) * dpr),
             y: Math.round((videoRect.top - stageRect.top) * dpr),
