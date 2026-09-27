@@ -4,7 +4,7 @@
 
 # Why
 
-主库 `8289ac54a5048ee1b303a85d37670a0910b3e1cf` 的严格 UI 测试在 15 fps 源第 42/43 帧、30 fps 源第 43 帧 SSIM <0.92。`requestVideoFrameCallback().mediaTime` 证实原生 `<video>` 实际呈现的帧不同于导出 `OffthreadVideo` 的帧。`app/scripts/probe-r2-renderstill-win.cjs` 已在同一合成工程验证 `renderStill()` 与导出帧 SSIM 0.984–1.0、复用浏览器单帧约 0.55–0.72 秒。选定设计见 `docs/superpowers/specs/2026-09-28-r2-exact-paused-preview-design.md`。
+主库 `8289ac54a5048ee1b303a85d37670a0910b3e1cf` 的严格 UI 测试在 15 fps 源第 42/43 帧、30 fps 源第 43 帧 SSIM <0.92。`requestVideoFrameCallback().mediaTime` 证实原生 `<video>` 实际呈现的帧不同于导出 `OffthreadVideo` 的帧。`app/scripts/probe-r2-renderstill-win.cjs` 已在同一合成工程验证 `renderStill()` 与导出帧 SSIM 0.984–1.0、复用浏览器单帧约 0.55–0.72 秒。随后补充的 VFR、字幕和[9:16 隔离工程](../validation/r2-portrait-canvas-probe-2026-09-28.md)也呈现“产品原生预览未过、独立静帧探针通过”；选定设计见 `docs/superpowers/specs/2026-09-28-r2-exact-paused-preview-design.md`。
 
 # Scope
 
@@ -40,11 +40,12 @@
 - 对同一工程重复请求帧不重新 bundle/启动浏览器；工程编辑/切换/素材变化使旧结果失效，关闭会话清理资源。
 - 主进程拒绝其他 `webContents` 使用会话、非法帧和已释放会话；缺失素材/卡片编译失败不静默当作成功。
 - 15/30 fps 合成工程的真实桌面 UI 第 42、43、90、返回 42 帧 SSIM 均 ≥0.92；连续拖动与保存重开无页面异常。若当前 worktree 无测试运行依赖，保留可由 Codex 运行的严格测试脚本，不虚报此项通过。
+- 对已存在的 9:16 工程、VFR 素材和 SRT 叠层分别复测同一严格 UI 门槛；9:16 工程可通过隔离文件准备，但不算剪辑台画幅切换功能验收。
 - 现有 `renderVideoHeadless`、播放器播放和导出参数保持原行为；相关 Vitest、类型检查与源码构建通过或明确记录缺依赖。
 
 # Validation
 
-在有现成依赖的环境：`cd app; npx vitest run tests/preview-still.test.ts tests/preview-panel.test.tsx tests/remotion-render.test.ts tests/render-video-headless.test.ts --reporter=dot`，然后 `npx tsc --noEmit`、`npx electron-vite build`。Windows UI：先运行 `node app/scripts/smoke-editor-multitrack-win.cjs` 生成隔离工程，再运行 `node app/scripts/check-editor-preview-export-parity-win.cjs <runDir>`；用 `LINGJI_R2_SOURCE_FPS=15` 和 `30` 各做一次。无依赖时跑 `node --check app/scripts/check-editor-preview-export-parity-win.cjs` 与 `git diff --check` 并记录跳过。不要运行 `electron-builder`、真实平台连接或在线模型调用。Codex 会独立运行全量/聚焦检查并审阅输出。
+在有现成依赖的环境：`cd app; npx vitest run tests/preview-still.test.ts tests/preview-panel.test.tsx tests/remotion-render.test.ts tests/render-video-headless.test.ts --reporter=dot`，然后 `npx tsc --noEmit`、`npx electron-vite build`。Windows UI：先运行 `node app/scripts/smoke-editor-multitrack-win.cjs` 生成隔离工程，再运行 `node app/scripts/check-editor-preview-export-parity-win.cjs <runDir>`；用 `LINGJI_R2_SOURCE_FPS=15` 和 `30` 各做一次，并以 `LINGJI_R2_CANVAS_KIND=portrait` 复测竖屏。VFR 用 `LINGJI_R2_SOURCE_KIND=vfr` 且源帧率 30；字幕用既有隔离 SRT 工程。无依赖时跑 `node --check app/scripts/check-editor-preview-export-parity-win.cjs` 与 `git diff --check` 并记录跳过。不要运行 `electron-builder`、真实平台连接或在线模型调用。Codex 会独立运行全量/聚焦检查并审阅输出。
 
 # Final report
 
