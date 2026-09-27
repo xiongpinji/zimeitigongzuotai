@@ -83,6 +83,7 @@ import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
 import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
 import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from './highlights/product-highlight-controller';
+import { registerProductHighlightIpc } from './highlights/product-highlight-ipc';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
@@ -2855,6 +2856,20 @@ app.whenReady().then(async () => {
     productHighlightController = new ProductHighlightController({
       runtime: productHighlights,
       userDataPath: app.getPath('userData'),
+    });
+    registerProductHighlightIpc({
+      ipc: ipcMain,
+      controller: productHighlightController,
+      allowedSender: (event) =>
+        !!mainWindow && !mainWindow.isDestroyed() &&
+        (event as { sender?: unknown }).sender === mainWindow.webContents &&
+        (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
+      pickDirectory: (title) => dialog.showOpenDialog({
+        title, properties: ['openDirectory'],
+      }),
+      pickFiles: (title, defaultPath) => dialog.showOpenDialog({
+        title, ...(defaultPath ? { defaultPath } : {}), properties: ['openFile', 'multiSelections'],
+      }),
     });
   } catch (err) {
     writeAppLog(

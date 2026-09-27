@@ -5,6 +5,7 @@ import type {
   AccountV2LoginInput,
   AccountV2Platform,
   AccountV2QrcodeEvent,
+  HighlightV1API,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -833,3 +834,17 @@ contextBridge.exposeInMainWorld('accountV2API', {
     return () => ipcRenderer.removeListener('account-v2:qrcode', handler);
   },
 } satisfies AccountV2API);
+
+// 高光源文件、Node 和 HotClip 路径只由主进程系统对话框接收；此桥不接受路径参数。
+contextBridge.exposeInMainWorld('highlightV1API', {
+  chooseRoot: () => ipcRenderer.invoke('highlight-v1:choose-root'),
+  chooseRecordings: () => ipcRenderer.invoke('highlight-v1:choose-recordings'),
+  chooseNode: () => ipcRenderer.invoke('highlight-v1:choose-node'),
+  chooseHotClip: () => ipcRenderer.invoke('highlight-v1:choose-hotclip'),
+  importRecordings: (input) => ipcRenderer.invoke('highlight-v1:import', input),
+  list: () => ipcRenderer.invoke('highlight-v1:list'),
+  read: (id) => ipcRenderer.invoke('highlight-v1:read', { id }),
+  cancel: (id) => ipcRenderer.invoke('highlight-v1:cancel', { id }),
+  retry: (id, maxAttempts) => ipcRenderer.invoke('highlight-v1:retry', { id, maxAttempts }),
+  run: (input) => ipcRenderer.invoke('highlight-v1:run', input),
+} satisfies HighlightV1API);

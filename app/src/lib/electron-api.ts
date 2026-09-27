@@ -43,8 +43,14 @@ import type {
   AccountV2QrcodeEvent,
 } from '../../electron/publish/accounts-v2-ipc';
 import type { LegacyMigrationPreviewResult } from '../../electron/publish/legacy-migration-preview';
+import type {
+  HighlightV1Result,
+  HighlightV1RunInput,
+  HighlightV1TaskDto,
+} from '../../electron/highlights/product-highlight-ipc';
+import type { HighlightArtifactBundle } from '../../electron/highlights/highlight-batch-artifacts';
 
-export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish';
+export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights';
 
 export interface FileEntry {
   name: string;
@@ -824,9 +830,24 @@ export interface AccountV2API {
   onQrcode(callback: (event: AccountV2QrcodeEvent) => void): () => void;
 }
 
+/** 高光任务桥仅返回展示 DTO；系统对话框选中的磁盘路径留在主进程。 */
+export interface HighlightV1API {
+  chooseRoot(): Promise<HighlightV1Result<{ label: string }>>;
+  chooseRecordings(): Promise<HighlightV1Result<{ names: string[] }>>;
+  chooseNode(): Promise<HighlightV1Result<{ label: string }>>;
+  chooseHotClip(): Promise<HighlightV1Result<{ label: string }>>;
+  importRecordings(input: { maxClips: number | null }): Promise<HighlightV1Result<{ tasks: HighlightV1TaskDto[] }>>;
+  list(): Promise<HighlightV1Result<{ busy: boolean; tasks: HighlightV1TaskDto[] }>>;
+  read(id: string): Promise<HighlightV1Result<{ artifact: HighlightArtifactBundle }>>;
+  cancel(id: string): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
+  retry(id: string, maxAttempts: number): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
+  run(input: HighlightV1RunInput): Promise<HighlightV1Result<{ tasks: HighlightV1TaskDto[] }>>;
+}
+
 declare global {
   interface Window {
     accountV2API: AccountV2API;
+    highlightV1API: HighlightV1API;
   }
 }
 

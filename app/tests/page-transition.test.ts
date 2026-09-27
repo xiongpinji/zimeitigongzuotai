@@ -35,7 +35,7 @@ describe('resolvePageTransition', () => {
   });
 
   it('keeps a stable contentKey for switches inside the workspace (no exit/remount)', () => {
-    // 写稿/编辑器/发布三页同属一棵常驻子树，用 CSS display 切换显隐。
+    // 写稿/编辑器/高光/发布四页同属一棵常驻子树，用 CSS display 切换显隐。
     // contentKey 必须稳定，否则 AnimatePresence mode="wait" 会触发 exit→remount，
     // 在 framer-motion v12 时序竞态下卡成空白。
     const editorToWorkbench = resolvePageTransition({
@@ -60,6 +60,12 @@ describe('resolvePageTransition', () => {
 
     // 稳定的 key 意味着同一棵子树不会因切换 tab 而被 AnimatePresence 重新挂载
     expect(workbenchToPublish.contentKey).toBe(editorToWorkbench.contentKey);
+
+    const editorToHighlights = resolvePageTransition({
+      fromPage: 'editor', toPage: 'highlights', reason: 'default', reducedMotion: false,
+    });
+    expect(editorToHighlights.enabled).toBe(false);
+    expect(editorToHighlights.contentKey).toBe('workspace');
 
     // 但 exit 必须是「真正会改变 opacity」的动画，而非 no-op。
     // 离开工作区去 settings 时，AnimatePresence mode="wait" 会用这份冻结的 exit

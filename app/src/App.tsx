@@ -30,6 +30,7 @@ import type { VideoImportSourceInput } from './lib/video-import-types';
 import { prefersReducedMotion } from './ui/lib/animation-config';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { PublishWorkbench } from './components/publish/PublishWorkbench';
+import { HighlightWorkbench } from './components/highlights/HighlightWorkbench';
 import { getFileNameFromPath, readAudioDurationMs } from './lib/utils';
 import { createDefaultTimeline } from './types';
 import type { AICard, AIAnalysisResult } from './types/ai';
@@ -1130,14 +1131,14 @@ export default function App() {
   }, [currentProjectDir]);
 
   const handleWorkspaceTabSwitch = useCallback(
-    (tab: 'script-workbench' | 'editor' | 'publish') => {
+    (tab: 'script-workbench' | 'editor' | 'highlights' | 'publish') => {
       if (tab === page) return;
       setPage(tab);
     },
     [page, setPage],
   );
 
-  const showWorkspaceTabs = page === 'editor' || page === 'script-workbench' || page === 'publish';
+  const showWorkspaceTabs = page === 'editor' || page === 'script-workbench' || page === 'highlights' || page === 'publish';
   const reducedMotion = prefersReducedMotion();
   const pageTransition = resolvePageTransition({
     fromPage: previousPage,
@@ -1228,7 +1229,7 @@ export default function App() {
       />
       {showWorkspaceTabs && (
         <WorkspaceTabs
-          active={page as 'script-workbench' | 'editor' | 'publish'}
+          active={page as 'script-workbench' | 'editor' | 'highlights' | 'publish'}
           onSwitch={handleWorkspaceTabSwitch}
           scriptProgress={scriptProgress}
         />
@@ -1286,6 +1287,9 @@ export default function App() {
                   </div>
                   <div style={{ display: page === 'publish' ? 'contents' : 'none' }}>
                     <PublishWorkbench projectDir={currentProjectDir} />
+                  </div>
+                  <div style={{ display: page === 'highlights' ? 'contents' : 'none' }}>
+                    <HighlightWorkbench active={page === 'highlights'} />
                   </div>
                 </>
               )}

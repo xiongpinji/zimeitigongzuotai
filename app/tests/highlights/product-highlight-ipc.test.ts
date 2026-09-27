@@ -1,0 +1,152 @@
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { runSingleInstanceGate } from '../../electron/single-instance-gate';
+import { bootstrapProductHighlights } from '../../electron/highlights/product-highlight-bootstrap';
+import { ProductHighlightController } from '../../electron/highlights/product-highlight-controller';
+import { HIGHLIGHT_V1_CHANNELS, registerProductHighlightIpc } from '../../electron/highlights/product-highlight-ipc';
+
+const roots: string[] = [];
+const runtimes: ReturnType<typeof bootstrapProductHighlights>[] = [];
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'lingji-highlight-ipc-'));
+  roots.push(root);
+  const media = join(root, 'media');
+  const outside = join(root, 'outside');
+  const hotclip = join(root, 'hotclip');
+  mkdirSync(media);
+  mkdirSync(outside);
+  mkdirSync(join(hotclip, 'src', 'cli'), { recursive: true });
+  mkdirSync(join(hotclip, 'node_modules', 'tsx'), { recursive: true });
+  writeFileSync(join(hotclip, 'node_modules', 'tsx', 'package.json'), '{"type":"module","exports":"./index.mjs"}');
+  writeFileSync(join(hotclip, 'node_modules', 'tsx', 'index.mjs'), '');
+  const source = join(media, 'session.mp4');
+  writeFileSync(source, 'synthetic recording');
+  const outsider = join(outside, 'elsewhere.mp4');
+  writeFileSync(outsider, 'outside recording');
+  writeFileSync(join(hotclip, 'src', 'cli', 'index.ts'), 'process.stdout.write("[]")');
+  const runtime = bootstrapProductHighlights(root);
+  runtimes.push(runtime);
+  const controller = new ProductHighlightController({ runtime, userDataPath: root });
+  const handlers = new Map<string, (_event: unknown, input?: unknown) => unknown>();
+  const choices: string[][] = [];
+  const ipc = {
+    handle: (channel: string, handler: (_event: unknown, input?: unknown) => unknown) => {
+      handlers.set(channel, handler);
+    },
+  };
+  registerProductHighlightIpc({
+    ipc,
+    controller,
+    allowedSender: (event) => event === 'owner',
+    pickDirectory: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
+    pickFiles: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
+  });
+  const invoke = (channel: string, input?: unknown, sender: unknown = 'owner') => {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`Missing test channel ${channel}`);
+    return handler(sender, input);
+  };
+  return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller };
+}
+
+beforeEach(async () => {
+  await runSingleInstanceGate({
+    app: { requestSingleInstanceLock: () => true, quit: () => undefined, on: () => undefined },
+    loadMainRuntime: () => undefined,
+  });
+});
+
+afterEach(() => {
+  for (const runtime of runtimes.splice(0)) runtime.close();
+  for (const root of roots.splice(0)) {
+    const checked = resolve(root);
+    if (dirname(checked) !== resolve(tmpdir()) || !basename(checked).startsWith('lingji-highlight-ipc-')) {
+      throw new Error('Unsafe IPC fixture cleanup');
+    }
+    rmSync(checked, { recursive: true, force: true });
+  }
+});
+
+describe('owner-only highlight IPC', () => {
+  it('registers fixed channels before the first window and rejects other senders', async () => {
+    const { handlers, invoke } = fixture();
+    expect([...handlers.keys()].sort()).toEqual(Object.values(HIGHLIGHT_V1_CHANNELS).sort());
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.list, undefined, 'foreign')).toEqual({ ok: false, code: 'forbidden' });
+    const main = readFileSync(resolve(__dirname, '../../electron/main.ts'), 'utf8');
+    const registered = main.indexOf('registerProductHighlightIpc(');
+    expect(registered).toBeGreaterThan(main.indexOf('productHighlightController = new ProductHighlightController('));
+    expect(registered).toBeLessThan(main.indexOf('createWindow();'));
+  });
+
+  it('imports only OS-selected files within the selected root and never serializes source paths', async () => {
+    const { media, source, outsider, choices, invoke } = fixture();
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.import)).toEqual({ ok: false, code: 'selection_required' });
+    choices.push([media], [outsider]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot)).toMatchObject({ ok: true });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings)).toEqual({ ok: false, code: 'invalid_selection' });
+    choices.push([source]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings)).toMatchObject({ ok: true, names: ['session.mp4'] });
+    choices.push([outsider]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings)).toEqual({ ok: false, code: 'invalid_selection' });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 2 }))
+      .toEqual({ ok: false, code: 'selection_required' });
+    choices.push([source]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings)).toMatchObject({ ok: true });
+    const imported = await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 2 });
+    expect(imported).toMatchObject({ ok: true });
+    expect(JSON.stringify(imported)).not.toContain(media);
+    const listed = await invoke(HIGHLIGHT_V1_CHANNELS.list);
+    expect(listed).toMatchObject({ ok: true, tasks: [{ name: 'session.mp4', state: 'queued' }] });
+    expect(JSON.stringify(listed)).not.toContain(source);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.import)).toEqual({ ok: false, code: 'selection_required' });
+  });
+
+  it('requires explicit runtime selections and model-download consent before dispatch', async () => {
+    const { media, source, outsider, hotclip, choices, invoke } = fixture();
+    choices.push([media], [source]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 2 });
+    const request = {
+      llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic-model',
+      llmApiKey: 'SYNTHETIC-SECRET', concurrency: 1, maxAttempts: 1, timeoutMs: 10_000,
+      allowModelDownload: true,
+    };
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.run, request)).toEqual({ ok: false, code: 'selection_required' });
+    choices.push([process.execPath], [hotclip]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseNode)).toMatchObject({ ok: true });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseHotClip)).toMatchObject({ ok: true });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.run, { ...request, allowModelDownload: false }))
+      .toEqual({ ok: false, code: 'consent_required' });
+    choices.push([dirname(outsider)]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.run, request)).toEqual({ ok: false, code: 'root_mismatch' });
+    expect((await invoke(HIGHLIGHT_V1_CHANNELS.list) as { tasks: { state: string }[] }).tasks[0].state).toBe('queued');
+  });
+
+  it('passes a synthetic selected sidecar through the queue, keeping candidates review-only', async () => {
+    const { media, source, hotclip, root, choices, invoke } = fixture();
+    // Use a no-op loader in a synthetic Node fixture; no real HotClip model or network call.
+    writeFileSync(join(hotclip, 'src', 'cli', 'index.ts'),
+      'process.stdout.write(JSON.stringify([{id:"candidate",startSec:1,endSec:3,title:"Synthetic",hook:"Hook",score:0.8,reason:"Fixture",recommended:true}]))');
+    choices.push([media], [source], [process.execPath], [hotclip]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as { tasks: { id: string }[] };
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseNode);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseHotClip);
+    const result = await invoke(HIGHLIGHT_V1_CHANNELS.run, {
+      llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic-model',
+      llmApiKey: 'SYNTHETIC-SECRET', concurrency: 1, maxAttempts: 1, timeoutMs: 10_000,
+      allowModelDownload: true,
+    });
+    expect(result).toMatchObject({ ok: true, tasks: [{ state: 'completed', candidateCount: 1 }] });
+    const artifact = await invoke(HIGHLIGHT_V1_CHANNELS.read, { id: imported.tasks[0].id });
+    expect(artifact).toMatchObject({ ok: true, artifact: { reviewRequired: true, highlights: [{ startMs: 1000, endMs: 3000 }] } });
+    expect(JSON.stringify(result) + JSON.stringify(artifact)).not.toContain('SYNTHETIC-SECRET');
+    expect(readFileSync(join(root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain('SYNTHETIC-SECRET');
+  });
+});
