@@ -1,6 +1,6 @@
 # R2 封面与画幅源码验收记录（2026-09-28）
 
-本次遵守“先测试、不打包”：只运行 Windows 源码离线测试并检查当前产品接线，不构建安装包、不调用付费封面生成、不读取真实直播录屏、不登录或发布平台。测试基于 `b6983b2`；本记录不宣称 R2 完成。
+本次遵守“先测试、不打包”：只运行 Windows 源码离线测试并检查当前产品接线，不构建安装包、不调用付费封面生成、不读取真实直播录屏、不登录或发布平台。测试基于 `b6983b2`，桌面封面冒烟脚本加于其后；本记录不宣称 R2 完成。
 
 ## 封面
 
@@ -14,7 +14,9 @@ npm test -- tests/editor.test.tsx --maxWorkers=1 --minWorkers=1
 npm test -- tests/ai-cover-panel.test.tsx tests/cover-editor-io.test.ts tests/cover-edit-state.test.ts tests/cover-generation.test.ts --maxWorkers=1 --minWorkers=1
 ```
 
-第一次并行运行中 5 个文件、25 项里 24 项通过，`editor.test.tsx` 首次动态导入触及其 60 秒测试超时。单独限定 1 个 worker 重跑该文件，7/7 通过（约 13 秒）；随后封面另 4 个文件、10/10 通过。因此各唯一用例均有通过记录，但并行首次运行不算全绿。封面生成提供商的真实调用、图片编辑后经桌面 UI 保存和发布平台的封面回显，均未在本轮验证。
+第一次并行运行中 5 个文件、25 项里 24 项通过，`editor.test.tsx` 首次动态导入触及其 60 秒测试超时。单独限定 1 个 worker 重跑该文件，7/7 通过（约 13 秒）；随后封面另 4 个文件、10/10 通过。因此各唯一用例均有通过记录，但并行首次运行不算全绿。
+
+进一步运行 `node app/scripts/smoke-editor-cover-win.cjs`，退出码 0：脚本生成一张 640×360 合成 PNG 到隔离工程的 `covers/`，经源码 Electron UI 扫描成封面候选，点击“设为整期背景”，确认 `project.json` 的 `default-background` 图层指向该图，再关闭应用并重开工程。重开后的预览截图可见该合成图，页面异常 0。证据留在 Git 忽略的 `data/runtime/validation/r2-cover-1790545149413/`（`result.json`、`before-reopen.png`、`after-reopen.png`）。这验证“封面候选 → 时间线背景 → 保存重开”的桌面链；封面生成提供商的真实调用、图片编辑后经桌面 UI 保存和发布平台的封面回显仍未验证。
 
 ## 视频画幅
 
@@ -22,4 +24,4 @@ npm test -- tests/ai-cover-panel.test.tsx tests/cover-editor-io.test.ts tests/co
 
 ## R2 状态
 
-多轨分割、撤销/重做、保存重开和合成 MP4 导出已有隔离桌面冒烟证据，见 [VFR 基线](r2-vfr-source-baseline-2026-09-28.md) 与 [字幕静帧探针](r2-subtitle-renderstill-feasibility-2026-09-28.md)。当前产品原生暂停预览与导出帧在部分视频帧仍低于 SSIM 0.92 门槛；`renderStill` 探针通过只证明修复路径可行。封面桌面端到端、视频画幅切换、原生预览一致性仍需验收，不应标为 R2 完成。
+多轨分割、撤销/重做、保存重开和合成 MP4 导出已有隔离桌面冒烟证据，见 [VFR 基线](r2-vfr-source-baseline-2026-09-28.md) 与 [字幕静帧探针](r2-subtitle-renderstill-feasibility-2026-09-28.md)。当前产品原生暂停预览与导出帧在部分视频帧仍低于 SSIM 0.92 门槛；`renderStill` 探针通过只证明修复路径可行。封面“选择与设为背景”链已过隔离桌面冒烟；封面编辑保存、视频画幅切换、原生预览一致性仍需验收，不应标为 R2 完成。
