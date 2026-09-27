@@ -67,6 +67,12 @@ describe('resolvePageTransition', () => {
     expect(editorToHighlights.enabled).toBe(false);
     expect(editorToHighlights.contentKey).toBe('workspace');
 
+    const highlightsToAssets = resolvePageTransition({
+      fromPage: 'highlights', toPage: 'assets', reason: 'default', reducedMotion: false,
+    });
+    expect(highlightsToAssets.enabled).toBe(false);
+    expect(highlightsToAssets.contentKey).toBe('workspace');
+
     // 但 exit 必须是「真正会改变 opacity」的动画，而非 no-op。
     // 离开工作区去 settings 时，AnimatePresence mode="wait" 会用这份冻结的 exit
     // 退出 'workspace' 子树；若 exit 与 animate 相同（opacity 不变），framer-motion v12

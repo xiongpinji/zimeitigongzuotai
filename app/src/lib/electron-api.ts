@@ -51,8 +51,11 @@ import type {
 import type { ReviewedClipSelection, ReviewedClipExportResult } from '../../electron/highlights/reviewed-clip-exporter';
 import type { ReviewedClipReceipt } from '../../electron/highlights/reviewed-clip-receipts';
 import type { HighlightArtifactBundle } from '../../electron/highlights/highlight-batch-artifacts';
+import type { AssetLibraryIpcResult, AssetLibraryRecordDto } from '../../electron/assets/asset-library-ipc';
+import type { AssetImportMetadata } from '../../electron/assets/local-asset-library';
+import type { AssetUsageContext, BrollQuery, BrollRecommendationResult } from '../../electron/assets/asset-rights';
 
-export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights';
+export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights' | 'assets';
 
 export interface FileEntry {
   name: string;
@@ -852,10 +855,23 @@ export interface HighlightV1API {
   cancelExport(): Promise<HighlightV1Result<{ cancelled: boolean }>>;
 }
 
+export interface AssetLibraryAPI {
+  choose(): Promise<AssetLibraryIpcResult<{ label: string }>>;
+  importSelected(metadata: AssetImportMetadata): Promise<AssetLibraryIpcResult<{ record: AssetLibraryRecordDto }>>;
+  list(): Promise<AssetLibraryIpcResult<{ records: AssetLibraryRecordDto[] }>>;
+  revoke(id: string): Promise<AssetLibraryIpcResult<{ record: AssetLibraryRecordDto }>>;
+  index(): Promise<AssetLibraryIpcResult<{ indexedCount: number; modelDigest: string }>>;
+  recommend(query: BrollQuery, context: AssetUsageContext):
+    Promise<AssetLibraryIpcResult<{ result: BrollRecommendationResult }>>;
+  useInEditor(id: string, context: AssetUsageContext):
+    Promise<AssetLibraryIpcResult<{ path: string; mediaType: AssetLibraryRecordDto['mediaType']; durationMs: number | null }>>;
+}
+
 declare global {
   interface Window {
     accountV2API: AccountV2API;
     highlightV1API: HighlightV1API;
+    assetLibraryAPI: AssetLibraryAPI;
   }
 }
 

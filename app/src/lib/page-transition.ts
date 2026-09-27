@@ -26,7 +26,7 @@ const EASE_OUT_EXPO: [number, number, number, number] = [0.16, 1, 0.3, 1];
 const EASE_APPLE: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
 
 /**
- * 工作区四个 tab：写稿工作台 / 视频编辑器 / 直播高光 / 发布。
+ * 工作区五个 tab：写稿工作台 / 视频编辑器 / 直播高光 / 授权素材 / 发布。
  * 它们共用同一棵子树（App.tsx 里用 display:contents/none 切换显隐），切换时
  * 必须共用稳定的 contentKey，避免 AnimatePresence 触发 exit→remount。
  */
@@ -34,6 +34,7 @@ const WORKSPACE_PAGES: ReadonlySet<AppPage> = new Set([
   'script-workbench',
   'editor',
   'highlights',
+  'assets',
   'publish',
 ]);
 

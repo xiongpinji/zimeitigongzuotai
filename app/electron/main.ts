@@ -85,6 +85,9 @@ import { bootstrapProductHighlights } from './highlights/product-highlight-boots
 import { ProductHighlightController } from './highlights/product-highlight-controller';
 import { ReviewedClipExporter } from './highlights/reviewed-clip-exporter';
 import { registerProductHighlightIpc } from './highlights/product-highlight-ipc';
+import { LocalAssetLibrary } from './assets/local-asset-library';
+import { OllamaAssetIndex } from './assets/ollama-asset-index';
+import { registerAssetLibraryIpc } from './assets/asset-library-ipc';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
@@ -2877,6 +2880,23 @@ app.whenReady().then(async () => {
       }),
       pickFiles: (title, defaultPath) => dialog.showOpenDialog({
         title, ...(defaultPath ? { defaultPath } : {}), properties: ['openFile', 'multiSelections'],
+      }),
+    });
+    const assetRoot = path.join(app.getPath('userData'), 'assets-v1');
+    const assetLibrary = new LocalAssetLibrary({ rootDir: assetRoot, ffprobePath });
+    registerAssetLibraryIpc({
+      ipc: ipcMain,
+      library: assetLibrary,
+      index: new OllamaAssetIndex({ rootDir: assetRoot }),
+      allowedSender: (event) =>
+        !!mainWindow && !mainWindow.isDestroyed() &&
+        (event as { sender?: unknown }).sender === mainWindow.webContents &&
+        (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
+      pickFile: () => dialog.showOpenDialog({
+        title: '选择已授权素材', properties: ['openFile'],
+        filters: [{ name: '视频、图片和音频', extensions: [
+          'mp4', 'mov', 'webm', 'm4v', 'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a',
+        ] }],
       }),
     });
   } catch (err) {

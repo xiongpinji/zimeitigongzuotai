@@ -6,6 +6,7 @@ import type {
   AccountV2Platform,
   AccountV2QrcodeEvent,
   HighlightV1API,
+  AssetLibraryAPI,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -852,3 +853,13 @@ contextBridge.exposeInMainWorld('highlightV1API', {
   verifiedOutput: (id) => ipcRenderer.invoke('highlight-v1:verified-output', { id }),
   cancelExport: () => ipcRenderer.invoke('highlight-v1:cancel-export'),
 } satisfies HighlightV1API);
+
+contextBridge.exposeInMainWorld('assetLibraryAPI', {
+  choose: () => ipcRenderer.invoke('asset-library:choose'),
+  importSelected: (metadata) => ipcRenderer.invoke('asset-library:import', { metadata }),
+  list: () => ipcRenderer.invoke('asset-library:list'),
+  revoke: (id) => ipcRenderer.invoke('asset-library:revoke', { id }),
+  index: () => ipcRenderer.invoke('asset-library:index'),
+  recommend: (query, context) => ipcRenderer.invoke('asset-library:recommend', { query, context }),
+  useInEditor: (id, context) => ipcRenderer.invoke('asset-library:use', { id, context }),
+} satisfies AssetLibraryAPI);

@@ -1,11 +1,11 @@
-import { Film, PenLine, Scissors, Upload } from 'lucide-react';
+import { Film, FolderOpen, PenLine, Scissors, Upload } from 'lucide-react';
 import { m, LayoutGroup } from 'framer-motion';
 import type { AppPage } from '../lib/electron-api';
 import { springs } from '../ui/lib/motion';
 import { Button } from '../ui';
 import styles from './WorkspaceTabs.module.css';
 
-type WorkspaceTab = 'script-workbench' | 'editor' | 'highlights' | 'publish';
+type WorkspaceTab = 'script-workbench' | 'editor' | 'highlights' | 'assets' | 'publish';
 
 interface WorkspaceTabsProps {
   active: WorkspaceTab;
@@ -74,6 +74,7 @@ const tabs: { key: WorkspaceTab; label: string; icon: React.ReactNode; page: App
   { key: 'script-workbench', label: '写稿工作台', icon: <PenLine />, page: 'script-workbench' },
   { key: 'editor', label: '视频编辑器', icon: <Film />, page: 'editor' },
   { key: 'highlights', label: '直播高光', icon: <Scissors />, page: 'highlights' },
+  { key: 'assets', label: '授权素材', icon: <FolderOpen />, page: 'assets' },
   { key: 'publish', label: '发布', icon: <Upload />, page: 'publish' },
 ];
 
