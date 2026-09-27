@@ -81,6 +81,7 @@ import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
 import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
+import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
@@ -222,6 +223,7 @@ let isAppQuitting = false;
 const videoImportService = getVideoImportService();
 let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
+let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 
 function sendMenuEvent(event: MenuEvent) {
   mainWindow?.webContents.send('menu-action', event);
@@ -2844,6 +2846,19 @@ app.whenReady().then(async () => {
     app.exit(1);
     return;
   }
+  // 单实例锁持有者在首个窗口前恢复高光队列和候选产物；不自动运行 HotClip。
+  try {
+    productHighlights = bootstrapProductHighlights(app.getPath('userData'));
+  } catch (err) {
+    writeAppLog(
+      'error',
+      'highlight-batch',
+      '高光任务仓启动或恢复失败，应用停止启动',
+      err instanceof Error ? err.name : 'unknown error',
+    );
+    app.exit(1);
+    return;
+  }
   // biliup 二进制按需下载到用户可写目录，注入该目录作为解析根
   configureBiliupRoot(getBiliupDestRoot());
   // 开发模式下显式设置 Dock 图标；打包后 macOS 会使用 .app 自带的 icns
@@ -2926,6 +2941,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isAppQuitting = true;
+  productHighlights?.close();
+  productHighlights = null;
 });
 
 app.on('activate', () => {
