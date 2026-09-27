@@ -273,6 +273,7 @@ describe.skipIf(!canRunDualProcess)('Windows dual-process single-instance gate (
     async () => {
       const baseDir = mkdtempSync(path.join(tmpdir(), 'lingji-single-instance-win-'));
       const children: ChildProcess[] = [];
+      const childClosed: Promise<void>[] = [];
       try {
         const fixtureDir = path.join(baseDir, 'fixture');
         const userData = path.join(baseDir, 'user-data');
@@ -324,6 +325,7 @@ describe.skipIf(!canRunDualProcess)('Windows dual-process single-instance gate (
           child.stdout?.on('data', () => {});
           child.stderr?.on('data', () => {});
           children.push(child);
+          childClosed.push(new Promise((resolve) => child.once('close', () => resolve())));
           return child;
         };
 
@@ -404,6 +406,18 @@ describe.skipIf(!canRunDualProcess)('Windows dual-process single-instance gate (
       } finally {
         for (const child of children) {
           terminateTree(child);
+        }
+        // Windows 的 exit 事件可能早于 stdio 句柄关闭；等 close 后再删除 fixture。
+        let closeTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.all(childClosed),
+            new Promise<never>((_, reject) => {
+              closeTimer = setTimeout(() => reject(new Error('fixture 子进程句柄关闭超时')), 15_000);
+            }),
+          ]);
+        } finally {
+          if (closeTimer) clearTimeout(closeTimer);
         }
         removeFixtureDirectory(baseDir, 'lingji-single-instance-win-');
       }

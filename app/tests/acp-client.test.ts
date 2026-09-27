@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
+import { once } from 'node:events';
 import { AcpClient } from '../electron/acp/client';
 
 let mockScriptPath: string;
@@ -148,12 +149,8 @@ describe('AcpClient', () => {
     const exitScript = path.join(tmpDir, 'exit.cjs');
     await fs.writeFile(exitScript, 'process.exit(1);', 'utf-8');
 
-    let disconnected = false;
-    client.on('disconnected', () => { disconnected = true; });
-
+    const disconnected = once(client, 'disconnected');
     await client.spawn('node', [exitScript], tmpDir);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    expect(disconnected).toBe(true);
-  });
+    await expect(disconnected).resolves.toEqual([{ code: 1, signal: null }]);
+  }, 15_000);
 });
