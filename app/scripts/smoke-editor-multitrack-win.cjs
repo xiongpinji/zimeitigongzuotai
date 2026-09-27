@@ -15,6 +15,13 @@ const sourceFps = Number(process.env.LINGJI_R2_SOURCE_FPS ?? '15');
 if (!Number.isInteger(sourceFps) || sourceFps < 1 || sourceFps > 120) {
   throw new Error('LINGJI_R2_SOURCE_FPS must be an integer from 1 to 120');
 }
+const sourceKind = process.env.LINGJI_R2_SOURCE_KIND ?? 'cfr';
+if (!['cfr', 'vfr'].includes(sourceKind)) {
+  throw new Error('LINGJI_R2_SOURCE_KIND must be cfr or vfr');
+}
+if (sourceKind === 'vfr' && sourceFps !== 30) {
+  throw new Error('VFR fixture uses a 30 fps source clock; set LINGJI_R2_SOURCE_FPS=30');
+}
 const runDir = path.join(validationDir, `r2-multitrack-${Date.now()}`);
 const projectDir = path.join(runDir, 'project');
 const profile = path.join(runDir, 'profile');
@@ -30,6 +37,29 @@ function generate(output, filter) {
     '-t', '3', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-an', output,
   ], { encoding: 'utf8', timeout: 60_000 });
   if (result.status !== 0) throw new Error(`ffmpeg generation failed: ${result.stderr}`);
+}
+
+function generateVfr(output) {
+  // Retain timestamps while dropping alternate frames in the first half:
+  // ffprobe then sees both 1/15 s and 1/30 s frame intervals in one MP4.
+  const result = spawnSync(ffmpeg, [
+    '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
+    '-i', 'testsrc2=size=640x360:rate=30:duration=3',
+    '-vf', "select='if(lt(t,1.5),not(mod(n,2)),1)'",
+    '-vsync', 'vfr', '-c:v', 'libx264', '-preset', 'ultrafast',
+    '-pix_fmt', 'yuv420p', '-an', output,
+  ], { encoding: 'utf8', timeout: 60_000 });
+  if (result.status !== 0) throw new Error(`ffmpeg VFR generation failed: ${result.stderr}`);
+}
+
+function sourceFrameStepsMs(videoPath) {
+  const result = spawnSync(ffprobe, [
+    '-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', videoPath,
+  ], { encoding: 'utf8', timeout: 20_000 });
+  if (result.status !== 0) throw new Error(`ffprobe source timing failed: ${result.stderr}`);
+  const times = JSON.parse(result.stdout).frames.map((frame) => Number(frame.best_effort_timestamp_time));
+  return [...new Set(times.slice(1).map((time, index) => Math.round((time - times[index]) * 1000)))].sort((a, b) => a - b);
 }
 
 async function waitForProject(predicate, label, timeoutMs = 15_000) {
@@ -53,8 +83,16 @@ async function waitForClipCount(page, count) {
 }
 
 async function main() {
-  generate(sourceA, `testsrc2=size=640x360:rate=${sourceFps}`);
+  if (sourceKind === 'vfr') {
+    generateVfr(sourceA);
+  } else {
+    generate(sourceA, `testsrc2=size=640x360:rate=${sourceFps}`);
+  }
   generate(sourceB, `color=c=blue:size=640x360:rate=${sourceFps}`);
+  const frameStepsMs = sourceFrameStepsMs(sourceA);
+  if (sourceKind === 'vfr' && (!frameStepsMs.includes(33) || !frameStepsMs.includes(67))) {
+    throw new Error(`VFR fixture lacks two frame intervals: ${frameStepsMs}`);
+  }
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   let app;
@@ -197,6 +235,8 @@ async function main() {
     const report = {
       runDir,
       sourceFps,
+      sourceKind,
+      sourceFrameStepsMs: frameStepsMs,
       sourceA,
       sourceB,
       splitPieces: saved.timeline.overlays.filter((item) => item.assetPath === sourceA).length,
