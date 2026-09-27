@@ -702,7 +702,7 @@ export function Editor({
       setExportProgress(1);
       const elapsedMs = Date.now() - exportStartedAt;
       useTaskProgressStore.getState().completeTask(exportTaskId, {
-        label: '在 Finder 中显示',
+        label: '在文件夹中显示',
         handler: () => window.electronAPI.showItemInFolder(savePath),
       });
       // 联动发布选项卡：记录最近导出的成片路径，供「发布视频」预填视频文件。
@@ -1073,7 +1073,7 @@ export function Editor({
             ? `视频已导出到 ${getFileNameFromPath(exportSuccess.outputPath)}，总耗时 ${formatExportDuration(exportSuccess.elapsedMs)}。`
             : undefined
         }
-        confirmText="在 Finder 中显示"
+        confirmText="在文件夹中显示"
         cancelText="完成"
         onConfirm={() => {
           if (exportSuccess) {

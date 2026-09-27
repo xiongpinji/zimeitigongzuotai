@@ -16,5 +16,6 @@ dist/
 release/
 node_modules/
 .venv/
+.remotion/
 __pycache__/
 *.pyc
