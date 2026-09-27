@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 // 首次动态导入编辑器在 Windows 全量套件的模块转换中可能超过 30 秒。
 vi.setConfig({ testTimeout: 60_000 });
 
+const viewport = vi.hoisted(() => ({ width: 1440, height: 900 }));
+
 vi.mock('../src/hooks/useViewportSize', () => ({
-  useViewportSize: () => ({ width: 1440, height: 900 }),
+  useViewportSize: () => viewport,
 }));
 
 vi.mock('../src/components/PreviewPanel', () => ({
@@ -110,6 +112,11 @@ async function renderEditor() {
 }
 
 describe('Editor', () => {
+  beforeEach(() => {
+    viewport.width = 1440;
+    viewport.height = 900;
+  });
+
   it('renders a three-pane workspace with left tabs and a right inspector shell on wide screens', async () => {
     const html = await renderEditor();
 
@@ -129,6 +136,15 @@ describe('Editor', () => {
 
     expect(html).toContain('data-editor-region="timeline-wrap"');
     expect(html).toContain('data-editor-region="sidebar-shell"');
+  });
+
+  it('keeps the preview in the flexible row when a short viewport stacks the asset rail', async () => {
+    viewport.width = 1267;
+    viewport.height = 691;
+    const html = await renderEditor();
+
+    expect(html).toMatch(/data-editor-region="sidebar-shell"[^>]*style="grid-row:2"/);
+    expect(html).toMatch(/data-editor-region="preview-wrap"[^>]*style="grid-row:1"/);
   });
 
   it('passes dedicated audio and srt attach handlers into the asset panel', async () => {

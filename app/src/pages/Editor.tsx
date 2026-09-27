@@ -759,7 +759,7 @@ export function Editor({
       >
         {layout.stackSidebar && inspectorSelection.type !== 'empty' ? (
           <>
-            <div className={styles.previewWrap}>
+            <div className={styles.previewWrap} data-editor-region="preview-wrap">
               <PreviewPanel
                 playerRef={playerRef}
                 isPlaying={isPlaying}
@@ -804,6 +804,7 @@ export function Editor({
               data-editor-region="sidebar-shell"
               data-editor-sidebar-style="flat-panel"
               data-editor-sidebar-width="340"
+              style={layout.stackSidebar ? { gridRow: 2 } : undefined}
             >
               <Tabs
                 value={activePanel}
@@ -877,7 +878,11 @@ export function Editor({
                 thickness={RESIZE_HANDLE_THICKNESS}
               />
             ) : null}
-            <div className={styles.previewWrap}>
+            <div
+              className={styles.previewWrap}
+              data-editor-region="preview-wrap"
+              style={layout.stackSidebar ? { gridRow: 1 } : undefined}
+            >
               <PreviewPanel
                 playerRef={playerRef}
                 isPlaying={isPlaying}
