@@ -516,6 +516,52 @@ describe('计划时间、取消与退避', () => {
 });
 
 describe('崩溃恢复与未知提交', () => {
+  it('同账号存在未知提交时先核对，确认发布后才领取下一条任务', async () => {
+    const submitted: string[] = [];
+    const reconciled: string[] = [];
+    const executor = vi.fn(async (input: PublishAttemptInput): Promise<PublishAttemptOutcome> => {
+      submitted.push(input.taskId);
+      return submitted.length === 1
+        ? { kind: 'unknown', errorCode: 'simulated_timeout' }
+        : submitOk(`remote-${input.taskId}`);
+    });
+    const reconciler = vi.fn(async (input: ReconcileInput): Promise<ReconcileResult> => {
+      reconciled.push(input.taskId);
+      return reconcilePublished(`remote-${input.taskId}`);
+    });
+    const q = openQueue({ executor, reconciler });
+    const accounts = [{ accountId: 'douyin_alpha', platform: 'douyin' as const }];
+    q.enqueueMatrix(matrix({ accounts }));
+    q.enqueueMatrix(matrix({ videoVariantId: 'variant-2', accounts }));
+
+    await q.tick();
+    const uncertainId = submitted[0]!;
+    expect(q.get(uncertainId)!.state).toBe('unknown_submission');
+    await q.tick();
+    expect(submitted).toEqual([uncertainId]);
+    expect(reconciled).toEqual([uncertainId]);
+    expect(q.get(uncertainId)!.state).toBe('published');
+    await q.tick();
+    expect(submitted).toHaveLength(2);
+  });
+
+  it('重开后未到期的上传租约占用账号，不能领取该账号下一条任务', async () => {
+    const uploadingId = seedUploadingTask();
+    const queued = openQueue();
+    queued.enqueueMatrix(matrix({
+      videoVariantId: 'variant-2',
+      accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }],
+    }));
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const q = openQueue({ executor });
+
+    const report = await q.tick();
+    expect(report.claimed).toEqual([]);
+    expect(executor).not.toHaveBeenCalled();
+    expect(q.get(uploadingId)!.state).toBe('uploading');
+    expect(q.list().filter((task) => task.state === 'queued')).toHaveLength(1);
+  });
+
   it('真实重启：未到期 uploading 打开时保持原状，租约到期后才转 unknown_submission 且只核对不重发', async () => {
     const taskId = seedUploadingTask();
     const seededBytes = readFileSync(storePath, 'utf-8');

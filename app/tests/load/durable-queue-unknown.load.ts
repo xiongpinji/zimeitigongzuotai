@@ -14,18 +14,24 @@ const PLATFORMS: QueuePlatform[] = ['douyin', 'kuaishou', 'wechat-channels', 'xi
 const ACCOUNT_COUNT = 100;
 const VARIANT_COUNT = 10;
 const TASK_COUNT = ACCOUNT_COUNT * VARIANT_COUNT;
+// 8 的整倍数：首阶段每轮只占满提交 worker，不提前进入远端核对。
+const PRE_RESTART_UNKNOWN_COUNT = 96;
 const NOW = 1_700_000_000_000;
 
-it('1000 个未知提交在重开后只核对，每个任务不盲目重发', async () => {
+it('100 账号的 1000 个未知提交逐账号核对后推进，重开不盲目重发', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'lingji-queue-unknown-load-'));
   const storePath = join(dir, 'queue.json');
   const submitCounts = new Map<string, number>();
   const reconcileCounts = new Map<string, number>();
+  const unresolvedAccounts = new Set<string>();
+  let submittedWhileUnresolved = false;
   let preRestartReconciliations = 0;
   let activeSubmissions = 0;
   let peakSubmissions = 0;
   const startedAt = performance.now();
   const executor = async (input: PublishAttemptInput) => {
+    if (unresolvedAccounts.has(input.accountId)) submittedWhileUnresolved = true;
+    unresolvedAccounts.add(input.accountId);
     submitCounts.set(input.taskId, (submitCounts.get(input.taskId) ?? 0) + 1);
     activeSubmissions += 1;
     peakSubmissions = Math.max(peakSubmissions, activeSubmissions);
@@ -80,28 +86,31 @@ it('1000 个未知提交在重开后只核对，每个任务不盲目重发', as
     expect(queue.list()).toHaveLength(TASK_COUNT);
 
     let submitRounds = 0;
-    while (submitCounts.size < TASK_COUNT) {
+    while (submitCounts.size < PRE_RESTART_UNKNOWN_COUNT) {
       expect(submitRounds).toBeLessThan(200);
       await queue.tick();
       submitRounds += 1;
     }
-    expect(queue.list().every((task) => task.state === 'unknown_submission' && task.attempt === 1)).toBe(true);
+    expect(queue.list().filter((task) => task.state === 'unknown_submission')).toHaveLength(PRE_RESTART_UNKNOWN_COUNT);
+    expect(queue.list().filter((task) => task.state === 'queued')).toHaveLength(TASK_COUNT - PRE_RESTART_UNKNOWN_COUNT);
     expect(preRestartReconciliations).toBe(0);
     expect(peakSubmissions).toBe(8);
     expect(activeSubmissions).toBe(0);
+    expect(submittedWhileUnresolved).toBe(false);
     expect([...submitCounts.values()].every((count) => count === 1)).toBe(true);
 
     const reopened = openDurableQueue({
       ...common,
       reconciler: async (input) => {
+        expect(unresolvedAccounts.delete(input.accountId)).toBe(true);
         reconcileCounts.set(input.taskId, (reconcileCounts.get(input.taskId) ?? 0) + 1);
         return { finalState: 'published' as const, remoteId: `remote-${input.taskId}` };
       },
     });
-    expect(reopened.list().filter((task) => task.state === 'unknown_submission')).toHaveLength(TASK_COUNT);
+    expect(reopened.list().filter((task) => task.state === 'unknown_submission')).toHaveLength(PRE_RESTART_UNKNOWN_COUNT);
     let reconcileRounds = 0;
-    while (reconcileCounts.size < TASK_COUNT) {
-      expect(reconcileRounds).toBeLessThan(200);
+    while (reopened.list().some((task) => task.state !== 'published')) {
+      expect(reconcileRounds).toBeLessThan(500);
       await reopened.tick();
       reconcileRounds += 1;
     }
@@ -113,6 +122,8 @@ it('1000 个未知提交在重开后只核对，每个任务不盲目重发', as
     )).toBe(true);
     expect([...submitCounts.values()].every((count) => count === 1)).toBe(true);
     expect([...reconcileCounts.values()].every((count) => count === 1)).toBe(true);
+    expect(submittedWhileUnresolved).toBe(false);
+    expect(unresolvedAccounts.size).toBe(0);
     expect(openDurableQueue({ ...common, reconciler: async () => ({ finalState: 'unknown' }) })
       .list().filter((task) => task.state === 'published')).toHaveLength(TASK_COUNT);
     console.info('durable_queue_unknown_load', JSON.stringify({

@@ -979,6 +979,15 @@ export class DurablePublishQueue {
         }
       }
 
+      // 重启后 running 为空，但磁盘上的上传租约或未知提交仍可能代表远端在处理。
+      // 先核清该账号的不确定任务，再领取同账号的新任务；已拿到远端 ID 的
+      // verifying 不占用此保守门槛，仍由本轮 busyAccounts 保证执行时互斥。
+      const uncertainAccounts = new Set(
+        ordered
+          .filter((task) => task.state === 'uploading' || task.state === 'unknown_submission')
+          .map((task) => task.accountId),
+      );
+
       // 2) 提交领取：先到先得；互斥与预算在领取时一次性落实
       for (const task of ordered) {
         if (submissions.length >= this.budgets.global) break;
@@ -988,6 +997,7 @@ export class DurablePublishQueue {
         if (task.commerceRequest !== null) continue;
         if (task.metadata.scheduleAt !== null && task.metadata.scheduleAt > at) continue;
         if (task.nextAttemptAt !== null && task.nextAttemptAt > at) continue;
+        if (uncertainAccounts.has(task.accountId)) continue;
         if (busyAccounts.has(task.accountId)) continue;
         const platformCount = selectedPlatforms.get(task.platform) ?? 0;
         if (platformCount >= this.budgets.perPlatform[task.platform]) continue;
