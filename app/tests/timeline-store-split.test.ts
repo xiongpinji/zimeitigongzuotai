@@ -70,4 +70,62 @@ describe('splitOverlayClipsAt', () => {
     const overlays = useTimelineStore.getState().timeline.overlays;
     expect(overlays.filter((o) => o.assetPath === '/foo.png').length).toBe(1);
   });
+
+  it('starts the right-hand video clip at the corresponding source frame', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        overlays: state.timeline.overlays.map((overlay) => overlay.id === 'a'
+          ? { ...overlay, type: 'video', videoData: { trimStartMs: 2000, sourceDurationMs: 8000 } }
+          : overlay),
+      },
+    }));
+    useTimelineStore.getState().splitOverlayClipsAt(3000, ['a']);
+    const videoClips = useTimelineStore.getState().timeline.overlays
+      .filter((overlay) => overlay.type === 'video')
+      .sort((left, right) => left.startMs - right.startMs);
+    expect(videoClips.map((clip) => [clip.startMs, clip.durationMs, clip.videoData?.trimStartMs]))
+      .toEqual([[1000, 2000, 2000], [3000, 2000, 4000]]);
+  });
+
+  it('does not repeat frame zero when splitting a video from an older timeline', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        overlays: state.timeline.overlays.map((overlay) => overlay.id === 'a'
+          ? { ...overlay, type: 'video' } : overlay),
+      },
+    }));
+    useTimelineStore.getState().splitOverlayClipsAt(3000, ['a']);
+    const videoClips = useTimelineStore.getState().timeline.overlays
+      .filter((overlay) => overlay.type === 'video')
+      .sort((left, right) => left.startMs - right.startMs);
+    expect(videoClips.map((clip) => [clip.startMs, clip.videoData?.trimStartMs]))
+      .toEqual([[1000, 0], [3000, 2000]]);
+  });
+
+  it('keeps the source audio continuous across a split', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        tracks: [...state.timeline.tracks,
+          { id: 'audio-overlay-1', kind: 'audio' as const, label: '音轨 1', order: 1 }],
+        overlays: state.timeline.overlays.map((overlay) => overlay.id === 'a'
+          ? {
+              ...overlay, type: 'audio' as const, trackId: 'audio-overlay-1',
+              audioData: {
+                trimStartMs: 1000, sourceDurationMs: 8000, volume: 1,
+                fadeInMs: 0, fadeOutMs: 0,
+              },
+            }
+          : overlay),
+      },
+    }));
+    useTimelineStore.getState().splitOverlayClipsAt(3000, ['a']);
+    const audioClips = useTimelineStore.getState().timeline.overlays
+      .filter((overlay) => overlay.type === 'audio')
+      .sort((left, right) => left.startMs - right.startMs);
+    expect(audioClips.map((clip) => [clip.startMs, clip.audioData?.trimStartMs]))
+      .toEqual([[1000, 1000], [3000, 3000]]);
+  });
 });

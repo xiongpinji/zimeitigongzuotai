@@ -70,4 +70,51 @@ describe('trimOverlayClip', () => {
     const a = useTimelineStore.getState().timeline.overlays.find((o) => o.id === 'a')!;
     expect(a.durationMs).toBe(3000);
   });
+
+  it('keeps source video frames aligned when trimming or extending the left edge', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        overlays: state.timeline.overlays.map((overlay) => overlay.id === 'a'
+          ? { ...overlay, type: 'video', videoData: { trimStartMs: 1000, sourceDurationMs: 6000 } }
+          : overlay),
+      },
+    }));
+    useTimelineStore.getState().trimOverlayClip('a', 'start', 2500);
+    let clip = useTimelineStore.getState().timeline.overlays.find((overlay) => overlay.id === 'a')!;
+    expect([clip.startMs, clip.durationMs, clip.videoData?.trimStartMs]).toEqual([2500, 2500, 1500]);
+
+    useTimelineStore.getState().trimOverlayClip('a', 'start', 0);
+    clip = useTimelineStore.getState().timeline.overlays.find((overlay) => overlay.id === 'a')!;
+    expect([clip.startMs, clip.durationMs, clip.videoData?.trimStartMs]).toEqual([1000, 4000, 0]);
+  });
+
+  it('stops video right-edge extension at the end of the source', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        overlays: state.timeline.overlays.filter((overlay) => overlay.id === 'a').map((overlay) => ({
+          ...overlay, type: 'video' as const,
+          videoData: { trimStartMs: 1000, sourceDurationMs: 4200 },
+        })),
+      },
+    }));
+    useTimelineStore.getState().trimOverlayClip('a', 'end', 7000);
+    const clip = useTimelineStore.getState().timeline.overlays[0];
+    expect([clip.startMs, clip.durationMs]).toEqual([2000, 3200]);
+  });
+
+  it('records the in-point when trimming a video from an older timeline', () => {
+    useTimelineStore.setState((state) => ({
+      timeline: {
+        ...state.timeline,
+        overlays: state.timeline.overlays.map((overlay) => overlay.id === 'a'
+          ? { ...overlay, type: 'video' } : overlay),
+      },
+    }));
+    useTimelineStore.getState().trimOverlayClip('a', 'start', 2500);
+    const clip = useTimelineStore.getState().timeline.overlays.find((overlay) => overlay.id === 'a')!;
+    expect([clip.startMs, clip.durationMs, clip.videoData?.trimStartMs])
+      .toEqual([2500, 2500, 500]);
+  });
 });

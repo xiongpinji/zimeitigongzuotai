@@ -55,7 +55,7 @@ export const MainComposition = memo(function MainComposition({
           ) : c.kind === 'text' ? (
             <TextOverlay overlay={c.overlay} zIndex={c.zIndex} durationFrames={c.durationFrames} />
           ) : c.kind === 'video' ? (
-            <VideoOverlay overlay={c.overlay} zIndex={c.zIndex} />
+            <VideoOverlay overlay={c.overlay} zIndex={c.zIndex} fps={plan.fps} />
           ) : (
             <ImageOverlay overlay={c.overlay} zIndex={c.zIndex} />
           )}

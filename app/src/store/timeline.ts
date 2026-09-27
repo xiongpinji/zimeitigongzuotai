@@ -13,6 +13,7 @@ import type {
 import {
   DEFAULT_VISUAL_TRACK_ID,
   DEFAULT_AI_CARDS_TRACK_ID,
+  createDefaultAudioOverlayData,
   createDefaultTimeline,
   createVisualTrack,
 } from '../types';
@@ -119,6 +120,16 @@ const buildAsset = (
   durationMs,
   ...(locked ? { locked: true } : {}),
 });
+
+function videoSourceData(overlay: OverlayItem, assets: readonly AssetItem[]) {
+  if (overlay.type !== 'video') return undefined;
+  const knownDuration = assets.find((asset) =>
+    asset.type === 'video' && asset.path === overlay.assetPath)?.durationMs ?? 0;
+  return overlay.videoData ?? {
+    trimStartMs: 0,
+    sourceDurationMs: Math.max(overlay.durationMs, knownDuration),
+  };
+}
 
 const dedupeAssets = (assets: AssetItem[]): AssetItem[] => {
   const assetMap = new Map<string, AssetItem>();
@@ -843,9 +854,10 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   addOverlay: (overlay) => {
     const id = uuid();
     set((state) => {
+      const videoData = videoSourceData({ ...overlay, id }, state.assets);
       const { overlay: resolved, createdTrack } = resolveOverlayInsert(
         state,
-        { ...overlay, id },
+        { ...overlay, id, ...(videoData ? { videoData } : {}) },
       );
       const tracks = createdTrack
         ? [...state.timeline.tracks, createdTrack]
@@ -1031,6 +1043,13 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       }
 
       let merged = { ...current, ...updates, id };
+      const sourceTrim = merged.type === 'video'
+        ? merged.videoData : merged.type === 'audio' ? merged.audioData : undefined;
+      if (sourceTrim) {
+        const availableMs = sourceTrim.sourceDurationMs - sourceTrim.trimStartMs;
+        if (availableMs < 100) return {};
+        merged = { ...merged, durationMs: Math.min(merged.durationMs, availableMs) };
+      }
       const affectsPlacement =
         'startMs' in updates || 'durationMs' in updates || 'trackId' in updates;
 
@@ -1087,11 +1106,17 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
       const MIN_DURATION = 100;
       let nextStart = current.startMs;
       let nextDuration = current.durationMs;
+      const sourceVideoData = videoSourceData(current, state.assets);
+      const sourceAudioData = current.type === 'audio'
+        ? current.audioData ?? createDefaultAudioOverlayData(current.durationMs) : undefined;
+      const sourceTrim = sourceVideoData ?? sourceAudioData;
 
       if (edge === 'start') {
         const currentEnd = current.startMs + current.durationMs;
-        // 钳制到 [0, currentEnd - MIN_DURATION]
-        const clamped = Math.max(0, Math.min(newEdgeMs, currentEnd - MIN_DURATION));
+        // 有源媒体入点时，左边缘不能拖到源文件第 0 帧之前。
+        const sourceMinStart = sourceTrim
+          ? Math.max(0, current.startMs - sourceTrim.trimStartMs) : 0;
+        const clamped = Math.max(sourceMinStart, Math.min(newEdgeMs, currentEnd - MIN_DURATION));
         nextStart = clamped;
         nextDuration = currentEnd - clamped;
       } else {
@@ -1100,6 +1125,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         const clampedEnd = Math.max(minEnd, newEdgeMs);
         nextStart = current.startMs;
         nextDuration = clampedEnd - current.startMs;
+      }
+
+      if (sourceTrim) {
+        const nextSourceStart = sourceTrim.trimStartMs + nextStart - current.startMs;
+        nextDuration = Math.min(nextDuration, Math.max(0, sourceTrim.sourceDurationMs - nextSourceStart));
       }
 
       // 碰撞约束：使用 clampOverlayDurationByNeighbors 做右侧 clamp
@@ -1136,6 +1166,18 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         ...current,
         startMs: nextStart,
         durationMs: nextDuration,
+        ...(sourceVideoData
+          ? { videoData: {
+              ...sourceVideoData,
+              trimStartMs: sourceVideoData.trimStartMs + nextStart - current.startMs,
+            } }
+          : {}),
+        ...(sourceAudioData
+          ? { audioData: {
+              ...sourceAudioData,
+              trimStartMs: sourceAudioData.trimStartMs + nextStart - current.startMs,
+            } }
+          : {}),
       };
 
       const nextTimeline = normalizeTimeline({
@@ -1178,15 +1220,32 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         }
 
         didSplit = true;
+        const sourceVideoData = videoSourceData(overlay, state.assets);
+        const sourceAudioData = overlay.type === 'audio'
+          ? overlay.audioData ?? createDefaultAudioOverlayData(overlay.durationMs) : undefined;
         const leftClip: OverlayItem = {
           ...overlay,
           durationMs: leftDuration,
+          ...(sourceVideoData ? { videoData: sourceVideoData } : {}),
+          ...(sourceAudioData ? { audioData: sourceAudioData } : {}),
         };
         const rightClip: OverlayItem = {
           ...overlay,
           id: uuid(),
           startMs: playheadMs,
           durationMs: rightDuration,
+          ...(sourceVideoData
+            ? { videoData: {
+                ...sourceVideoData,
+                trimStartMs: sourceVideoData.trimStartMs + leftDuration,
+              } }
+            : {}),
+          ...(sourceAudioData
+            ? { audioData: {
+                ...sourceAudioData,
+                trimStartMs: sourceAudioData.trimStartMs + leftDuration,
+              } }
+            : {}),
         };
         newOverlays.push(leftClip, rightClip);
       }

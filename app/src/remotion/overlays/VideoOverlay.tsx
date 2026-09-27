@@ -3,9 +3,10 @@ import type { OverlayItem } from '../../types';
 import { resolveAssetSrc } from '../asset-src';
 import { useIsRendering } from '../use-is-rendering';
 
-export function VideoOverlay({ overlay, zIndex }: { overlay: OverlayItem; zIndex: number }) {
+export function VideoOverlay({ overlay, zIndex, fps }: { overlay: OverlayItem; zIndex: number; fps: number }) {
   const isRendering = useIsRendering();
   const V = isRendering ? OffthreadVideo : Video;
+  const sourceStartFrame = Math.round(((overlay.videoData?.trimStartMs ?? 0) / 1000) * fps);
   return (
     <AbsoluteFill
       style={{
@@ -17,7 +18,7 @@ export function VideoOverlay({ overlay, zIndex }: { overlay: OverlayItem; zIndex
         overflow: 'hidden',
       }}
     >
-      <V src={resolveAssetSrc(overlay.assetPath)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      <V src={resolveAssetSrc(overlay.assetPath)} startFrom={sourceStartFrame} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
     </AbsoluteFill>
   );
 }

@@ -41,6 +41,13 @@ export interface AudioOverlayData {
   muted?: boolean;
 }
 
+export interface VideoOverlayData {
+  /** 源视频裁剪起点（毫秒）；与图层在时间线上的 startMs 不同。 */
+  trimStartMs: number;
+  /** 源视频总时长（毫秒），供编辑器限制裁剪范围。 */
+  sourceDurationMs: number;
+}
+
 export interface OverlayItem {
   id: string;
   type: 'video' | 'image' | 'text' | 'audio';
@@ -55,6 +62,7 @@ export interface OverlayItem {
   aiCardData?: AICardOverlayData;
   textData?: TextOverlayData;
   audioData?: AudioOverlayData;
+  videoData?: VideoOverlayData;
 }
 
 export function createDefaultAudioOverlayData(sourceDurationMs: number): AudioOverlayData {

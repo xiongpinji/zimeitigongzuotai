@@ -51,6 +51,7 @@ interface OverlayInspectorProps {
 
 export function OverlayInspector({ overlayId, onDelete }: OverlayInspectorProps) {
   const timeline = useTimelineStore((state) => state.timeline);
+  const assets = useTimelineStore((state) => state.assets);
   const updateOverlay = useTimelineStore((state) => state.updateOverlay);
   const overlay = timeline.overlays.find((item) => item.id === overlayId);
 
@@ -82,6 +83,16 @@ export function OverlayInspector({ overlayId, onDelete }: OverlayInspectorProps)
     return <AudioInspector overlayId={overlayId} onDelete={onDelete} />;
   }
 
+  const videoSourceDurationMs = overlay.type === 'video'
+    ? Math.max(
+        overlay.durationMs,
+        overlay.videoData?.sourceDurationMs ?? assets.find((asset) =>
+          asset.type === 'video' && asset.path === overlay.assetPath)?.durationMs ?? overlay.durationMs,
+      )
+    : 0;
+  const videoTrimStartMs = overlay.videoData?.trimStartMs ?? 0;
+  const maxVideoTrimStartMs = Math.max(0, videoSourceDurationMs - overlay.durationMs);
+
   return (
     <div className={styles.root}>
       <section className={styles.section}>
@@ -109,6 +120,36 @@ export function OverlayInspector({ overlayId, onDelete }: OverlayInspectorProps)
           </div>
         </div>
       </section>
+
+      {overlay.type === 'video' && (
+        <section className={styles.section}>
+          <div className={styles.sectionTitle}>源视频裁剪</div>
+          <div className={styles.fieldGrid}>
+            <label className={styles.field}>
+              <span className={styles.label}>源起点（ms）</span>
+              <NumberField
+                className={styles.numberField}
+                min={0}
+                max={maxVideoTrimStartMs}
+                step={100}
+                value={videoTrimStartMs}
+                onChange={(value) => updateOverlay(overlayId, {
+                  videoData: {
+                    trimStartMs: Math.max(0, Math.min(maxVideoTrimStartMs, value)),
+                    sourceDurationMs: videoSourceDurationMs,
+                  },
+                })}
+              />
+            </label>
+            <div className={styles.field}>
+              <span className={styles.label}>源区间</span>
+              <span className={styles.value}>
+                {videoTrimStartMs}–{videoTrimStartMs + overlay.durationMs} ms
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className={styles.section}>
         <div className={styles.sectionTitle}>动画</div>
