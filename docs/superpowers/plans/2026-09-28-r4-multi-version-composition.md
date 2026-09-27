@@ -34,10 +34,10 @@
 
 **文件：** 创建 `app/electron/composition/plan-proposals.ts`、`app/tests/composition-plan-proposals.test.ts`。
 
-- [ ] 写失败测试：模型端口必须返回至少三份引用有效的候选；相同片段序列仅换封面/BGM、仅换顺序且没有新的中心问题/证据路径、空白主张、越界来源均不能成为“可审片的三版”；模型不可用时停止，不用随机排列凑数。
-- [ ] 运行 `npx vitest run tests/composition-plan-proposals.test.ts` 看红灯。
-- [ ] 实现端口 `proposePlans(input, generate)`：输入仅包含获准进模型的时间码、匿名主题/转写片段与授权素材描述；输出候选计划及 `reviewRequired: true`，并存模型/提示版本。结构相似度只产生复核标记，不作为平台认定。
-- [ ] 聚焦测试通过后提交。
+- [x] 写失败测试：模型端口必须返回至少三份引用有效的候选；相同片段序列仅换封面/BGM、仅换顺序且没有新的中心问题/证据路径、空白主张、越界来源均不能成为“可审片的三版”；模型不可用时停止，不用随机排列凑数。
+- [x] 运行 `npx vitest run tests/composition-plan-proposals.test.ts`，先观察缺少模块、重复候选和可变批准列表等失败，再逐项修复。
+- [x] 实现端口 `proposePlans(input, generate)`：生成器只接收获准进模型的时间码、匿名主题/转写片段与素材描述；输出候选计划及 `reviewRequired: true`，批次返回模型/提示版本供后续持久化。自动相似性只形成明显重复退回或人工复核标记，不作为平台认定。
+- [x] 聚焦测试、全量 Vitest 与类型检查通过后按精确文件提交。证据见 `docs/validation/r4-plan-proposals-2026-09-28.md`。
 
 ## 任务 3：媒体解析与授权快照
 
