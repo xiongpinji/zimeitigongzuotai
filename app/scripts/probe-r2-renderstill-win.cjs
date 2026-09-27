@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { performance } = require('node:perf_hooks');
 const { spawnSync } = require('node:child_process');
+const { buildSync } = require('esbuild');
 const { bundle } = require('@remotion/bundler');
 const { openBrowser, selectComposition, renderStill } = require('@remotion/renderer');
 const ffmpeg = require('@ffmpeg-installer/ffmpeg').path;
@@ -13,8 +14,9 @@ if (process.platform !== 'win32') throw new Error('Windows is required');
 if (!process.argv[2]) throw new Error('Pass an isolated R2 multitrack smoke runDir');
 
 const runDir = path.resolve(process.argv[2]);
-assert.match(path.basename(runDir), /^r2-multitrack-\d+$/,
-  'Probe accepts only an isolated R2 multitrack smoke directory');
+assert.match(path.basename(runDir), /^r2-(?:multitrack|subtitle)-\d+$/,
+  'Probe accepts only an isolated R2 multitrack or subtitle smoke directory');
+const subtitleFixture = path.basename(runDir).startsWith('r2-subtitle-');
 const projectDir = path.join(runDir, 'project');
 const projectFile = path.join(projectDir, 'project.json');
 const exportVideo = path.join(projectDir, 'project.mp4');
@@ -30,8 +32,12 @@ assert.ok(exportStream?.width && exportStream?.height, 'Smoke export dimensions 
 assert.ok(project.timeline.overlays.every((overlay) => overlay.type === 'video'),
   'Probe accepts only the isolated video-overlay smoke project');
 assert.ok(project.timeline.overlays.length > 0, 'Smoke project has no video overlays');
-assert.ok(!project.timeline.podcast?.audioPath && !project.timeline.podcast?.srtPath,
-  'Probe does not cover podcast audio or subtitles');
+assert.ok(!project.timeline.podcast?.audioPath, 'Probe does not cover podcast audio');
+if (subtitleFixture) {
+  assert.equal(path.resolve(project.timeline.podcast?.srtPath ?? ''), path.join(projectDir, 'captions.srt'));
+} else {
+  assert.ok(!project.timeline.podcast?.srtPath, 'Multitrack probe does not cover subtitles');
+}
 const scale = exportStream.width / project.timeline.width;
 assert.ok(Math.abs(exportStream.height / project.timeline.height - scale) < 0.000001,
   'Smoke export has nonuniform scaling');
@@ -45,8 +51,19 @@ const timeline = {
     assetPath: path.basename(overlay.assetPath),
   })),
 };
-const inputProps = { timeline, srtEntries: [], compiledCards: {} };
-const frameIndices = [42, 43, 90, 42]; // includes a return seek for repeatability
+let srtEntries = [];
+if (subtitleFixture) {
+  const parserOutput = path.join(runDir, 'probe-srt-parser.cjs');
+  buildSync({
+    entryPoints: [path.join(__dirname, '..', 'src', 'lib', 'srt-parser.ts')],
+    outfile: parserOutput, bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+  });
+  const { parseSrt } = require(parserOutput);
+  srtEntries = parseSrt(fs.readFileSync(project.timeline.podcast.srtPath, 'utf8'));
+  assert.equal(srtEntries.length, 2, 'Subtitle smoke fixture must have two cues');
+}
+const inputProps = { timeline, srtEntries, compiledCards: {} };
+const frameIndices = subtitleFixture ? [6, 36, 78, 96, 36] : [42, 43, 90, 42];
 const samples = [];
 
 function ffmpegRun(args, label) {
@@ -110,7 +127,7 @@ async function main() {
       samples.push({ frame, renderMs, ssim: ssim(still, exported), still, exported });
     }
     const result = {
-      runDir, bundleMs, browserMs, compositionMs,
+      runDir, fixtureKind: subtitleFixture ? 'subtitle' : 'multitrack', bundleMs, browserMs, compositionMs,
       composition: {
         durationInFrames: composition.durationInFrames,
         width: composition.width, height: composition.height, fps: composition.fps,
