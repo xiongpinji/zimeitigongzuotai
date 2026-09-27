@@ -17,6 +17,7 @@ const { _electron } = require(path.join(appRoot, 'node_modules', 'playwright'));
 const ffmpeg = require(path.join(appRoot, 'node_modules', '@ffmpeg-installer', 'ffmpeg')).path;
 const project = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
 const fps = project.timeline.fps ?? 30;
+const portraitCanvas = project.timeline.height > project.timeline.width;
 const endMs = Math.max(...project.timeline.overlays.map((item) => item.startMs + item.durationMs));
 const targets = [1400, 1433, 3000];
 const threshold = 0.92;
@@ -99,6 +100,10 @@ async function main() {
             width: Math.round(videoRect.width * dpr),
             height: Math.round(videoRect.height * dpr),
           },
+          stageSize: {
+            width: Math.round(stageRect.width * dpr),
+            height: Math.round(stageRect.height * dpr),
+          },
         };
       });
       if (!measured || measured.videoReadyState < 2) {
@@ -116,8 +121,11 @@ async function main() {
   for (const sample of samples) {
     const exportPath = path.join(runDir, `parity-export-${sample.frameIndex}.png`);
     runFfmpeg(['-v', 'error', '-y', '-i', outputPath, '-vf', `select=eq(n\\,${sample.frameIndex})`, '-vsync', '0', '-frames:v', '1', exportPath], `extract frame ${sample.frameIndex}`);
-    const { x, y, width, height } = sample.crop;
-    const graph = `[0:v]crop=${width}:${height}:${x}:${y},format=yuv444p[p];[1:v]scale=${width}:${height}:flags=bicubic,format=yuv444p[e];[p][e]ssim`;
+    const { x, y, width, height } = portraitCanvas
+      ? { x: 0, y: 0, ...sample.stageSize }
+      : sample.crop;
+    const previewFilter = portraitCanvas ? 'format=yuv444p' : `crop=${width}:${height}:${x}:${y},format=yuv444p`;
+    const graph = `[0:v]${previewFilter}[p];[1:v]scale=${width}:${height}:flags=bicubic,format=yuv444p[e];[p][e]ssim`;
     const log = runFfmpeg(['-hide_banner', '-v', 'info', '-i', sample.previewPath, '-i', exportPath, '-filter_complex', graph, '-frames:v', '1', '-f', 'null', 'NUL'], `compare frame ${sample.frameIndex}`);
     const match = log.match(/SSIM Y:[^\n]*All:([0-9.]+)/);
     if (!match) throw new Error(`SSIM result missing for frame ${sample.frameIndex}`);
@@ -126,7 +134,11 @@ async function main() {
     sample.passed = sample.ssim >= threshold;
   }
 
-  const report = { runDir, fps, threshold, flags: ['--disable-gpu', '--force-color-profile=srgb'], samples, passed: samples.every((sample) => sample.passed) };
+  const report = {
+    runDir, fps, threshold, comparisonRegion: portraitCanvas ? 'whole-portrait-stage' : 'video-element',
+    flags: ['--disable-gpu', '--force-color-profile=srgb'],
+    samples, passed: samples.every((sample) => sample.passed),
+  };
   fs.writeFileSync(path.join(runDir, 'parity-result.json'), JSON.stringify(report, null, 2));
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   if (!report.passed) process.exitCode = 1;

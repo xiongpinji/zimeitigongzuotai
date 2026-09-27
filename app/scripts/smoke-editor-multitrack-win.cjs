@@ -19,6 +19,10 @@ const sourceKind = process.env.LINGJI_R2_SOURCE_KIND ?? 'cfr';
 if (!['cfr', 'vfr'].includes(sourceKind)) {
   throw new Error('LINGJI_R2_SOURCE_KIND must be cfr or vfr');
 }
+const canvasKind = process.env.LINGJI_R2_CANVAS_KIND ?? 'landscape';
+if (!['landscape', 'portrait'].includes(canvasKind)) {
+  throw new Error('LINGJI_R2_CANVAS_KIND must be landscape or portrait');
+}
 if (sourceKind === 'vfr' && sourceFps !== 30) {
   throw new Error('VFR fixture uses a 30 fps source clock; set LINGJI_R2_SOURCE_FPS=30');
 }
@@ -154,6 +158,15 @@ async function main() {
     page = undefined;
     stage('closed');
 
+    if (canvasKind === 'portrait') {
+      // Test the existing render pipeline with a vertical project loaded from disk.
+      // This does not stand in for a user-facing canvas ratio control.
+      const vertical = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+      vertical.timeline.width = 1080;
+      vertical.timeline.height = 1920;
+      fs.writeFileSync(projectFile, JSON.stringify(vertical, null, 2));
+    }
+
     app = await _electron.launch({
       executablePath: path.join(appRoot, 'node_modules', 'electron', 'dist', 'electron.exe'),
       args: [appRoot, `--user-data-dir=${profile}`], env, timeout: 60_000,
@@ -164,6 +177,10 @@ async function main() {
     await page.getByRole('button', { name: '视频编辑器' }).click();
     await waitForClipCount(page, 3);
     const reopened = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    if (canvasKind === 'portrait' &&
+        (reopened.timeline.width !== 1080 || reopened.timeline.height !== 1920)) {
+      throw new Error('vertical timeline dimensions were not preserved on reopen');
+    }
     if (reopened.timeline.tracks.filter((track) => track.kind === 'visual').length !== 2) {
       throw new Error('two visual tracks not preserved');
     }
@@ -176,7 +193,10 @@ async function main() {
     const endMs = Math.max(...reopened.timeline.overlays.map((item) => item.startMs + item.durationMs));
     const stageFrame = page.locator('[class*="stageFrame"]').first();
     const previewFrame = await stageFrame.boundingBox();
-    if (!previewFrame || previewFrame.width < 200 || previewFrame.height < 100) {
+    if (!previewFrame ||
+        (canvasKind === 'portrait'
+          ? previewFrame.width < 80 || previewFrame.height < 180 || previewFrame.width >= previewFrame.height
+          : previewFrame.width < 200 || previewFrame.height < 100)) {
       throw new Error(`preview stage remains too small: ${JSON.stringify(previewFrame)}`);
     }
     const previewSamples = [];
@@ -223,6 +243,11 @@ async function main() {
     ], { encoding: 'utf8', timeout: 20_000 });
     if (probe.status !== 0) throw new Error(`ffprobe failed: ${probe.stderr}`);
     const exportInfo = JSON.parse(probe.stdout);
+    const exportedVideo = exportInfo.streams.find((stream) => stream.codec_name === 'h264');
+    if (!exportedVideo ||
+        (canvasKind === 'portrait' && exportedVideo.width >= exportedVideo.height)) {
+      throw new Error(`export did not retain vertical video geometry: ${JSON.stringify(exportInfo.streams)}`);
+    }
     for (const { frameIndex, label } of previewSamples) {
       const frame = spawnSync(ffmpeg, [
         '-v', 'error', '-y', '-i', outputPath, '-vf', `select=eq(n\\,${frameIndex})`, '-vsync', '0',
@@ -236,6 +261,7 @@ async function main() {
       runDir,
       sourceFps,
       sourceKind,
+      canvasKind,
       sourceFrameStepsMs: frameStepsMs,
       sourceA,
       sourceB,
