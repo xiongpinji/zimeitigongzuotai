@@ -53,10 +53,10 @@
 
 **文件：** 创建 `app/electron/composition/timeline-builder.ts`、`app/electron/composition/version-projects.ts`、对应测试。
 
-- [ ] 写失败测试：原声和视频的相对入点相同，B-roll 在更高视觉轨但不截断原声，开场/结尾文字可编辑；三版保存为三个不同工程，主项目 `project.json` 不被覆盖；重开三版后来源哈希和时间线相同。
-- [ ] 运行聚焦测试看红灯。
-- [ ] 使用 `createDefaultTimeline`、`videoData.trimStartMs`、`audioData.trimStartMs` 和既有项目文件格式构建；目标路径只能位于当前项目的 `compositions/<batch-id>/<plan-id>/`，原子写文件，遇到不同内容的同名工程拒绝覆盖。
-- [ ] 聚焦测试、类型检查与 synthetic Remotion 实际渲染通过后提交。
+- [x] 写失败测试：原声和视频的相对入点相同，B-roll 在更高视觉轨但不截断原声，开场/结尾文字可编辑；三版保存为三个不同工程，主项目 `project.json` 不被覆盖；重开三版后来源哈希和时间线相同。
+- [x] 运行聚焦测试看红灯，两个新增模块均先因缺失而失败。
+- [x] 使用 `createDefaultTimeline`、`videoData.trimStartMs`、`audioData.trimStartMs` 和既有项目文件格式构建；目标路径只能位于当前项目的 `compositions/<batch-id>/<plan-id>/`，目录级原子提交，遇到不同内容的同名工程拒绝覆盖。已编辑的时间线可重开但标记为 `timelineModified`，渲染前必须重新审阅并核验来源。
+- [x] 聚焦测试、类型检查与 synthetic Remotion 实际渲染通过后提交。源码提交 `8da84c9`、`8bd9199`；离线证据见 `docs/validation/r4-timeline-version-projects-2026-09-28.md`。GLM 外部只读审查因百炼月额度 429 未完成，不能据此宣称 R4 验收。
 
 ## 任务 5：批量渲染、恢复与质检
 
