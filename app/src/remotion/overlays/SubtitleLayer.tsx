@@ -3,6 +3,10 @@ import type { SubtitleHighlight, SubtitleStyle } from '../../types';
 import type { RenderableSubtitle } from '../timeline-to-sequences';
 import { filterValidSubtitleHighlights } from '../../lib/subtitle-highlights';
 
+// Headless Remotion renders outside App's font stack; use the same family in both paths.
+const SUBTITLE_FONT_FAMILY =
+  '"SF Pro Text", "SF Pro Display", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif';
+
 export function SubtitleLayer({
   cue,
   style,
@@ -61,6 +65,7 @@ export function SubtitleLayer({
     >
       <span
         style={{
+          fontFamily: SUBTITLE_FONT_FAMILY,
           fontSize: style.fontSize,
           color: style.color,
           fontWeight: 700,
