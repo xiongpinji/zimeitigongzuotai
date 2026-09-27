@@ -56,6 +56,52 @@ async function waitForPidGone(pid: number): Promise<boolean> {
 const EMPTY = { candidateIds: [], highlightIds: [] };
 
 describe('HighlightBatchScheduler（合成录屏与假 runner）', () => {
+  it('退出时停止新派发并中止在途 runner，保留 running 供下次产物恢复', async () => {
+    const store = queue();
+    const [first, second] = store.enqueueBatch([input('stop-a'), input('stop-b')]);
+    let started = false;
+    let aborted = false;
+    const scheduler = new HighlightBatchScheduler({
+      queue: store, concurrency: 1, maxAttempts: 2,
+      runner: async (_task, signal) => new Promise<typeof EMPTY>((_resolve, reject) => {
+        started = true;
+        signal.addEventListener('abort', () => {
+          aborted = true;
+          reject(new HotClipSidecarError('cancelled', 'synthetic private shutdown'));
+        }, { once: true });
+      }),
+    });
+    const drain = scheduler.runQueued();
+    await vi.waitFor(() => expect(started).toBe(true));
+    await scheduler.stopForShutdown();
+    await drain;
+    expect(aborted).toBe(true);
+    expect(store.get(first.id)?.state).toBe('running');
+    expect(store.get(second.id)?.state).toBe('queued');
+    await expect(scheduler.runQueued()).rejects.toMatchObject({ code: 'scheduler_stopped' });
+    expect(readFileSync(join(roots[0], 'batch.json'), 'utf8')).not.toContain('synthetic private shutdown');
+    store.close();
+  });
+
+  it('退出中收到迟到成功也不把未核对产物标成完成', async () => {
+    const store = queue();
+    const [task] = store.enqueueBatch([input('late-success')]);
+    const gate = deferred<typeof EMPTY>();
+    let started = false;
+    const scheduler = new HighlightBatchScheduler({
+      queue: store, concurrency: 1, maxAttempts: 2,
+      runner: async () => { started = true; return gate.promise; },
+    });
+    const drain = scheduler.runQueued();
+    await vi.waitFor(() => expect(started).toBe(true));
+    const stopping = scheduler.stopForShutdown();
+    gate.resolve(EMPTY);
+    await stopping;
+    await drain;
+    expect(store.get(task.id)?.state).toBe('running');
+    store.close();
+  });
+
   it('两个并发槽上限、第三条排队；单录屏失败不阻断其余完成', async () => {
     const store = queue();
     const tasks = store.enqueueBatch([input('rec-a'), input('rec-b'), input('rec-c')]);

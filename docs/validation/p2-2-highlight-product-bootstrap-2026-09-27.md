@@ -19,3 +19,5 @@
 首窗和损坏仓检查分别使用被 Git 忽略的 `data/runtime/validation/highlight-product-source-smoke-profile` 与 `highlight-product-corrupt-profile-2026-09-27`；前者的 JSON 与截图位于同目录，均未使用生产账号目录。这些是源码与合成数据证据，不是安装包启动、真实直播录屏质量或平台发布验收。后续需要给产品提供明确的授权媒体路径/HotClip 配置与操作入口，执行真实样本盲审；在此前不启用自动高光生产与发布。
 
 本次由 Codex 复查改动与测试；没有取得新的 GLM 独立只读审查结论，不将其记为已通过。
+
+后续增量：授权录屏批量导入及显式执行控制器已接入持锁主进程，见[控制器验证记录](p2-2-highlight-product-controller-2026-09-27.md)。本页原有的“尚无执行入口”指当时状态；用户界面与 IPC 入口仍待完成。

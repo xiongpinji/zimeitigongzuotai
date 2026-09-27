@@ -82,6 +82,7 @@ import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
 import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
 import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
+import { ProductHighlightController } from './highlights/product-highlight-controller';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
 import { getPlatform } from './publish/platforms';
@@ -224,6 +225,8 @@ const videoImportService = getVideoImportService();
 let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
+let productHighlightController: ProductHighlightController | null = null;
+let highlightShutdownStarted = false;
 
 function sendMenuEvent(event: MenuEvent) {
   mainWindow?.webContents.send('menu-action', event);
@@ -2849,6 +2852,10 @@ app.whenReady().then(async () => {
   // 单实例锁持有者在首个窗口前恢复高光队列和候选产物；不自动运行 HotClip。
   try {
     productHighlights = bootstrapProductHighlights(app.getPath('userData'));
+    productHighlightController = new ProductHighlightController({
+      runtime: productHighlights,
+      userDataPath: app.getPath('userData'),
+    });
   } catch (err) {
     writeAppLog(
       'error',
@@ -2939,10 +2946,29 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isAppQuitting = true;
+  if (highlightShutdownStarted) {
+    event.preventDefault();
+    return;
+  }
+  if (productHighlightController?.hasActiveWork) {
+    event.preventDefault();
+    highlightShutdownStarted = true;
+    void productHighlightController.stopForShutdown()
+      .catch(() => writeAppLog('error', 'highlight-batch', '退出时高光任务停止异常'))
+      .then(() => {
+        productHighlights?.close();
+        productHighlights = null;
+        productHighlightController = null;
+        highlightShutdownStarted = false;
+        app.quit();
+      });
+    return;
+  }
   productHighlights?.close();
   productHighlights = null;
+  productHighlightController = null;
 });
 
 app.on('activate', () => {

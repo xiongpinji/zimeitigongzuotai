@@ -32,12 +32,14 @@ export interface HighlightBatchSchedulerOptions {
 export const HIGHLIGHT_BATCH_SCHEDULER_ERROR_CODES = [
   'invalid_configuration',
   'scheduler_busy',
+  'scheduler_stopped',
 ] as const;
 export type HighlightBatchSchedulerErrorCode = (typeof HIGHLIGHT_BATCH_SCHEDULER_ERROR_CODES)[number];
 
 const MESSAGES: Readonly<Record<HighlightBatchSchedulerErrorCode, string>> = {
   invalid_configuration: 'Highlight batch scheduler configuration is invalid',
   scheduler_busy: 'Highlight batch scheduler is already dispatching',
+  scheduler_stopped: 'Highlight batch scheduler is stopping',
 };
 
 const HIGHLIGHT_ID_PATTERN = /^hlcv1-[a-f0-9]{64}$/;
@@ -135,6 +137,7 @@ export class HighlightBatchScheduler {
   private readonly runner: HighlightBatchRunner;
   private readonly controllers = new Map<string, AbortController>();
   private activeDrain: Promise<HighlightBatchTaskV1[]> | null = null;
+  private stopping = false;
 
   constructor(options: HighlightBatchSchedulerOptions) {
     if (!options || !(options.queue instanceof HighlightBatchQueue) ||
@@ -158,6 +161,9 @@ export class HighlightBatchScheduler {
 
   /** Run only tasks queued at this call. Failed tasks require an explicit queue.retry(). */
   runQueued(): Promise<HighlightBatchTaskV1[]> {
+    if (this.stopping) {
+      return Promise.reject(new HighlightBatchSchedulerError('scheduler_stopped'));
+    }
     if (this.activeDrain) {
       return Promise.reject(new HighlightBatchSchedulerError('scheduler_busy'));
     }
@@ -167,13 +173,24 @@ export class HighlightBatchScheduler {
     return active;
   }
 
+  /**
+   * Stop claiming work and abort running sidecars before closing the writer. Keep
+   * their durable state at running: startup recovery must inspect the artifact
+   * receipt and decide completed vs interrupted after this process has exited.
+   */
+  async stopForShutdown(): Promise<void> {
+    this.stopping = true;
+    for (const controller of this.controllers.values()) controller.abort();
+    await this.activeDrain;
+  }
+
   private async drain(): Promise<HighlightBatchTaskV1[]> {
     const queuedIds = this.queue.list().filter((task) => task.state === 'queued').map((task) => task.id);
     let cursor = 0;
     const worker = async (): Promise<void> => {
-      while (cursor < queuedIds.length) {
+      while (!this.stopping && cursor < queuedIds.length) {
         const id = queuedIds[cursor++];
-        if (this.queue.get(id)?.state !== 'queued') continue;
+        if (this.stopping || this.queue.get(id)?.state !== 'queued') continue;
         await this.runOne(id);
       }
     };
@@ -193,10 +210,12 @@ export class HighlightBatchScheduler {
       try {
         result = await this.runner(task, controller.signal);
       } catch (error) {
+        if (this.stopping) return;
         if (this.queue.get(id)?.state === 'cancelled') return;
         this.queue.fail(id, task.attempt, safeFailureCode(error));
         return;
       }
+      if (this.stopping) return;
       if (this.queue.get(id)?.state === 'cancelled') return;
       try {
         this.queue.complete(id, task.attempt, safeRunResult(task, result));
