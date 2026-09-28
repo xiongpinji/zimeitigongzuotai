@@ -44,3 +44,7 @@
 在 `199b19e` 基线上新增[取消端口严格探针](../app/scripts/probe-remotion-abort-port.cjs)，三种 AbortSignal 情况均为红灯，旧调用兼容检查通过。它验证当前 Remotion 端口未连接取消信号，没有启动浏览器或编码媒体。[批量渲染到产品接线细化计划](superpowers/plans/2026-09-28-r4-render-batch-orchestration.md)和[六文件 B1 合同](plans/2026-09-28-r4-render-batch-task.md)已落库，持久计划 ID 为 `plan-20260927-231131-ae6e7c`。
 
 Qwen 实现作业因月额度 429 失败；DeepSeek 达到 420 秒上限后超时，两者均无候选改动。GLM 仍只读。R4 B1 执行者选择已在聊天和持久反馈 `feedback-20260927-232537-6af974` 请求用户决定；没有自动接管。当前证据与明确未完成项见[前置验证报告](validation/r4-render-batch-readiness-2026-09-28.md)。
+
+## 2026-09-28 R5 MCP 运行时测试
+
+Codex 独立增加[真实本地 MCP/桌面入口探针](../app/scripts/smoke-production-mcp-win.cjs)。项目盘全新隔离 home 的首次启动因 `sonar_token_acl_failed` 退出 1；在自建空 token 文件上准备严格 DACL 后，真实协议可返回 31 个工具并完成合成工程创建、打开和 Renderer 状态读取。准备条件不构成产品修复，九类生产动作仍未接通，R5 未关闭。详细范围、权限对照与证据见[MCP 运行时报告](validation/r5-mcp-runtime-surface-2026-09-28.md)。
