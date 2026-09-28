@@ -48,3 +48,9 @@ Qwen 实现作业因月额度 429 失败；DeepSeek 达到 420 秒上限后超�
 ## 2026-09-28 R5 MCP 运行时测试
 
 Codex 独立增加[真实本地 MCP/桌面入口探针](../app/scripts/smoke-production-mcp-win.cjs)。项目盘全新隔离 home 的首次启动因 `sonar_token_acl_failed` 退出 1；在自建空 token 文件上准备严格 DACL 后，真实协议可返回 31 个工具并完成合成工程创建、打开和 Renderer 状态读取。准备条件不构成产品修复，九类生产动作仍未接通，R5 未关闭。详细范围、权限对照与证据见[MCP 运行时报告](validation/r5-mcp-runtime-surface-2026-09-28.md)。
+
+## 2026-09-28 R6 账号限流停派测试
+
+在 `dea18f7` 业务基线上新增[账号限流严格探针](../app/scripts/probe-publish-account-cooldown.cjs)。四个平台标识分别测试同对象限流、重新打开 store 后的限流和未知提交对照，共 12 个场景。单任务 retry-after 与等待时间持久化通过；账号级停派 8 个场景均失败，未知提交守卫 4 个对照通过。完整脚本退出 1，没有修改业务代码、启动平台适配器或打包。
+
+这些结果来自真实通用队列和模拟执行器，当前返回契约没有限流作用域，不能称为四平台真实限流验证。现有千任务容量/进程退出证据没有重复运行，R6-P 整体验收继续保留。时间码、代码原因和后续门槛见[账号限流停派报告](validation/r6-account-cooldown-readiness-2026-09-28.md)。
