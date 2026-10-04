@@ -300,6 +300,43 @@ describe('并发预算与单账号互斥', () => {
 });
 
 describe('挂起执行器的有界调度', () => {
+  it('一项迟到写入失败立即阻断调度，即使同轮另一项仍挂起', async () => {
+    let releaseFailed!: () => void;
+    let releaseHung!: () => void;
+    const failedGate = new Promise<void>((resolve) => { releaseFailed = resolve; });
+    const hungGate = new Promise<void>((resolve) => { releaseHung = resolve; });
+    const q = openQueue({
+      executor: async (input) => {
+        await (input.accountId === 'douyin_failed' ? failedGate : hungGate);
+        return submitOk(`remote-${input.accountId}`);
+      },
+      retryPolicy: { tickWaitMs: 20 },
+      budgets: { global: 2, device: 2 },
+    });
+    q.enqueueMatrix(matrix({ accounts: [
+      { accountId: 'douyin_failed', platform: 'douyin' },
+      { accountId: 'kuaishou_hung', platform: 'kuaishou' },
+    ] }));
+    const first = await q.tick();
+    expect(first.inFlight).toHaveLength(2);
+    const claimedBytes = readFileSync(storePath);
+    rmSync(storePath, { force: true });
+    mkdirSync(storePath, { recursive: true });
+    releaseFailed();
+    try {
+      // The other operation is intentionally unresolved; a failure in this one must
+      // become visible without waiting for Promise.allSettled on the whole batch.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      rmSync(storePath, { recursive: true, force: true });
+      writeFileSync(storePath, claimedBytes);
+      await expect(q.tick()).rejects.toMatchObject({ code: 'store_write_failed' });
+      expect(taskOf(q, 'kuaishou_hung').state).toBe('uploading');
+    } finally {
+      releaseHung();
+      await vi.waitFor(() => expect(taskOf(q, 'kuaishou_hung').state).toBe('verifying'));
+    }
+  });
+
   it('有界返回后迟到的状态写入失败会阻止后续调度', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

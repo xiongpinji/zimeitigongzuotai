@@ -1076,6 +1076,15 @@ export class DurablePublishQueue {
     });
 
     const work: Array<Promise<void>> = [];
+    let boundedTickReturned = false;
+    let operationFailure: unknown | null = null;
+    const trackOperation = (operation: Promise<void>): Promise<void> => operation.catch((error: unknown) => {
+      // Record each failure as soon as it occurs. Waiting for the whole batch would
+      // hide a failed state write indefinitely when a sibling adapter is hung.
+      if (operationFailure === null) operationFailure = error;
+      if (boundedTickReturned && this.lateOperationFailure === null) this.lateOperationFailure = error;
+      throw error;
+    });
     for (const entry of submissions) {
       this.running.set(entry.task.id, {
         accountId: entry.task.accountId,
@@ -1084,7 +1093,7 @@ export class DurablePublishQueue {
         controller: entry.controller,
       });
       beginStoreOperation(this.normalizedStorePath);
-      work.push(this.runSubmission(entry.task, entry.controller));
+      work.push(trackOperation(this.runSubmission(entry.task, entry.controller)));
     }
     for (const entry of reconciliations) {
       this.running.set(entry.task.id, {
@@ -1094,7 +1103,7 @@ export class DurablePublishQueue {
         controller: entry.controller,
       });
       beginStoreOperation(this.normalizedStorePath);
-      work.push(this.runReconciliation(entry.task, entry.controller));
+      work.push(trackOperation(this.runReconciliation(entry.task, entry.controller)));
     }
     if (work.length === 0) {
       report.inFlight = [...this.running.keys()];
@@ -1109,13 +1118,16 @@ export class DurablePublishQueue {
       }),
     ]);
     if (timeout) clearTimeout(timeout);
+    if (result.kind === 'wait_expired') {
+      boundedTickReturned = true;
+      if (operationFailure !== null && this.lateOperationFailure === null) {
+        this.lateOperationFailure = operationFailure;
+      }
+    }
+    if (this.lateOperationFailure !== null) throw this.lateOperationFailure;
     // In-flight promises retain their running/store-operation locks until the actual adapter
     // settles. They remain counted on later ticks; timing out a caller never means no upload.
     if (result.kind === 'wait_expired') {
-      void settled.then((items) => {
-        const failure = items.find((item) => item.status === 'rejected');
-        if (failure && failure.status === 'rejected') this.lateOperationFailure = failure.reason;
-      });
       report.inFlight = [...this.running.keys()];
       return report;
     }
