@@ -7,6 +7,7 @@ import type {
   AccountV2QrcodeEvent,
   HighlightV1API,
   AssetLibraryAPI,
+  CompositionV1API,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -858,6 +859,18 @@ contextBridge.exposeInMainWorld('highlightV1API', {
   verifiedOutput: (id) => ipcRenderer.invoke('highlight-v1:verified-output', { id }),
   cancelExport: () => ipcRenderer.invoke('highlight-v1:cancel-export'),
 } satisfies HighlightV1API);
+
+contextBridge.exposeInMainWorld('compositionV1API', {
+  recommend: (input) => ipcRenderer.invoke('composition-v1:recommend', input),
+  resources: () => ipcRenderer.invoke('composition-v1:resources'),
+  create: (input) => ipcRenderer.invoke('composition-v1:create', input),
+  list: () => ipcRenderer.invoke('composition-v1:list'),
+  open: (batchId, planId) => ipcRenderer.invoke('composition-v1:open', { batchId, planId }),
+  render: (input) => ipcRenderer.invoke('composition-v1:render', input),
+  cancel: (batchId) => ipcRenderer.invoke('composition-v1:cancel', { batchId }),
+  analyze: (batchId, planIds) => ipcRenderer.invoke('composition-v1:analyze', { batchId, planIds }),
+  review: (batchId, decision) => ipcRenderer.invoke('composition-v1:review', { batchId, decision }),
+} satisfies CompositionV1API);
 
 contextBridge.exposeInMainWorld('assetLibraryAPI', {
   choose: () => ipcRenderer.invoke('asset-library:choose'),

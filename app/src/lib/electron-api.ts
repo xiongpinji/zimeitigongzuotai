@@ -54,8 +54,10 @@ import type { HighlightArtifactBundle } from '../../electron/highlights/highligh
 import type { AssetLibraryIpcResult, AssetLibraryRecordDto } from '../../electron/assets/asset-library-ipc';
 import type { AssetImportMetadata } from '../../electron/assets/local-asset-library';
 import type { AssetUsageContext, BrollQuery, BrollRecommendationResult } from '../../electron/assets/asset-rights';
+import type { CompositionReviewReport, HumanReviewDecision } from '../../electron/composition/review';
+import type { ProductionPlatform } from '../types/production-contracts';
 
-export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights' | 'assets';
+export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights' | 'assets' | 'composition';
 
 export interface FileEntry {
   name: string;
@@ -872,11 +874,58 @@ export interface AssetLibraryAPI {
     Promise<AssetLibraryIpcResult<{ path: string; mediaType: AssetLibraryRecordDto['mediaType']; durationMs: number | null }>>;
 }
 
+export type CompositionV1Result<T> = ({ ok: true } & T) | { ok: false; code: string };
+export interface CompositionV1VersionDto {
+  planId: string;
+  narrativeSummary: string;
+  createdAt: string;
+  timelineModified: boolean;
+  renderState: 'queued' | 'rendering' | 'completed' | 'failed' | 'cancelled' | 'unknown' | null;
+  renderError: string | null;
+  outputSha256: string | null;
+}
+export interface CompositionV1BatchDto {
+  batchId: string;
+  versions: CompositionV1VersionDto[];
+  context: { platform: ProductionPlatform; region: string; commercialShortVideo: boolean } | null;
+  contextMismatch: boolean;
+}
+export interface CompositionV1API {
+  recommend(input: { query: string; platform: ProductionPlatform; region: string;
+    commercialShortVideo: boolean }): Promise<CompositionV1Result<{
+      status: 'ok' | 'no_eligible_assets' | 'index_unavailable';
+      recommendations: Array<{ assetId: string; similarity: number; reasons: string[] }> }>>;
+  resources(): Promise<CompositionV1Result<{ receipts: Array<{ id: string; highlightId: string;
+    startMs: number; endMs: number; topic: string }>; assets: Array<{
+      id: string; description: string; mediaType: 'video' | 'image' }> }>>;
+  create(input: { aspectRatio: '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+    platform: ProductionPlatform; region: string; commercialShortVideo: boolean;
+    selectedReceipts: Array<{ receiptId: string; anonymousTopic: string;
+      approvedTranscriptExcerpt: string | null }>;
+    selectedAssets: Array<{ assetId: string; anonymousDescription: string }> }):
+    Promise<CompositionV1Result<{ batchId: string; plans: Array<{ planId: string;
+      narrativeSummary: string; centralQuestion: string; segmentCount: number }>;
+      reviewFlags: Array<{ planIds: [string, string]; reason: string }>; reviewRequired: true }>>;
+  list(): Promise<CompositionV1Result<{ batches: CompositionV1BatchDto[] }>>;
+  open(batchId: string, planId: string): Promise<CompositionV1Result<{ projectDir: string; timelineModified: boolean }>>;
+  render(input: { batchId: string; planIds: string[]; platform: ProductionPlatform; region: string;
+    commercialShortVideo: boolean; resolution: 'source' | '720p' | '540p' | '480p';
+    quality: 'speed' | 'balanced' | 'quality'; retryFailed?: boolean }):
+    Promise<CompositionV1Result<{ batchId: string; versions: Array<{ planId: string; state: string;
+      reviewRequired: true; errorCode: string | null }> }>>;
+  cancel(batchId: string): Promise<CompositionV1Result<{ cancelled: boolean }>>;
+  analyze(batchId: string, planIds: string[]): Promise<CompositionV1Result<{ report: CompositionReviewReport }>>;
+  review(batchId: string, decision: Omit<HumanReviewDecision, 'submittedAt'>):
+    Promise<CompositionV1Result<{ result: { planId: string; distinctReviewerIds: number;
+      reviewStatus: string; reviewRequired: true; platformOriginality: 'unverified' } }>>;
+}
+
 declare global {
   interface Window {
     accountV2API: AccountV2API;
     highlightV1API: HighlightV1API;
     assetLibraryAPI: AssetLibraryAPI;
+    compositionV1API: CompositionV1API;
   }
 }
 

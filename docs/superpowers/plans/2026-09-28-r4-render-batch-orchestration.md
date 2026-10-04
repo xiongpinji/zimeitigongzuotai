@@ -24,7 +24,7 @@
 
 - [x] B1：本地源码与合成素材验证完成；详见 `docs/validation/r4-render-batch-codex-2026-10-05.md`，产品及真实素材关口仍未解除。
 - [x] B2：四类相似度证据、人工复核记录和三份实际合成编码的离线核验完成；详见 `docs/validation/r4-composition-review-codex-2026-10-05.md`，没有原创判定或双人盲审结论。
-- [ ] B3：受限 Composition IPC、主进程服务注册和产品界面接线，允许打开三版独立时间线、批量渲染、查看错误与人工审阅；给后续安全发布提供可信产物 ID。
+- [ ] B3：受限 Composition IPC、主进程和产品界面的源码接线与聚焦测试已完成；详见 `docs/validation/r4-composition-workbench-codex-2026-10-05.md`。隔离桌面窗口全链路及后续可信产物 ID 发布对接未验，故此项保持未关闭。
 - [ ] B4：完整 diff 审查、GLM 只读复审、相关全量回归/类型检查/源码构建和隔离桌面验收；真实授权样本与双人盲审未完成前，R4 产品验收保持未完成。
 
 ## Validation strategy

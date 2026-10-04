@@ -86,8 +86,16 @@ import { bootstrapProductHighlights } from './highlights/product-highlight-boots
 import { ProductHighlightController } from './highlights/product-highlight-controller';
 import { ReviewedClipExporter } from './highlights/reviewed-clip-exporter';
 import { registerProductHighlightIpc } from './highlights/product-highlight-ipc';
+import { buildLiveCompositionDocument } from './composition/live-document';
+import { createCompositionRenderBatch } from './composition/render-batch';
+import { createCompositionReview } from './composition/review';
+import { createCompositionReviewSourceGate } from './composition/review-source-gate';
+import { registerCompositionIpc } from './composition/composition-ipc';
+import { createCompositionBatch } from './composition/create-batch';
+import { configuredCompositionModel, CompositionModelError } from './composition/model-generator';
 import { LocalAssetLibrary } from './assets/local-asset-library';
 import { OllamaAssetIndex } from './assets/ollama-asset-index';
+import { recommendBrollFromEntries } from './assets/asset-rights';
 import { registerAssetLibraryIpc } from './assets/asset-library-ipc';
 import { registerLegacyMigrationPreviewIpc } from './publish/legacy-migration-preview';
 import { createSafeStorageCipher } from './publish/session-cipher-electron';
@@ -175,7 +183,7 @@ import type { VideoImportRequest } from '../src/lib/video-import-types';
 import { createWorkbenchTabContextMenuTemplate } from './workbench-tab-context-menu';
 import { getWindowChromeOptions } from './window-chrome';
 import { getPipelineService, attachTaskProgressBridge } from './pipeline';
-import { setActiveProjectPath } from './pipeline/context';
+import { getActiveProjectPath, setActiveProjectPath } from './pipeline/context';
 import { registerSecondInstanceFocus } from './single-instance-gate';
 
 const execFileAsync = promisify(execFile);
@@ -2903,10 +2911,11 @@ app.whenReady().then(async () => {
     });
     const assetRoot = path.join(app.getPath('userData'), 'assets-v1');
     const assetLibrary = new LocalAssetLibrary({ rootDir: assetRoot, ffprobePath });
+    const assetIndex = new OllamaAssetIndex({ rootDir: assetRoot });
     registerAssetLibraryIpc({
       ipc: ipcMain,
       library: assetLibrary,
-      index: new OllamaAssetIndex({ rootDir: assetRoot }),
+      index: assetIndex,
       allowedSender: (event) =>
         !!mainWindow && !mainWindow.isDestroyed() &&
         (event as { sender?: unknown }).sender === mainWindow.webContents &&
@@ -2917,6 +2926,69 @@ app.whenReady().then(async () => {
           'mp4', 'mov', 'webm', 'm4v', 'png', 'jpg', 'jpeg', 'mp3', 'wav', 'm4a',
         ] }],
       }),
+    });
+    const compositionSources = {
+      nowIso: () => new Date().toISOString(),
+      controller: productHighlightController!,
+      exporter: reviewedClipExporter!,
+      library: assetLibrary,
+    };
+    const compositionDocument = (projectDir: string) => buildLiveCompositionDocument(projectDir, {
+      controller: productHighlightController!, library: assetLibrary,
+    });
+    const compositionRenderBatch = createCompositionRenderBatch({
+      getDocument: compositionDocument,
+      sourceServices: compositionSources,
+    });
+    registerCompositionIpc({
+      ipc: ipcMain,
+      allowedSender: (event) =>
+        !!mainWindow && !mainWindow.isDestroyed() &&
+        (event as { sender?: unknown }).sender === mainWindow.webContents &&
+        (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
+      activeProjectDir: getActiveProjectPath,
+      renderBatch: compositionRenderBatch,
+      review: createCompositionReview({ renderState: compositionRenderBatch,
+        sourceGate: createCompositionReviewSourceGate({ getDocument: compositionDocument,
+          sourceServices: compositionSources }) }),
+      resources: async (projectDir) => {
+        const document = await compositionDocument(projectDir);
+        const topics = new Map(document.highlights.map((highlight) => [highlight.id, highlight.topic ?? '']));
+        return {
+          receipts: reviewedClipExporter!.list().map((receipt) => ({
+            id: receipt.id, highlightId: receipt.highlightId,
+            startMs: receipt.startMs, endMs: receipt.endMs,
+            topic: topics.get(receipt.highlightId) ?? '',
+          })),
+          assets: assetLibrary.list().flatMap((record) => {
+            const asset = record.entry.asset;
+            return asset.authorizedForAutoUse && (asset.mediaType === 'video' || asset.mediaType === 'image')
+              ? [{ id: asset.id, description: record.semanticText, mediaType: asset.mediaType }]
+              : [];
+          }),
+        };
+      },
+      createBatch: async (input) => {
+        const settings = await loadGlobalSettings(app.getPath('userData'));
+        if (!settings?.aiSettings) throw new CompositionModelError('model_unavailable');
+        const model = configuredCompositionModel(settings.aiSettings);
+        return createCompositionBatch({ getDocument: compositionDocument,
+          sourceServices: compositionSources, model: model.model,
+          promptVersion: 'composition-v1-2026-10-05', generate: model.generate,
+        })(input);
+      },
+      recommend: async (query, context) => {
+        const records = assetLibrary.list();
+        const use = { ...context, usedAt: new Date().toISOString() };
+        const result = await recommendBrollFromEntries(records.map((record) => record.entry),
+          { text: query, maxResults: 6 }, use, assetIndex.searchPort(records));
+        for (const item of result.recommendations) {
+          await assetLibrary.verifiedForUsage(item.assetId, use);
+        }
+        return { status: result.status,
+          recommendations: result.recommendations.map((item) => ({ assetId: item.assetId,
+            similarity: item.similarity, reasons: ['语义匹配且当前用途授权已核验'] })) };
+      },
     });
   } catch (err) {
     writeAppLog(

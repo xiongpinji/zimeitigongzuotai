@@ -1,0 +1,216 @@
+/** Owner-window-only product bridge for existing, reviewed composition version projects. */
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { readCompositionVersion } from './version-projects';
+import type { createCompositionRenderBatch } from './render-batch';
+import type { createCompositionReview, HumanReviewDecision } from './review';
+import type { CreateCompositionBatchInput } from './create-batch';
+
+export const COMPOSITION_V1_CHANNELS = {
+  list: 'composition-v1:list',
+  open: 'composition-v1:open',
+  render: 'composition-v1:render',
+  cancel: 'composition-v1:cancel',
+  analyze: 'composition-v1:analyze',
+  review: 'composition-v1:review',
+  resources: 'composition-v1:resources',
+  create: 'composition-v1:create',
+  recommend: 'composition-v1:recommend',
+} as const;
+
+type Handler = (event: unknown, input?: unknown) => unknown;
+type RenderBatch = ReturnType<typeof createCompositionRenderBatch>;
+type Review = ReturnType<typeof createCompositionReview>;
+
+export interface CompositionIpcOptions {
+  ipc: { handle(channel: string, handler: Handler): void };
+  allowedSender(event: unknown): boolean;
+  activeProjectDir(): string | null;
+  renderBatch: Pick<RenderBatch, 'run' | 'read' | 'cancel'>;
+  review: Pick<Review, 'analyze' | 'recordDecision'>;
+  resources: (projectDir: string) => Promise<{ receipts: Array<{ id: string; highlightId: string;
+    startMs: number; endMs: number; topic: string }>; assets: Array<{
+      id: string; description: string; mediaType: 'video' | 'image' }> }>;
+  createBatch: (input: CreateCompositionBatchInput) => Promise<{ batchId: string;
+    plans: Array<{ planId: string; narrativeSummary: string; centralQuestion: string; segmentCount: number }>;
+    reviewFlags: Array<{ planIds: [string, string]; reason: string }>; reviewRequired: true }>;
+  recommend: (query: string, context: CreateCompositionBatchInput['context']) => Promise<{
+    status: 'ok' | 'no_eligible_assets' | 'index_unavailable';
+    recommendations: Array<{ assetId: string; similarity: number; reasons: string[] }> }>;
+}
+
+const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const DEVICE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+const SAFE_CODES = new Set([
+  'invalid_input', 'unsafe_path', 'not_found', 'corrupt', 'conflict', 'invalid_plan',
+  'invalid_context', 'review_required', 'source_mismatch', 'clip_unavailable',
+  'invalid_timecode', 'asset_unavailable', 'rights_blocked', 'media_changed',
+  'batch_busy', 'render_failed', 'cancelled', 'unknown', 'output_conflict', 'source_changed',
+  'unsafe_state', 'corrupt_state', 'unsafe_output', 'render_not_complete',
+  'stale_evidence', 'duplicate_reviewer', 'invalid_decision', 'media_probe_failed',
+  'ffmpeg_unavailable', 'unsafe_review_file', 'corrupt_review_file',
+  'unsafe_project', 'conflicting_source', 'invalid_catalog',
+  'model_unavailable', 'invalid_model_output', 'insufficient_plans', 'duplicate_plans',
+  'source_unavailable', 'duplicate_receipt', 'unsupported_voiceover',
+]);
+
+function validId(value: unknown): value is string {
+  return typeof value === 'string' && ID.test(value) && !DEVICE.test(value);
+}
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function ids(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length >= 3 && value.length <= 12 &&
+    value.every(validId) && new Set(value).size === value.length;
+}
+function code(error: unknown): string {
+  const value = (error as { code?: unknown })?.code;
+  return typeof value === 'string' && SAFE_CODES.has(value) ? value : 'internal_error';
+}
+
+async function batches(projectDir: string, renderBatch: CompositionIpcOptions['renderBatch']) {
+  const directory = path.join(projectDir, 'compositions');
+  let entry;
+  try { entry = await fs.lstat(directory); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  if (!entry.isDirectory() || entry.isSymbolicLink()) throw Object.assign(new Error('unsafe_path'), { code: 'unsafe_path' });
+  const names = (await fs.readdir(directory)).filter(validId).sort();
+  if (names.length > 100) throw Object.assign(new Error('invalid_input'), { code: 'invalid_input' });
+  const result = [];
+  for (const batchId of names) {
+    const child = path.join(directory, batchId);
+    const childEntry = await fs.lstat(child);
+    if (!childEntry.isDirectory() || childEntry.isSymbolicLink()) {
+      throw Object.assign(new Error('unsafe_path'), { code: 'unsafe_path' });
+    }
+    const planIds = (await fs.readdir(child)).filter(validId).sort();
+    if (planIds.length > 12) throw Object.assign(new Error('invalid_input'), { code: 'invalid_input' });
+    const versions = [];
+    let context: { platform: string; region: string; commercialShortVideo: boolean } | null = null;
+    let contextMismatch = false;
+    for (const planId of planIds) {
+      const location = { projectDir, batchId, planId };
+      const version = await readCompositionVersion(location);
+      const state = await renderBatch.read(location);
+      const sourceContext = version.manifest.sources.context;
+      const nextContext = { platform: sourceContext.platform, region: sourceContext.region,
+        commercialShortVideo: sourceContext.commercialShortVideo };
+      if (context && JSON.stringify(context) !== JSON.stringify(nextContext)) contextMismatch = true;
+      context ??= nextContext;
+      versions.push({ planId, narrativeSummary: version.manifest.plan.narrativeSummary,
+        createdAt: version.manifest.createdAt, timelineModified: version.timelineModified,
+        renderState: state?.state ?? null,
+        renderError: state?.errorCode && SAFE_CODES.has(state.errorCode) ? state.errorCode : null,
+        outputSha256: state?.state === 'completed' ? state.outputSha256 : null });
+    }
+    if (versions.length) result.push({ batchId, versions, context, contextMismatch });
+  }
+  return result;
+}
+
+export function registerCompositionIpc(options: CompositionIpcOptions): void {
+  const handle = (channel: string, operation: (projectDir: string, input: unknown) => Promise<unknown>) => {
+    options.ipc.handle(channel, async (event, input) => {
+      if (!options.allowedSender(event)) return { ok: false, code: 'forbidden' };
+      const projectDir = options.activeProjectDir();
+      if (!projectDir) return { ok: false, code: 'no_project' };
+      try { return await operation(projectDir, input); }
+      catch (error) { return { ok: false, code: code(error) }; }
+    });
+  };
+
+  handle(COMPOSITION_V1_CHANNELS.list, async (projectDir) =>
+    ({ ok: true, batches: await batches(projectDir, options.renderBatch) }));
+
+  handle(COMPOSITION_V1_CHANNELS.open, async (projectDir, input) => {
+    if (!object(input) || !validId(input.batchId) || !validId(input.planId)) {
+      return { ok: false, code: 'invalid_input' };
+    }
+    const version = await readCompositionVersion({ projectDir, batchId: input.batchId, planId: input.planId });
+    return { ok: true, projectDir: version.projectDir, timelineModified: version.timelineModified };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.render, async (projectDir, input) => {
+    if (!object(input) || !validId(input.batchId) || !ids(input.planIds) ||
+        !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
+        typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
+        typeof input.commercialShortVideo !== 'boolean' ||
+        !['source', '720p', '540p', '480p'].includes(input.resolution as string) ||
+        !['speed', 'balanced', 'quality'].includes(input.quality as string) ||
+        (input.retryFailed !== undefined && typeof input.retryFailed !== 'boolean')) {
+      return { ok: false, code: 'invalid_input' };
+    }
+    const result = await options.renderBatch.run({ projectDir, batchId: input.batchId,
+      planIds: input.planIds, exportConfig: {
+        resolution: input.resolution as 'source' | '720p' | '540p' | '480p',
+        quality: input.quality as 'speed' | 'balanced' | 'quality',
+      }, context: {
+        platform: input.platform as 'douyin' | 'kuaishou' | 'wechat-channels' | 'xiaohongshu',
+        region: input.region, commercialShortVideo: input.commercialShortVideo,
+      }, retryFailed: input.retryFailed as boolean | undefined });
+    return { ok: true, batchId: result.batchId, versions: result.versions.map((version) => ({
+      planId: version.planId, state: version.state, reviewRequired: true,
+      errorCode: version.errorCode && SAFE_CODES.has(version.errorCode) ? version.errorCode : null,
+    })) };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.cancel, async (projectDir, input) => {
+    if (!object(input) || !validId(input.batchId)) return { ok: false, code: 'invalid_input' };
+    return { ok: true, cancelled: await options.renderBatch.cancel(projectDir, input.batchId) };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.analyze, async (projectDir, input) => {
+    if (!object(input) || !validId(input.batchId) || !ids(input.planIds)) {
+      return { ok: false, code: 'invalid_input' };
+    }
+    return { ok: true, report: await options.review.analyze(projectDir, input.batchId, input.planIds) };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.review, async (projectDir, input) => {
+    if (!object(input) || !validId(input.batchId) || !object(input.decision)) {
+      return { ok: false, code: 'invalid_input' };
+    }
+    return { ok: true, result: await options.review.recordDecision(projectDir, input.batchId,
+      input.decision as unknown as Omit<HumanReviewDecision, 'submittedAt'>) };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.resources, async (projectDir) =>
+    ({ ok: true, ...(await options.resources(projectDir)) }));
+
+  handle(COMPOSITION_V1_CHANNELS.create, async (projectDir, input) => {
+    if (!object(input) || !Array.isArray(input.selectedReceipts) ||
+        !Array.isArray(input.selectedAssets) ||
+        !['16:9', '9:16', '1:1', '4:3', '3:4'].includes(input.aspectRatio as string) ||
+        !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
+        typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
+        typeof input.commercialShortVideo !== 'boolean') {
+      return { ok: false, code: 'invalid_input' };
+    }
+    const result = await options.createBatch({ projectDir,
+      aspectRatio: input.aspectRatio as CreateCompositionBatchInput['aspectRatio'],
+      context: { platform: input.platform as CreateCompositionBatchInput['context']['platform'],
+        region: input.region, commercialShortVideo: input.commercialShortVideo },
+      selectedReceipts: input.selectedReceipts as CreateCompositionBatchInput['selectedReceipts'],
+      selectedAssets: input.selectedAssets as CreateCompositionBatchInput['selectedAssets'],
+    });
+    return { ok: true, ...result };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.recommend, async (_projectDir, input) => {
+    if (!object(input) || typeof input.query !== 'string' ||
+        !input.query.trim() || input.query.length > 2000 ||
+        !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
+        typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
+        typeof input.commercialShortVideo !== 'boolean') {
+      return { ok: false, code: 'invalid_input' };
+    }
+    return { ok: true, ...(await options.recommend(input.query, {
+      platform: input.platform as CreateCompositionBatchInput['context']['platform'],
+      region: input.region, commercialShortVideo: input.commercialShortVideo,
+    })) };
+  });
+}

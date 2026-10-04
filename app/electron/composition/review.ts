@@ -58,6 +58,8 @@ export interface HumanReviewDecision {
 
 export interface CompositionReviewDeps {
   renderState: { read: (location: CompositionVersionLocation) => Promise<CompositionRenderState | null> };
+  /** Recheck current reviewed clips and material rights, including identity, before evidence use. */
+  sourceGate: (location: CompositionVersionLocation) => Promise<void>;
   mediaProbe?: (absolutePath: string) => Promise<MediaFingerprint>;
   nowIso?: () => string;
 }
@@ -255,6 +257,7 @@ export function createCompositionReview(deps: CompositionReviewDeps) {
         const record = await readCompositionVersion(location);
         const state = await deps.renderState.read(location);
         if (!state || state.state !== 'completed' || !state.outputFile || !state.outputSha256) fail('render_not_complete');
+        await deps.sourceGate(location);
         const completed = state as CompositionRenderState & { outputFile: string; outputSha256: string };
         if (record.timelineModified) fail('review_required');
         const fingerprint = await probe(path.join(record.projectDir, completed.outputFile));
@@ -332,6 +335,7 @@ export function createCompositionReview(deps: CompositionReviewDeps) {
           const location = { projectDir, batchId, planId: version.planId };
           const current = await readCompositionVersion(location);
           const state = await deps.renderState.read(location);
+          await deps.sourceGate(location);
           if (current.timelineModified || state?.state !== 'completed' ||
               state.outputSha256 !== version.outputSha256 ||
               current.manifest.planSha256 !== version.planSha256 ||

@@ -1,0 +1,27 @@
+.root { height: 100%; overflow: auto; padding: 28px; display: flex; flex-direction: column; gap: 22px; color: var(--color-text-primary); }
+.header { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.header h1 { font-size: 25px; margin: 0 0 6px; }
+.header p, .review p, .empty p { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }
+.root button, .root select, .root input { font: inherit; border: 1px solid var(--color-border, #6665); border-radius: 8px; background: var(--color-bg-secondary, #202229); color: inherit; padding: 8px 12px; }
+.root button { cursor: pointer; }
+.root button:disabled { opacity: .5; cursor: not-allowed; }
+.controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.controls label, .form label { display: flex; align-items: center; gap: 7px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.card, .review, .empty, .create { border: 1px solid var(--color-border, #6665); border-radius: 14px; padding: 20px; background: var(--color-bg-secondary, #202229); }
+.card { display: flex; flex-direction: column; align-items: start; gap: 10px; }
+.card h2, .review h2, .empty h2 { margin: 0; font-size: 18px; }
+.card p { margin: 0; line-height: 1.45; }
+.card button { margin-top: auto; }
+.review { display: flex; flex-direction: column; gap: 12px; }
+.pair { font-size: 13px; line-height: 1.5; }
+.pair strong, .warning { color: #e6aa59; }
+.form { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-top: 8px; }
+.notice { color: var(--color-text-secondary); font-size: 13px; }
+.empty { display: flex; flex-direction: column; gap: 12px; align-items: start; }
+.create { display: flex; flex-direction: column; gap: 13px; align-items: start; }
+.create h2 { margin: 0; font-size: 18px; }
+.create p { margin: 0; line-height: 1.5; color: var(--color-text-secondary); }
+.resourceList { display: flex; flex-direction: column; gap: 8px; width: 100%; max-height: 260px; overflow: auto; }
+.resource { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.resource input[type='text'], .resource input:not([type]) { min-width: 270px; flex: 1; }

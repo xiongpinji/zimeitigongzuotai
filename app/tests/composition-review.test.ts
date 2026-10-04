@@ -13,6 +13,7 @@ import { buildReviewedClipReceipt, expectedReviewedClipId } from '../electron/hi
 import { persistCompositionVersions } from '../electron/composition/version-projects';
 import { resolveCompositionSources, type CompositionSourceServices } from '../electron/composition/source-resolver';
 import { createCompositionReview, probeCompositionMediaWithBinary, type HumanReviewDecision } from '../electron/composition/review';
+import { createCompositionReviewSourceGate } from '../electron/composition/review-source-gate';
 import type { CompositionRenderState } from '../electron/composition/render-batch';
 import { resolveFfmpegPath } from '../electron/runtime-binaries';
 
@@ -104,8 +105,10 @@ async function setup() {
       ? { visualHashes: ['ffffffffffffffff'], audioEnergy: [0.1, 0.8] }
       : { visualHashes: ['0000000000000000'], audioEnergy: planId === 'plan-1' ? [0.1, 0.8] : [0.8, 0.1] };
   });
-  const service = createCompositionReview({ renderState: { read }, mediaProbe, nowIso: () => NOW });
-  return { service, states, records, mediaProbe };
+  const sourceGate = vi.fn(async () => undefined);
+  const service = createCompositionReview({ renderState: { read }, sourceGate,
+    mediaProbe, nowIso: () => NOW });
+  return { service, states, records, mediaProbe, sourceGate, document, sourceServices };
 }
 
 function decision(planId: string, reviewerId: string, evidenceSha256: string): Omit<HumanReviewDecision, 'submittedAt'> {
@@ -126,6 +129,15 @@ afterEach(async () => {
 });
 
 describe('R4 composition similarity evidence and human review', () => {
+  it('re-resolves current sources and rejects a withdrawn reviewed clip', async () => {
+    const { document, sourceServices } = await setup();
+    const gate = createCompositionReviewSourceGate({ getDocument: async () => document, sourceServices });
+    const location = { projectDir, batchId: BATCH, planId: 'plan-1' };
+    await expect(gate(location)).resolves.toBeUndefined();
+    sourceServices.exporter.verifiedOutput = async () => { throw new Error('clip removed'); };
+    await expect(gate(location)).rejects.toMatchObject({ code: 'clip_unavailable' });
+  });
+
   it('flags near-duplicate picture and source even with changed audio, without claiming originality', async () => {
     const { service, mediaProbe } = await setup();
     const report = await service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']);
@@ -193,6 +205,18 @@ describe('R4 composition similarity evidence and human review', () => {
     await fs.writeFile(reportFile, JSON.stringify(corrupt));
     await expect(service.recordDecision(projectDir, BATCH, decision('plan-2', 'reviewer-b', report.evidenceSha256)))
       .rejects.toMatchObject({ code: 'stale_evidence' });
+  });
+
+  it('stops analysis and existing report decisions when the current source gate rejects', async () => {
+    const { service, sourceGate, mediaProbe } = await setup();
+    const report = await service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']);
+    sourceGate.mockRejectedValue(new Error('rights revoked'));
+    await expect(service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']))
+      .rejects.toThrow('rights revoked');
+    expect(mediaProbe).toHaveBeenCalledTimes(3);
+    await expect(service.recordDecision(projectDir, BATCH,
+      decision('plan-1', 'reviewer-a', report.evidenceSha256)))
+      .rejects.toThrow('rights revoked');
   });
 
   it('decodes actual synthetic picture and audio with the bundled FFmpeg', async () => {

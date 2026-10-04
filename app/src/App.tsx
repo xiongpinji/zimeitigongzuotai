@@ -31,6 +31,7 @@ import { prefersReducedMotion } from './ui/lib/animation-config';
 import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { PublishWorkbench } from './components/publish/PublishWorkbench';
 import { HighlightWorkbench } from './components/highlights/HighlightWorkbench';
+import { CompositionWorkbench } from './components/composition/CompositionWorkbench';
 import { AssetLibraryWorkbench } from './components/assets/AssetLibraryWorkbench';
 import { getFileNameFromPath, readAudioDurationMs } from './lib/utils';
 import { createDefaultTimeline } from './types';
@@ -101,6 +102,7 @@ export default function App() {
   const [previousPage, setPreviousPage] = useState<AppPage>('welcome');
   const [pageTransitionReason, setPageTransitionReason] = useState<PageTransitionReason>('default');
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined);
+  const [compositionRootDir, setCompositionRootDir] = useState<string | null>(null);
 
   const setPage = useCallback(
     (next: AppPage, reason: PageTransitionReason = 'default') => {
@@ -1132,14 +1134,14 @@ export default function App() {
   }, [currentProjectDir]);
 
   const handleWorkspaceTabSwitch = useCallback(
-    (tab: 'script-workbench' | 'editor' | 'highlights' | 'assets' | 'publish') => {
+    (tab: 'script-workbench' | 'editor' | 'highlights' | 'composition' | 'assets' | 'publish') => {
       if (tab === page) return;
       setPage(tab);
     },
     [page, setPage],
   );
 
-  const showWorkspaceTabs = page === 'editor' || page === 'script-workbench' || page === 'highlights' || page === 'assets' || page === 'publish';
+  const showWorkspaceTabs = page === 'editor' || page === 'script-workbench' || page === 'highlights' || page === 'composition' || page === 'assets' || page === 'publish';
   const reducedMotion = prefersReducedMotion();
   const pageTransition = resolvePageTransition({
     fromPage: previousPage,
@@ -1230,7 +1232,7 @@ export default function App() {
       />
       {showWorkspaceTabs && (
         <WorkspaceTabs
-          active={page as 'script-workbench' | 'editor' | 'highlights' | 'assets' | 'publish'}
+          active={page as 'script-workbench' | 'editor' | 'highlights' | 'composition' | 'assets' | 'publish'}
           onSwitch={handleWorkspaceTabSwitch}
           scriptProgress={scriptProgress}
         />
@@ -1294,6 +1296,20 @@ export default function App() {
                       addAsset(path, 'video', durationMs);
                       setPage('editor');
                     }} />
+                  </div>
+                  <div style={{ display: page === 'composition' ? 'contents' : 'none' }}>
+                    <CompositionWorkbench active={page === 'composition'} projectDir={currentProjectDir}
+                      returnProjectDir={compositionRootDir}
+                      onOpenVersion={async (versionDir) => {
+                        setCompositionRootDir(currentProjectDir);
+                        await openProject(versionDir);
+                        setPage('editor');
+                      }}
+                      onReturnProject={async (rootDir) => {
+                        await openProject(rootDir);
+                        setCompositionRootDir(null);
+                        setPage('composition');
+                      }} />
                   </div>
                   <div style={{ display: page === 'assets' ? 'contents' : 'none' }}>
                     <AssetLibraryWorkbench active={page === 'assets'} onImportAsset={(path, type, durationMs) => {
