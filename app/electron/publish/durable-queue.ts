@@ -812,43 +812,57 @@ export class DurablePublishQueue {
    * 幂等：同账号重复入队返回既有任务；载荷指纹不同的同键入队显式拒绝。
    */
   enqueueMatrix(input: PublishMatrixInput): PublishMatrixReport {
-    if (!isRecord(input)) {
-      throw new DurableQueueError('invalid_task_input', '入队参数必须为对象');
-    }
-    if (!isNonEmptyString(input.videoVariantId)) {
-      throw new DurableQueueError('invalid_task_input', 'videoVariantId 不能为空');
-    }
-    if (!isNonEmptyString(input.videoRef)) {
-      throw new DurableQueueError('invalid_task_input', 'videoRef 不能为空');
-    }
-    const metadata = validateMetadata(input.metadata);
-    if (!Array.isArray(input.accounts) || input.accounts.length === 0) {
-      throw new DurableQueueError('invalid_task_input', 'accounts 必须为非空数组');
-    }
-    const seenAccounts = new Set<string>();
-    for (const account of input.accounts) {
-      if (!isRecord(account) || !isNonEmptyString(account.accountId)) {
-        throw new DurableQueueError('invalid_task_input', 'accountId 不能为空');
-      }
-      if (seenAccounts.has(account.accountId)) {
-        throw new DurableQueueError('invalid_task_input', `accounts 中账号重复：${account.accountId}`);
-      }
-      seenAccounts.add(account.accountId);
-    }
-    // commerceRequest 必须显式给出（null 或完整契约对象）；undefined / 缺失一律拒绝。
-    if (!('commerceRequest' in input)) {
-      throw new DurableQueueError(
-        'invalid_commerce_request',
-        'commerceRequest 字段必须显式提供（普通发布为 null），拒绝静默降级',
-      );
+    return this.enqueueMatrices([input]);
+  }
+
+  /** 多视频版本批次在完整预检后一次落盘，避免后续版本失败留下半批任务。 */
+  enqueueMatrices(inputs: PublishMatrixInput[]): PublishMatrixReport {
+    if (!Array.isArray(inputs) || inputs.length === 0) {
+      throw new DurableQueueError('invalid_task_input', '发布矩阵批次必须为非空数组');
     }
     const at = this.clock();
-    const prepared = input.accounts.map((account) =>
-      this.buildTask(input, account, metadata, at),
-    );
+    const prepared: DurablePublishTaskV1[] = [];
+    for (const input of inputs) {
+      if (!isRecord(input)) {
+        throw new DurableQueueError('invalid_task_input', '入队参数必须为对象');
+      }
+      if (!isNonEmptyString(input.videoVariantId)) {
+        throw new DurableQueueError('invalid_task_input', 'videoVariantId 不能为空');
+      }
+      if (!isNonEmptyString(input.videoRef)) {
+        throw new DurableQueueError('invalid_task_input', 'videoRef 不能为空');
+      }
+      const metadata = validateMetadata(input.metadata);
+      if (!Array.isArray(input.accounts) || input.accounts.length === 0) {
+        throw new DurableQueueError('invalid_task_input', 'accounts 必须为非空数组');
+      }
+      const seenAccounts = new Set<string>();
+      for (const account of input.accounts) {
+        if (!isRecord(account) || !isNonEmptyString(account.accountId)) {
+          throw new DurableQueueError('invalid_task_input', 'accountId 不能为空');
+        }
+        if (seenAccounts.has(account.accountId)) {
+          throw new DurableQueueError('invalid_task_input', `accounts 中账号重复：${account.accountId}`);
+        }
+        seenAccounts.add(account.accountId);
+      }
+      // 缺失商品字段不可静默降级成普通发布。
+      if (!('commerceRequest' in input)) {
+        throw new DurableQueueError(
+          'invalid_commerce_request',
+          'commerceRequest 字段必须显式提供（普通发布为 null），拒绝静默降级',
+        );
+      }
+      prepared.push(...input.accounts.map((account) => this.buildTask(input, account, metadata, at)));
+    }
 
     const known = new Map(this.file.tasks.map((task) => [task.idempotencyKey, task]));
+    const seenKeys = new Set<string>();
     for (const task of prepared) {
+      if (seenKeys.has(task.idempotencyKey)) {
+        throw new DurableQueueError('invalid_task_input', '发布矩阵批次包含重复的视频版本与账号');
+      }
+      seenKeys.add(task.idempotencyKey);
       const existing = known.get(task.idempotencyKey);
       if (existing && existing.requestFingerprint !== task.requestFingerprint) {
         throw new DurableQueueError(

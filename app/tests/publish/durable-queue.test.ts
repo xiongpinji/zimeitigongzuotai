@@ -119,6 +119,72 @@ function seedUploadingTask(): string {
 }
 
 describe('持久任务矩阵', () => {
+  it('多视频版本 × 各账号一次写入；重复整批入队不改动存储', () => {
+    const q = openQueue();
+    const batch = [
+      matrix({ videoVariantId: 'version-a', accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }),
+      matrix({ videoVariantId: 'version-b', accounts: [{ accountId: 'kuaishou_beta', platform: 'kuaishou' }] }),
+    ];
+    const first = q.enqueueMatrices(batch);
+    expect(first.created.map((task) => [task.accountId, task.videoVariantId])).toEqual([
+      ['douyin_alpha', 'version-a'], ['kuaishou_beta', 'version-b'],
+    ]);
+    expect(readStore().tasks).toHaveLength(2);
+    const bytes = readFileSync(storePath);
+    const second = q.enqueueMatrices(batch);
+    expect(second.created).toEqual([]);
+    expect(second.existing).toHaveLength(2);
+    expect(readFileSync(storePath)).toEqual(bytes);
+  });
+
+  it('多版本批次任一项无效或与既有幂等键冲突时整批不写入', () => {
+    const q = openQueue();
+    q.enqueueMatrix(matrix({ videoVariantId: 'version-existing', accounts: [
+      { accountId: 'douyin_alpha', platform: 'douyin' },
+    ] }));
+    const before = readFileSync(storePath);
+    const fresh = matrix({ videoVariantId: 'version-new', accounts: [
+      { accountId: 'kuaishou_beta', platform: 'kuaishou' },
+    ] });
+    const invalid = matrix({ videoVariantId: 'version-invalid', accounts: [
+      { accountId: 'bad', platform: 'bilibili' as 'douyin' },
+    ] });
+    expectQueueError(() => q.enqueueMatrices([fresh, invalid]), 'invalid_platform');
+    expect(readFileSync(storePath)).toEqual(before);
+    const conflict = matrix({ videoVariantId: 'version-existing', accounts: [
+      { accountId: 'douyin_alpha', platform: 'douyin', overrides: { title: 'changed' } },
+    ] });
+    expectQueueError(() => q.enqueueMatrices([fresh, conflict]), 'idempotency_conflict');
+    expect(readFileSync(storePath)).toEqual(before);
+    expectQueueError(() => q.enqueueMatrices([fresh, fresh]), 'invalid_task_input');
+    expect(readFileSync(storePath)).toEqual(before);
+  });
+
+  it('多版本批次混合已有与新任务只新增一次，写盘失败不改变内存快照', () => {
+    const q = openQueue();
+    const existing = matrix({ videoVariantId: 'version-a', accounts: [
+      { accountId: 'douyin_alpha', platform: 'douyin' },
+    ] });
+    const fresh = matrix({ videoVariantId: 'version-b', accounts: [
+      { accountId: 'kuaishou_beta', platform: 'kuaishou' },
+    ] });
+    q.enqueueMatrix(existing);
+    const before = readFileSync(storePath);
+    rmSync(storePath, { force: true });
+    mkdirSync(storePath, { recursive: true });
+    try {
+      expectQueueError(() => q.enqueueMatrices([existing, fresh]), 'store_write_failed');
+      expect(q.list().map((task) => task.videoVariantId)).toEqual(['version-a']);
+    } finally {
+      rmSync(storePath, { recursive: true, force: true });
+      writeFileSync(storePath, before);
+    }
+    const report = q.enqueueMatrices([existing, fresh]);
+    expect(report.existing).toHaveLength(1);
+    expect(report.created).toHaveLength(1);
+    expect(readStore().tasks).toHaveLength(2);
+  });
+
   it('一个视频版本 × 多账号展开为独立任务，ID/幂等键稳定且重复入队不产生副本', () => {
     const q = openQueue();
     const first = q.enqueueMatrix(
