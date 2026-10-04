@@ -16,7 +16,7 @@
  * - 不注入 `sendEvent`：二维码事件只回发给发起 invoke 的 sender（S1 语义），
  *   绝不广播给所有窗口。
  * - 注入接口与返回值只在主进程内使用：不向 Renderer 暴露任何文件系统路径或
- *   SessionCipher；bootstrap 持有的 vault 不回传、不跨 IPC。
+ *   SessionCipher；vault 只返回给主进程组合根复用，不跨 IPC。
  * - 注册失败（IPC 通道重复 / 仓库目录不可写等）不吞错、不降级：异常直接抛给
  *   调用方显式处理；绝不回退到旧 publish 明文账号仓。
  */
