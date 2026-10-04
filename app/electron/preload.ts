@@ -8,6 +8,7 @@ import type {
   HighlightV1API,
   AssetLibraryAPI,
   CompositionV1API,
+  ProductPublishDraftAPI,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -871,6 +872,11 @@ contextBridge.exposeInMainWorld('compositionV1API', {
   analyze: (batchId, planIds) => ipcRenderer.invoke('composition-v1:analyze', { batchId, planIds }),
   review: (batchId, decision) => ipcRenderer.invoke('composition-v1:review', { batchId, decision }),
 } satisfies CompositionV1API);
+
+contextBridge.exposeInMainWorld('publishV2DraftAPI', {
+  preview: (assignments) => ipcRenderer.invoke('publish-v2:preview', assignments),
+  stage: (assignments) => ipcRenderer.invoke('publish-v2:stage', assignments),
+} satisfies ProductPublishDraftAPI);
 
 contextBridge.exposeInMainWorld('assetLibraryAPI', {
   choose: () => ipcRenderer.invoke('asset-library:choose'),

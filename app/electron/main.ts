@@ -82,6 +82,8 @@ import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
 import { bootstrapProductQueue } from './publish/product-queue-bootstrap';
+import { createProductPublishDraftService } from './publish/product-publish-drafts';
+import { registerProductPublishDraftIpc } from './publish/product-publish-drafts-ipc';
 import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from './highlights/product-highlight-controller';
 import { ReviewedClipExporter } from './highlights/reviewed-clip-exporter';
@@ -2868,6 +2870,7 @@ registerSecondInstanceFocus(() => {
 
 app.whenReady().then(async () => {
   refreshAppConfig();
+  let productCompositionReview: ReturnType<typeof createCompositionReview> | null = null;
   // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
   // 队列不可读或所有权断言失败时停止启动，避免以无保护写者继续运行。
   try {
@@ -2940,6 +2943,9 @@ app.whenReady().then(async () => {
       getDocument: compositionDocument,
       sourceServices: compositionSources,
     });
+    productCompositionReview = createCompositionReview({ renderState: compositionRenderBatch,
+      sourceGate: createCompositionReviewSourceGate({ getDocument: compositionDocument,
+        sourceServices: compositionSources }) });
     registerCompositionIpc({
       ipc: ipcMain,
       allowedSender: (event) =>
@@ -2948,9 +2954,7 @@ app.whenReady().then(async () => {
         (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
       activeProjectDir: getActiveProjectPath,
       renderBatch: compositionRenderBatch,
-      review: createCompositionReview({ renderState: compositionRenderBatch,
-        sourceGate: createCompositionReviewSourceGate({ getDocument: compositionDocument,
-          sourceServices: compositionSources }) }),
+      review: productCompositionReview,
       resources: async (projectDir) => {
         const document = await compositionDocument(projectDir);
         const topics = new Map(document.highlights.map((highlight) => [highlight.id, highlight.topic ?? '']));
@@ -3047,8 +3051,9 @@ app.whenReady().then(async () => {
   // Electron safeStorage（不可用时 A1/A2 拒绝登录，绝无明文回退），平台解析只
   // 认四平台白名单。注册失败显式记录并保持 account-v2 通道不可用：不静默吞错、
   // 不回退旧 publish 明文账号仓。
+  let productAccountVault: ReturnType<typeof bootstrapAccountsV2> | null = null;
   try {
-    bootstrapAccountsV2({
+    productAccountVault = bootstrapAccountsV2({
       userDataPath: app.getPath('userData'),
       ipc: ipcMain,
       createCipher: createSafeStorageCipher,
@@ -3061,6 +3066,26 @@ app.whenReady().then(async () => {
       '安全账号服务注册失败；account-v2 通道不可用（不回退旧明文账号仓）',
       err instanceof Error ? err.name : 'unknown error',
     );
+  }
+  if (productAccountVault && productPublishQueue && productCompositionReview) {
+    try {
+      registerProductPublishDraftIpc({
+        ipc: ipcMain,
+        allowedSender: (event) =>
+          !!mainWindow && !mainWindow.isDestroyed() &&
+          (event as { sender?: unknown }).sender === mainWindow.webContents &&
+          (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
+        service: createProductPublishDraftService({
+          activeProjectDir: getActiveProjectPath,
+          accounts: productAccountVault,
+          review: productCompositionReview,
+          queue: productPublishQueue,
+        }),
+      });
+    } catch (err) {
+      writeAppLog('error', 'publish-v2', '审核版草稿入口注册失败',
+        err instanceof Error ? err.name : 'unknown error');
+    }
   }
   createWindow();
   // 启动 PipelineService 并桥接任务进度到 renderer

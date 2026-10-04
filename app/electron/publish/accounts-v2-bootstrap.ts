@@ -84,7 +84,7 @@ export interface AccountsV2BootstrapOptions {
  * `createWindow()` 之前调用一次；重复注册由 Electron `ipcMain.handle` 显式
  * 抛错（调用方必须显式处理，不得静默降级）。
  */
-export function bootstrapAccountsV2(options: AccountsV2BootstrapOptions): void {
+export function bootstrapAccountsV2(options: AccountsV2BootstrapOptions): AccountVault {
   const root = join(options.userDataPath, ACCOUNT_V2_DATA_DIR_NAME);
   const vault = new AccountVault(root, options.createCipher());
   registerAccountsV2Ipc({
@@ -92,4 +92,5 @@ export function bootstrapAccountsV2(options: AccountsV2BootstrapOptions): void {
     vault,
     platformFactory: createAccountsV2PlatformFactory(options.resolvePlatform),
   });
+  return vault;
 }

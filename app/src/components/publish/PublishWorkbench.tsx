@@ -25,6 +25,7 @@ import {
 import { PublishCoverPanel } from './PublishCoverPanel';
 import { autoFillCovers, useCoverStudio } from './useCoverStudio';
 import { isInsideDir } from '../../lib/publish/resolve-video-file';
+import { SafePublishDraftPanel } from './SafePublishDraftPanel';
 
 /** 渲染层 basename：避免引入 node:path。 */
 function baseName(p: string): string {
@@ -939,7 +940,7 @@ export function PublishWorkbench({ projectDir }: { projectDir: string | null }) 
             {projectDir}
           </p>
         )}
-        {/* 未切换边界：旧发布工作台只识别旧账号 ID，新安全账号不进入本 runner。 */}
+        {/* 旧 runner 与安全账号草稿区并行；此处只识别旧账号 ID。 */}
         <div
           role="note"
           style={{
@@ -953,9 +954,11 @@ export function PublishWorkbench({ projectDir }: { projectDir: string | null }) 
             color: 'var(--color-text-secondary)',
           }}
         >
-          这里仍使用旧账号体系；新安全账号暂未接入发布。下方「发布到」只列出旧账号，新账号请到「设置 → 安全账号」管理。
+          下方旧发布表单仍使用旧账号。安全账号请在下方草稿区选择经复核的视频版本；草稿不会自动发布。
         </div>
       </div>
+
+      <SafePublishDraftPanel projectDir={projectDir} />
 
       {/* Form */}
       <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>

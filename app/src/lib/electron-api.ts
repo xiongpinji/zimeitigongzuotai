@@ -56,6 +56,8 @@ import type { AssetImportMetadata } from '../../electron/assets/local-asset-libr
 import type { AssetUsageContext, BrollQuery, BrollRecommendationResult } from '../../electron/assets/asset-rights';
 import type { CompositionReviewReport, HumanReviewDecision } from '../../electron/composition/review';
 import type { ProductionPlatform } from '../types/production-contracts';
+import type { ProductPublishDraftAssignment, ProductPublishDraftPreview } from
+  '../../electron/publish/product-publish-drafts';
 
 export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights' | 'assets' | 'composition';
 
@@ -920,12 +922,23 @@ export interface CompositionV1API {
       reviewStatus: string; reviewRequired: true; platformOriginality: 'unverified' } }>>;
 }
 
+export type ProductPublishDraftResult<T> = ({ ok: true } & T) | { ok: false; code: string };
+/** 只保存经复核的账号与版本配对；不启动平台提交。 */
+export interface ProductPublishDraftAPI {
+  preview(assignments: ProductPublishDraftAssignment[]):
+    Promise<ProductPublishDraftResult<ProductPublishDraftPreview>>;
+  stage(assignments: ProductPublishDraftAssignment[]):
+    Promise<ProductPublishDraftResult<{ created: number; existing: number;
+      preview: ProductPublishDraftPreview }>>;
+}
+
 declare global {
   interface Window {
     accountV2API: AccountV2API;
     highlightV1API: HighlightV1API;
     assetLibraryAPI: AssetLibraryAPI;
     compositionV1API: CompositionV1API;
+    publishV2DraftAPI: ProductPublishDraftAPI;
   }
 }
 

@@ -612,7 +612,7 @@ describe('SecureAccountsTab', () => {
     expect(accountRow.textContent).not.toContain('\u061C');
   });
 
-  it('新安全账号操作全程零次旧 publishAPI 调用，三处均有未切换提示', async () => {
+  it('新安全账号操作全程零次旧 publishAPI 调用，旧 runner 保持隔离且草稿区独立', async () => {
     const publishApi = installPublishApi();
     const api = installAccountV2Api();
     api.create.mockResolvedValue({ ok: true, account: makeDto({ id: UUID_A, displayName: '主账号' }) });
@@ -636,12 +636,13 @@ describe('SecureAccountsTab', () => {
     expect(oldHost.textContent).toContain(BOUNDARY_NOTICE);
     expect(publishApi.listAccounts).toHaveBeenCalled();
 
-    // 旧发布工作台与新设置 tab 注册：源码级契约（组件渲染见上方行为测试）。
+    // 旧发布工作台仍只认旧账号；安全账号进入独立的审核版草稿区。
     const workbenchSource = readFileSync(
       resolve(__dirname, '../src/components/publish/PublishWorkbench.tsx'),
       'utf8',
     );
-    expect(workbenchSource).toContain(BOUNDARY_NOTICE);
+    expect(workbenchSource).toContain('旧发布表单仍使用旧账号');
+    expect(workbenchSource).toContain('<SafePublishDraftPanel projectDir={projectDir} />');
 
     const settingsSource = readFileSync(resolve(__dirname, '../src/pages/Settings.tsx'), 'utf8');
     expect(settingsSource).toContain('secure-accounts');

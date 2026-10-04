@@ -335,6 +335,7 @@ const RECONCILABLE_STATES: ReadonlySet<QueueTaskState> = new Set([
   'unknown_submission',
 ]);
 const CANCELLABLE_PRE_EXECUTION: ReadonlySet<QueueTaskState> = new Set([
+  'draft',
   'queued',
   'retryable_failure',
   'needs_login',
@@ -817,6 +818,15 @@ export class DurablePublishQueue {
 
   /** 多视频版本批次在完整预检后一次落盘，避免后续版本失败留下半批任务。 */
   enqueueMatrices(inputs: PublishMatrixInput[]): PublishMatrixReport {
+    return this.enqueueMany(inputs, 'queued');
+  }
+
+  /** 持久化待人工放行的版本矩阵；draft 从不被 tick 领取。 */
+  enqueueDraftMatrices(inputs: PublishMatrixInput[]): PublishMatrixReport {
+    return this.enqueueMany(inputs, 'draft');
+  }
+
+  private enqueueMany(inputs: PublishMatrixInput[], initialState: 'queued' | 'draft'): PublishMatrixReport {
     if (!Array.isArray(inputs) || inputs.length === 0) {
       throw new DurableQueueError('invalid_task_input', '发布矩阵批次必须为非空数组');
     }
@@ -853,7 +863,7 @@ export class DurablePublishQueue {
           'commerceRequest 字段必须显式提供（普通发布为 null），拒绝静默降级',
         );
       }
-      prepared.push(...input.accounts.map((account) => this.buildTask(input, account, metadata, at)));
+      prepared.push(...input.accounts.map((account) => this.buildTask(input, account, metadata, at, initialState)));
     }
 
     const known = new Map(this.file.tasks.map((task) => [task.idempotencyKey, task]));
@@ -901,6 +911,7 @@ export class DurablePublishQueue {
     account: PublishMatrixAccountInput,
     sharedMetadata: QueueJobMetadata,
     at: number,
+    initialState: 'queued' | 'draft',
   ): DurablePublishTaskV1 {
     const platform = validatePlatform(account.platform, `accounts.${account.accountId}.platform`);
     const overrides = account.overrides ?? {};
@@ -936,7 +947,7 @@ export class DurablePublishQueue {
           : null,
       }),
     );
-    const state: QueueTaskState = commerceRequest === null ? 'queued' : 'needs_user_action';
+    const state: QueueTaskState = commerceRequest === null ? initialState : 'needs_user_action';
     return {
       id: `pubjob_${sha256Hex(idempotencyKey).slice(0, 24)}`,
       platform,
@@ -1424,6 +1435,33 @@ export class DurablePublishQueue {
   }
 
   // ————————————————————————————— 人工操作 —————————————————————————————
+
+  /** 仅在主进程重新核验来源、账号及明确发布授权后调用；整批原子放行。 */
+  armDrafts(taskIds: string[]): number {
+    if (!Array.isArray(taskIds) || taskIds.length === 0 ||
+        taskIds.some((id) => !isNonEmptyString(id)) ||
+        new Set(taskIds).size !== taskIds.length) {
+      throw new DurableQueueError('invalid_task_input', '草稿任务 ID 必须非空且不重复');
+    }
+    for (const taskId of taskIds) {
+      const task = this.requireTask(taskId);
+      if (task.state !== 'draft') {
+        throw new DurableQueueError('invalid_transition', '只能放行尚未提交的草稿任务');
+      }
+      if (task.commerceRequest !== null) {
+        throw new DurableQueueError('commerce_blocked', '商品请求尚未配置，禁止放行');
+      }
+    }
+    const at = this.clock();
+    this.mutate((draft) => {
+      for (const taskId of taskIds) {
+        const task = draft.tasks.find((candidate) => candidate.id === taskId)!;
+        this.transition(task, 'queued', { at, errorCode: null });
+        task.nextAttemptAt = at;
+      }
+    });
+    return taskIds.length;
+  }
 
   /** 取消尚未提交的任务；执行中的任务转为取消请求并中止执行器。 */
   cancel(taskId: string): boolean {

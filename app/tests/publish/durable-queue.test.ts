@@ -119,6 +119,46 @@ function seedUploadingTask(): string {
 }
 
 describe('持久任务矩阵', () => {
+  it('多账号多版本草稿不会被调度，整批放行后才进入队列', async () => {
+    const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));
+    const q = openQueue({ executor, budgets: { global: 2, device: 2 } });
+    const report = q.enqueueDraftMatrices([
+      matrix({ videoVariantId: 'reviewed-a', accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }),
+      matrix({ videoVariantId: 'reviewed-b', accounts: [{ accountId: 'kuaishou_beta', platform: 'kuaishou' }] }),
+    ]);
+    expect(report.created.map((task) => task.state)).toEqual(['draft', 'draft']);
+    expect((await q.tick()).claimed).toEqual([]);
+    expect(executor).not.toHaveBeenCalled();
+    const reopened = openQueue({ executor, budgets: { global: 2, device: 2 } });
+    expect(reopened.list().map((task) => task.state)).toEqual(['draft', 'draft']);
+    expect(reopened.armDrafts(report.created.map((task) => task.id))).toBe(2);
+    expect(reopened.list().map((task) => task.state)).toEqual(['queued', 'queued']);
+    expect((await reopened.tick()).claimed).toHaveLength(2);
+    expect(executor).toHaveBeenCalledTimes(2);
+  });
+
+  it('草稿放行遇到非草稿、重复 ID 或商品请求时整批拒绝', () => {
+    const q = openQueue();
+    const draft = q.enqueueDraftMatrices([matrix({ accounts: [
+      { accountId: 'douyin_alpha', platform: 'douyin' },
+    ] })]).created[0]!;
+    const queued = q.enqueueMatrix(matrix({ videoVariantId: 'queued-b', accounts: [
+      { accountId: 'kuaishou_beta', platform: 'kuaishou' },
+    ] })).created[0]!;
+    const before = readFileSync(storePath);
+    expectQueueError(() => q.armDrafts([draft.id, queued.id]), 'invalid_transition');
+    expectQueueError(() => q.armDrafts([draft.id, draft.id]), 'invalid_task_input');
+    expect(readFileSync(storePath)).toEqual(before);
+    expect(q.cancel(draft.id)).toBe(true);
+    expect(taskOf(q, 'douyin_alpha').state).toBe('cancelled');
+    const commerce = q.enqueueDraftMatrices([matrix({ videoVariantId: 'commerce-c', accounts: [
+      { accountId: 'douyin_gamma', platform: 'douyin' },
+    ], commerceRequest: { platform: 'douyin', accountId: 'douyin_gamma', kind: 'shop',
+      platformProductId: 'product-42', required: false } })]).created[0]!;
+    expect(commerce.state).toBe('needs_user_action');
+    expectQueueError(() => q.armDrafts([commerce.id]), 'invalid_transition');
+  });
+
   it('多视频版本 × 各账号一次写入；重复整批入队不改动存储', () => {
     const q = openQueue();
     const batch = [
