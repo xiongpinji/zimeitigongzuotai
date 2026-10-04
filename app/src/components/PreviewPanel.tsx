@@ -79,6 +79,104 @@ function PreviewPanelComponent({
   const isSeekingRef = useRef(false);
   const volumeTrackRef = useRef<HTMLDivElement>(null);
   const isAdjustingVolumeRef = useRef(false);
+  const exactSessionRef = useRef<{ sessionId: string; durationInFrames: number; fps: number } | null>(null);
+  const exactPrepareRef = useRef<Promise<{ sessionId: string; durationInFrames: number; fps: number }> | null>(null);
+  const exactGenerationRef = useRef(0);
+  const exactRequestRef = useRef(0);
+  const exactObjectUrlRef = useRef<string | null>(null);
+  const [exactUrl, setExactUrl] = useState<string | null>(null);
+  const [exactStatus, setExactStatus] = useState<'unavailable' | 'playing' | 'preparing' | 'ready' | 'error'>('unavailable');
+  const [exactFrame, setExactFrame] = useState<number | null>(null);
+
+  const clearExactImage = useCallback(() => {
+    if (exactObjectUrlRef.current) URL.revokeObjectURL(exactObjectUrlRef.current);
+    exactObjectUrlRef.current = null;
+    setExactUrl(null);
+    setExactFrame(null);
+  }, []);
+
+  useEffect(() => {
+    const generation = ++exactGenerationRef.current;
+    const prior = exactSessionRef.current;
+    exactSessionRef.current = null;
+    exactPrepareRef.current = null;
+    clearExactImage();
+    if (prior) void window.electronAPI?.releaseExactPreview(prior.sessionId).catch(() => undefined);
+    return () => {
+      if (exactGenerationRef.current === generation) exactGenerationRef.current += 1;
+      const active = exactSessionRef.current;
+      exactSessionRef.current = null;
+      exactPrepareRef.current = null;
+      clearExactImage();
+      if (active) void window.electronAPI?.releaseExactPreview(active.sessionId).catch(() => undefined);
+    };
+  }, [timeline, srtEntries, projectDir, clearExactImage]);
+
+  useEffect(() => {
+    const request = ++exactRequestRef.current;
+    clearExactImage();
+    if (isPlaying) {
+      setExactStatus('playing');
+      return;
+    }
+    const api = window.electronAPI;
+    if (!api?.prepareExactPreview || !projectDir) {
+      setExactStatus('unavailable');
+      return;
+    }
+    setExactStatus('preparing');
+    const generation = exactGenerationRef.current;
+    const timer = window.setTimeout(() => {
+      const prepared = exactPrepareRef.current ?? api.prepareExactPreview({ timeline, srtEntries, projectDir })
+        .then((session) => {
+          if (generation !== exactGenerationRef.current) {
+            void api.releaseExactPreview(session.sessionId).catch(() => undefined);
+            throw new Error('preview_superseded');
+          }
+          exactSessionRef.current = session;
+          return session;
+        })
+        .catch((error) => {
+          if (generation === exactGenerationRef.current) exactPrepareRef.current = null;
+          throw error;
+        });
+      exactPrepareRef.current = prepared;
+      void prepared.then(async (session) => {
+        if (request !== exactRequestRef.current || generation !== exactGenerationRef.current) return;
+        const frame = Math.max(0, Math.min(session.durationInFrames - 1, Math.round((currentTimeMs / 1000) * session.fps)));
+        const result = await api.renderExactPreviewFrame({ sessionId: session.sessionId, frame });
+        if (request !== exactRequestRef.current || generation !== exactGenerationRef.current || result.frame !== frame || result.sessionId !== session.sessionId) return;
+        const bytes = Uint8Array.from(result.png);
+        const url = URL.createObjectURL(new Blob([bytes.buffer], { type: 'image/png' }));
+        try {
+          const decoded = new Image();
+          decoded.src = url;
+          await decoded.decode();
+        } catch {
+          URL.revokeObjectURL(url);
+          throw new Error('preview_image_decode_failed');
+        }
+        if (request !== exactRequestRef.current || generation !== exactGenerationRef.current) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        clearExactImage();
+        exactObjectUrlRef.current = url;
+        setExactUrl(url);
+        setExactFrame(frame);
+        setExactStatus('ready');
+      }).catch(() => {
+        if (request === exactRequestRef.current && generation === exactGenerationRef.current) {
+          clearExactImage();
+          setExactStatus('error');
+        }
+      });
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      exactRequestRef.current += 1;
+    };
+  }, [timeline, srtEntries, projectDir, isPlaying, currentTimeMs, clearExactImage]);
 
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -325,6 +423,8 @@ function PreviewPanelComponent({
         <div
           ref={stageFrameRef}
           className={styles.stageFrame}
+          data-exact-preview-status={exactStatus}
+          data-exact-preview-frame={exactStatus === 'ready' ? exactFrame ?? undefined : undefined}
           style={{
             width: Math.max(0, stageSize.width),
             height: Math.max(0, stageSize.height),
@@ -343,6 +443,11 @@ function PreviewPanelComponent({
             onPause={onPreviewPause}
             onEnded={onPreviewEnded}
           />
+          {exactUrl && exactStatus === 'ready' && (
+            <img className={styles.exactFrame} src={exactUrl} alt="当前精确预览帧" />
+          )}
+          {exactStatus === 'preparing' && <span className={styles.exactStatus}>正在生成精确预览</span>}
+          {exactStatus === 'error' && <span className={styles.exactStatus}>精确预览暂不可用</span>}
           {onSelectOverlay && (
             <CanvasInteractionLayer
               overlays={timeline.overlays}

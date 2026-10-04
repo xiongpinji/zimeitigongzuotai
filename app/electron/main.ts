@@ -73,6 +73,7 @@ import {
 } from './runtime-binaries';
 import { compileCards } from './remotion/compile-card-node';
 import { renderVideoHeadless, type RenderVideoArgs } from './remotion/render-video-headless';
+import { createExactPreviewController, createRemotionExactPreviewResource, type ExactPreviewInput } from './remotion/preview-still';
 import { registerAgentIpc } from './acp/ipc';
 import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headless-provider';
 import { registerConversationIpc } from './conversations/ipc';
@@ -2752,6 +2753,24 @@ ipcMain.handle('refresh-recent-projects', async () => {
   refreshApplicationMenu();
   return projects;
 });
+
+const exactPreviewController = createExactPreviewController(createRemotionExactPreviewResource);
+const exactPreviewOwners = new Set<number>();
+ipcMain.handle('preview-exact-prepare', async (event, args: ExactPreviewInput) => {
+  const owner = event.sender.id;
+  if (!exactPreviewOwners.has(owner)) {
+    exactPreviewOwners.add(owner);
+    event.sender.once('destroyed', () => {
+      exactPreviewOwners.delete(owner);
+      void exactPreviewController.releaseOwner(owner).catch(() => undefined);
+    });
+  }
+  return exactPreviewController.prepare(owner, args);
+});
+ipcMain.handle('preview-exact-frame', (event, args: { sessionId: string; frame: number }) =>
+  exactPreviewController.render(event.sender.id, args.sessionId, args.frame));
+ipcMain.handle('preview-exact-release', (event, sessionId: string) =>
+  exactPreviewController.release(event.sender.id, sessionId));
 
 ipcMain.handle('render-video', async (_event, args: RenderVideoArgs & { telemetryRunId?: string }) => {
   // 与 tts/cover/analyze 一样接 auto-run jsonl：renderer 可选传 telemetryRunId，

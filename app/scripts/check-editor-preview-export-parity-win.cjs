@@ -16,11 +16,14 @@ const appRoot = path.resolve(__dirname, '..');
 const { _electron } = require(path.join(appRoot, 'node_modules', 'playwright'));
 const ffmpeg = require(path.join(appRoot, 'node_modules', '@ffmpeg-installer', 'ffmpeg')).path;
 const project = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+const subtitleFixture = path.basename(runDir).startsWith('r2-subtitle-');
 const fps = project.timeline.fps ?? 30;
 const portraitCanvas = project.timeline.height > project.timeline.width;
 const endMs = Math.max(...project.timeline.overlays.map((item) => item.startMs + item.durationMs));
-const targets = [1400, 1433, 3000];
+const targets = subtitleFixture ? [200, 1200, 2600, 1200] : [1400, 1433, 3000, 1400];
 const threshold = 0.92;
+const disableGpu = process.env.LINGJI_R2_DISABLE_GPU !== '0';
+const browserFlags = [...(disableGpu ? ['--disable-gpu'] : []), '--force-color-profile=srgb'];
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 
@@ -33,7 +36,7 @@ function runFfmpeg(args, label) {
 async function main() {
   const app = await _electron.launch({
     executablePath: path.join(appRoot, 'node_modules', 'electron', 'dist', 'electron.exe'),
-    args: [appRoot, `--user-data-dir=${path.join(runDir, 'profile')}`, '--disable-gpu', '--force-color-profile=srgb'],
+    args: [appRoot, `--user-data-dir=${path.join(runDir, 'profile')}`, ...browserFlags],
     env,
     timeout: 60_000,
   });
@@ -42,7 +45,8 @@ async function main() {
     const page = await app.firstWindow({ timeout: 60_000 });
     await page.waitForFunction(() => document.body.textContent?.includes('project'), null, { timeout: 30_000 });
     await page.getByRole('button', { name: '视频编辑器' }).click();
-    await page.waitForFunction(() => document.querySelectorAll('[data-overlay-block]').length === 3, null, { timeout: 30_000 });
+    await page.waitForFunction((count) => document.querySelectorAll('[data-overlay-block]').length === count,
+      subtitleFixture ? 1 : 3, { timeout: 30_000 });
     await page.evaluate(() => {
       const stage = document.querySelector('[class*="stageFrame"]');
       if (!stage) return;
@@ -72,28 +76,41 @@ async function main() {
     const progress = page.getByRole('slider', { name: '播放进度' });
     const progressBox = await progress.boundingBox();
     if (!progressBox) throw new Error('Progress slider is missing');
-    for (const requestedMs of targets) {
+    for (const [sampleIndex, requestedMs] of targets.entries()) {
       await progress.click({ position: { x: progressBox.width * (requestedMs / endMs), y: progressBox.height / 2 } });
       await page.waitForFunction((target) => {
         const actual = Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow'));
         return Math.abs(actual - target) < 200;
       }, requestedMs, { timeout: 15_000 });
       await page.mouse.move(10, 10);
-      await page.waitForTimeout(600);
+      const exactWaitStarted = Date.now();
+      await page.waitForFunction((sourceFps) => {
+        const stage = document.querySelector('[class*="stageFrame"]');
+        const actual = Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow'));
+        if (stage?.getAttribute('data-exact-preview-status') === 'error') return true;
+        const exact = stage?.querySelector('img[alt="当前精确预览帧"]');
+        return stage?.getAttribute('data-exact-preview-status') === 'ready' &&
+          Number(stage.getAttribute('data-exact-preview-frame')) === Math.round((actual / 1000) * sourceFps) &&
+          exact?.complete && exact.naturalWidth > 0;
+      }, fps, { timeout: 120_000 });
+      const exactWaitMs = Date.now() - exactWaitStarted;
       const measured = await page.evaluate(() => {
         const stage = document.querySelector('[class*="stageFrame"]');
         const video = Array.from(stage?.querySelectorAll('video') ?? []).at(-1);
-        if (!stage || !video) return null;
+        const exact = stage?.querySelector('img[alt="当前精确预览帧"]');
+        if (!stage || !exact) return null;
         const stageRect = stage.getBoundingClientRect();
-        const videoRect = video.getBoundingClientRect();
+        const videoRect = exact.getBoundingClientRect();
         const dpr = window.devicePixelRatio;
         return {
           actualMs: Number(document.querySelector('[role="slider"][aria-label="播放进度"]')?.getAttribute('aria-valuenow')),
-          videoTime: video.currentTime,
-          videoReadyState: video.readyState,
-          videoSrc: video.currentSrc,
-          lastPresented: video.__r2LastPresented ?? null,
-          lastSeeked: video.__r2LastSeeked ?? null,
+          exactStatus: stage.getAttribute('data-exact-preview-status'),
+          exactFrame: Number(stage.getAttribute('data-exact-preview-frame')),
+          videoTime: video?.currentTime ?? null,
+          videoReadyState: video?.readyState ?? null,
+          videoSrc: video?.currentSrc ?? null,
+          lastPresented: video?.__r2LastPresented ?? null,
+          lastSeeked: video?.__r2LastSeeked ?? null,
           crop: {
             x: Math.round((videoRect.left - stageRect.left) * dpr),
             y: Math.round((videoRect.top - stageRect.top) * dpr),
@@ -106,13 +123,13 @@ async function main() {
           },
         };
       });
-      if (!measured || measured.videoReadyState < 2) {
-        throw new Error(`Video is not decoded at ${requestedMs}ms`);
+      if (!measured || measured.exactStatus !== 'ready') {
+        throw new Error(`Exact preview is not ready at ${requestedMs}ms`);
       }
-      const frameIndex = Math.round((measured.actualMs / 1000) * fps);
-      const previewPath = path.join(runDir, `parity-preview-${frameIndex}.png`);
+      const frameIndex = measured.exactFrame;
+      const previewPath = path.join(runDir, `parity-preview-${sampleIndex}-${frameIndex}.png`);
       await page.locator('[class*="stageFrame"]').first().screenshot({ path: previewPath });
-      samples.push({ requestedMs, frameIndex, previewPath, ...measured });
+      samples.push({ requestedMs, frameIndex, exactWaitMs, previewPath, ...measured });
     }
   } finally {
     await app.close();
@@ -135,8 +152,9 @@ async function main() {
   }
 
   const report = {
-    runDir, fps, threshold, comparisonRegion: portraitCanvas ? 'whole-portrait-stage' : 'video-element',
-    flags: ['--disable-gpu', '--force-color-profile=srgb'],
+    runDir, fixtureKind: subtitleFixture ? 'subtitle' : 'multitrack', fps, threshold,
+    comparisonRegion: 'exact-preview-overlay',
+    flags: browserFlags,
     samples, passed: samples.every((sample) => sample.passed),
   };
   fs.writeFileSync(path.join(runDir, 'parity-result.json'), JSON.stringify(report, null, 2));

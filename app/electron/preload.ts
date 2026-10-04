@@ -16,7 +16,7 @@ import type {
   WorkbenchTabMenuEvent,
 } from '../src/lib/electron-api';
 import type { ExportConfig } from '../src/lib/export-settings';
-import type { SrtEntry } from '../src/types';
+import type { SrtEntry, TimelineData } from '../src/types';
 import type { AICard, AISegment, AISettings, PromptBindingMap } from '../src/types/ai';
 import type { ConversationAPI } from '../src/types/conversation';
 import type { VideoImportRequest } from '../src/lib/video-import-types';
@@ -233,6 +233,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 可选 auto-run jsonl runId；主进程据此写 stage.* / run.* 事件。不传则不记录。 */
     telemetryRunId?: string;
   }) => ipcRenderer.invoke('render-video', args),
+  prepareExactPreview: (args: { timeline: TimelineData; srtEntries: SrtEntry[]; projectDir: string }) =>
+    ipcRenderer.invoke('preview-exact-prepare', args),
+  renderExactPreviewFrame: (args: { sessionId: string; frame: number }) =>
+    ipcRenderer.invoke('preview-exact-frame', args),
+  releaseExactPreview: (sessionId: string) => ipcRenderer.invoke('preview-exact-release', sessionId),
   onRenderProgress: (callback: (progress: number) => void) => {
     const handler = (_event: unknown, progress: number) => callback(progress);
     ipcRenderer.on('render-progress', handler);

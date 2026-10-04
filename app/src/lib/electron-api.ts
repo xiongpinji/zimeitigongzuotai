@@ -1,6 +1,6 @@
 import type { ExportConfig } from './export-settings';
 import type { AppLogEntry } from './app-log';
-import type { SrtEntry } from '../types';
+import type { SrtEntry, TimelineData } from '../types';
 import type {
   AICard,
   AISegment,
@@ -404,6 +404,11 @@ export interface ElectronAPI {
     /** 可选 auto-run jsonl runId；主进程据此写 stage.* / run.* 事件。 */
     telemetryRunId?: string;
   }) => Promise<{ outputPath: string }>;
+  prepareExactPreview: (args: { timeline: TimelineData; srtEntries: SrtEntry[]; projectDir: string }) =>
+    Promise<{ sessionId: string; durationInFrames: number; fps: number }>;
+  renderExactPreviewFrame: (args: { sessionId: string; frame: number }) =>
+    Promise<{ sessionId: string; frame: number; png: Uint8Array }>;
+  releaseExactPreview: (sessionId: string) => Promise<void>;
   getAppLogs: () => Promise<AppLogEntry[]>;
   getAppLogFilePath: () => Promise<string>;
   onRenderProgress: (callback: (progress: number) => void) => () => void;

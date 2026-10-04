@@ -57,8 +57,9 @@ function inferProjectDirFromTimeline(timeline: TimelineData): string | null {
 
 export async function createRenderPublicDir(
   timeline: TimelineData,
+  explicitProjectDir?: string | null,
 ): Promise<{ timeline: TimelineData; publicDir: string }> {
-  const projectDir = inferProjectDirFromTimeline(timeline);
+  const projectDir = explicitProjectDir ?? inferProjectDirFromTimeline(timeline);
   const { timeline: renderTimeline, assets } = prepareTimelineForHyperframes(
     timeline,
     projectDir,
@@ -73,6 +74,44 @@ export async function createRenderPublicDir(
   };
 }
 
+/** 导出与暂停静帧共用的卡片素材准备，避免两条渲染路径逐渐漂移。 */
+export async function hydrateAndExternalizeRenderCards(
+  renderTimeline: TimelineData,
+  publicDir: string,
+  projectDir: string | null,
+): Promise<{ timeline: TimelineData; externalizedCount: number }> {
+  const timeline = await hydrateTimelineCards(renderTimeline, {
+    readFile: async (rel) => {
+      if (!projectDir) return null;
+      try {
+        return await fs.readFile(path.join(projectDir, rel), 'utf-8');
+      } catch {
+        return null;
+      }
+    },
+  });
+  const externalized = new Map<string, Buffer>();
+  for (const overlay of timeline.overlays) {
+    const motionCard = overlay.aiCardData?.motionCard;
+    if (!motionCard?.tsx) continue;
+    const source = externalizeMotionCardDataUris(motionCard.tsx, {
+      write: (bytes, ext) => {
+        const hash = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 16);
+        const rel = `card-assets/${hash}.${ext}`;
+        if (!externalized.has(rel)) externalized.set(rel, bytes);
+        return rel;
+      },
+    });
+    motionCard.tsx = rewriteMotionCardAssetReferences(source);
+  }
+  await Promise.all([...externalized.entries()].map(async ([rel, bytes]) => {
+    const target = path.join(publicDir, rel);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, bytes);
+  }));
+  return { timeline, externalizedCount: externalized.size };
+}
+
 /**
  * 打包态复用构建期预打包的 Remotion 产物（dist-remotion）。
  * 运行时 webpack 既无法 chdir 进 app.asar 也无法穿透 asar 解析模块，故不再运行时 bundle；
@@ -82,7 +121,7 @@ export async function createRenderPublicDir(
  * dist-remotion 经 asar-unpack 落在 app.asar.unpacked（真实目录），这里用真实路径 copy：
  * Electron 的 asar 透明层不支持对目录做递归 copy，走 app.asar 虚拟路径会 ENOENT。
  */
-async function prepareServeUrlFromPrebuilt(publicDir: string): Promise<string> {
+export async function prepareServeUrlFromPrebuilt(publicDir: string): Promise<string> {
   const prebuiltDir = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-remotion');
   const serveDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingjijianying-serve-'));
   await fs.cp(prebuiltDir, serveDir, { recursive: true });
@@ -110,7 +149,7 @@ function compositorPackageName(): string | null {
  * 打包态把 Remotion 二进制目录指向 app.asar.unpacked 真实路径，绕过 asar 的 chmod ENOTDIR。
  * dev 态返回 undefined，沿用 Remotion 默认（真实 node_modules 内的 compositor 包）。
  */
-function resolveRemotionBinariesDirectory(): string | undefined {
+export function resolveRemotionBinariesDirectory(): string | undefined {
   if (!app.isPackaged) return undefined;
   const pkg = compositorPackageName();
   if (!pkg) return undefined;
@@ -132,7 +171,7 @@ function resolveRemotionBinariesDirectory(): string | undefined {
  * 把缓存落到 `<userData>/remotion-cache/node_modules/.remotion`，整路径都可写。
  * 调用方在 finally 里 restore 原 cwd，避免长尾影响其他主进程逻辑。
  */
-async function prepareRemotionCwd(): Promise<{ cwd: string } | null> {
+export async function prepareRemotionCwd(): Promise<{ cwd: string } | null> {
   if (!app.isPackaged) return null;
   const cacheRoot = path.join(app.getPath('userData'), 'remotion-cache');
   await fs.mkdir(cacheRoot, { recursive: true });
@@ -149,6 +188,29 @@ async function prepareRemotionCwd(): Promise<{ cwd: string } | null> {
   // 父目录不存在的话首次 mkdir 仍会 ENOENT（其内部用的不是 recursive）。
   await fs.mkdir(path.join(cacheRoot, 'node_modules'), { recursive: true });
   return { cwd: cacheRoot };
+}
+
+let packagedCwdTail: Promise<void> = Promise.resolve();
+
+/** 打包态 Remotion 需要进程级可写 cwd；预览与导出共用同一串行门槛。 */
+export async function withPackagedRemotionCwd<T>(work: () => Promise<T>): Promise<T> {
+  if (!app.isPackaged) return work();
+  const prior = packagedCwdTail;
+  let unlock!: () => void;
+  packagedCwdTail = new Promise<void>((resolve) => { unlock = resolve; });
+  await prior;
+  const originalCwd = process.cwd();
+  try {
+    const remotionCwd = await prepareRemotionCwd();
+    if (remotionCwd) process.chdir(remotionCwd.cwd);
+    return await work();
+  } finally {
+    try {
+      process.chdir(originalCwd);
+    } finally {
+      unlock();
+    }
+  }
 }
 
 export interface RenderVideoArgs {
@@ -249,58 +311,20 @@ export async function renderVideoHeadless(
   const { timeline: renderTimeline, publicDir } = await createRenderPublicDir(timelineData);
   // 打包态复用预打包 Remotion 产物时会 copy 出可写临时站点目录，导出后在 finally 清理。
   let prebuiltServeDir: string | undefined;
-  // 打包态需要把 cwd 切到可写目录，让 Remotion 的浏览器缓存落点不是 `/.remotion`。
-  // 在 finally 中恢复，避免影响后续主进程逻辑（譬如其它 IPC 的相对路径解析）。
-  const originalCwd = process.cwd();
-  const remotionCwd = await prepareRemotionCwd();
-  // 防御性 hydrate：若上游传来的是磁盘态（只有 tsxPath 没有内存 tsx），读回源码，保证 collectMotionCards 能拿到卡片。
   const projectDir = inferProjectDirFromTimeline(timelineData);
-  const hydratedTimeline = await hydrateTimelineCards(renderTimeline, {
-    readFile: async (rel) => {
-      if (!projectDir) return null;
-      try {
-        return await fs.readFile(path.join(projectDir, rel), 'utf-8');
-      } catch {
-        return null;
-      }
-    },
-  });
-  // 把卡片内联的大体积 base64 图片外置成 publicDir 下的真实文件，避免 60MB+ 的
-  // inputProps 经 structuredClone 撑爆无头 Chrome（DataCloneError / 进程被 kill）。
-  // 收集阶段同步攒 bytes，循环后统一落盘。卡片里替换为 cardAsset('card-assets/...')，
-  // 由 CardHost 在导出环境解析为 staticFile。
-  const externalizedCardAssets = new Map<string, Buffer>();
-  for (const overlay of hydratedTimeline.overlays) {
-    const motionCard = overlay.aiCardData?.motionCard;
-    if (motionCard?.tsx) {
-      const externalized = externalizeMotionCardDataUris(motionCard.tsx, {
-        write: (bytes, ext) => {
-          const hash = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 16);
-          const rel = `card-assets/${hash}.${ext}`;
-          if (!externalizedCardAssets.has(rel)) externalizedCardAssets.set(rel, bytes);
-          return rel;
-        },
-      });
-      motionCard.tsx = rewriteMotionCardAssetReferences(externalized);
-    }
-  }
-  await Promise.all(
-    [...externalizedCardAssets.entries()].map(async ([rel, bytes]) => {
-      const target = path.join(publicDir, rel);
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, bytes);
-    }),
+  const { timeline: hydratedTimeline, externalizedCount } = await hydrateAndExternalizeRenderCards(
+    renderTimeline, publicDir, projectDir,
   );
-  if (isDev && externalizedCardAssets.size > 0) {
+  if (isDev && externalizedCount > 0) {
     console.log(
-      `${renderLogPrefix} 外置卡片内联图片 ${externalizedCardAssets.size} 个 → ${publicDir}/card-assets`,
+      `${renderLogPrefix} 外置卡片内联图片 ${externalizedCount} 个 → ${publicDir}/card-assets`,
     );
   }
   tel.emit('stage.end', {
     stage: 'export.assets',
     durationMs: Date.now() - assetsStart,
     ok: true,
-    externalizedCardAssets: externalizedCardAssets.size,
+    externalizedCardAssets: externalizedCount,
   });
 
   try {
@@ -364,22 +388,8 @@ export async function renderVideoHeadless(
       hardwareAcceleration: 'if-possible',
     });
     onProgress(0.05);
-    // 关键：进入 Remotion 渲染前切到可写 cwd，让浏览器缓存解析到
-    // `<userData>/remotion-cache/node_modules/.remotion` 而不是根目录下的 `/.remotion`。
-    // selectComposition / renderMedia 内部触发 ensureBrowser → getDownloadsCacheDir，
-    // 该函数只看 process.cwd() 向上找 package.json，没有任何环境变量可覆盖（核对
-    // @remotion/renderer 4.x 源码：get-download-destination.ts）。
-    if (remotionCwd) {
-      try {
-        process.chdir(remotionCwd.cwd);
-      } catch (err) {
-        if (isDev) {
-          console.warn(`${renderLogPrefix} chdir 失败，继续走默认逻辑`, err);
-        }
-      }
-    }
     try {
-      await renderRemotionVideo({
+      await withPackagedRemotionCwd(() => renderRemotionVideo({
         serveUrl,
         outputPath: args.outputPath,
         timeline: renderTimeline,
@@ -393,7 +403,7 @@ export async function renderVideoHeadless(
         hardwareAcceleration: 'if-possible',
         binariesDirectory: resolveRemotionBinariesDirectory(),
         onProgress: (ratio) => onProgress(Math.max(0.05, Math.min(0.98, ratio))),
-      });
+      }));
       onProgress(1);
       tel.emit('stage.end', {
         stage: 'export.render',
@@ -423,14 +433,6 @@ export async function renderVideoHeadless(
     }
     throw err;
   } finally {
-    // 恢复原 cwd，再做磁盘清理（rm 路径都是绝对的，不依赖 cwd）。
-    if (remotionCwd) {
-      try {
-        process.chdir(originalCwd);
-      } catch {
-        /* ignore */
-      }
-    }
     await fs.rm(publicDir, { recursive: true, force: true });
     if (prebuiltServeDir) {
       await fs.rm(prebuiltServeDir, { recursive: true, force: true });
