@@ -22,7 +22,7 @@ const WINDOWS_RESTRICT_ACL_SCRIPT = [
   '$ErrorActionPreference = "Stop"',
   '$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User',
   '$acl = New-Object System.Security.AccessControl.FileSecurity',
-  '$acl.SetOwner($identity)',
+  // 保留文件原 Owner；在项目盘重复设置 Owner 可能导致 SetAccessControl 拒绝访问。
   '$acl.SetAccessRuleProtection($true, $false)',
   '$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow)',
   '$acl.AddAccessRule($rule)',

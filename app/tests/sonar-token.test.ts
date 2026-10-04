@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, chmodSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { getOrCreateSonarToken } from '../electron/sonar/token';
 
-function readWindowsAcl(file: string): { protected: boolean; allowedSids: string[]; selfSid: string } {
+function readWindowsAcl(file: string): { protected: boolean; allowedSids: string[]; selfSid: string; ownerSid: string } {
   const script = [
     '$acl = [System.IO.File]::GetAccessControl($env:SONAR_TEST_TOKEN_FILE)',
     '$allowed = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq "Allow" } | ForEach-Object { $_.IdentityReference.Value })',
-    '[pscustomobject]@{ protected = $acl.AreAccessRulesProtected; allowedSids = $allowed; selfSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } | ConvertTo-Json -Compress',
+    '[pscustomobject]@{ protected = $acl.AreAccessRulesProtected; allowedSids = $allowed; selfSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value } | ConvertTo-Json -Compress',
   ].join('; ');
   return JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     env: { ...process.env, SONAR_TEST_TOKEN_FILE: file },
@@ -73,6 +74,29 @@ describe('getOrCreateSonarToken', () => {
     const acl = readWindowsAcl(file);
     expect(acl.protected).toBe(true);
     expect(acl.allowedSids).toEqual([acl.selfSid]);
+  });
+
+  it.skipIf(process.platform !== 'win32')('Windows 项目盘首次启动保留文件 Owner 并收紧 ACL', async () => {
+    const validationRoot = path.resolve(fileURLToPath(new URL('../../data/runtime/validation/', import.meta.url)));
+    mkdirSync(validationRoot, { recursive: true });
+    const volumeDir = mkdtempSync(path.join(validationRoot, 'sonar-token-volume-'));
+    const volumeFile = path.join(volumeDir, 'sonar-token');
+    try {
+      writeFileSync(volumeFile, '');
+      const ownerSid = readWindowsAcl(volumeFile).ownerSid;
+      const token = await getOrCreateSonarToken(volumeFile);
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+      const acl = readWindowsAcl(volumeFile);
+      expect(acl.ownerSid).toBe(ownerSid);
+      expect(acl.protected).toBe(true);
+      expect(acl.allowedSids).toEqual([acl.selfSid]);
+    } finally {
+      const resolvedDir = path.resolve(volumeDir);
+      if (path.dirname(resolvedDir) !== validationRoot || !path.basename(resolvedDir).startsWith('sonar-token-volume-')) {
+        throw new Error('unsafe sonar token test cleanup path');
+      }
+      rmSync(resolvedDir, { recursive: true, force: true });
+    }
   });
 
   it.skipIf(process.platform !== 'win32')('Windows 已有 token 先收紧 ACL 再复用', async () => {

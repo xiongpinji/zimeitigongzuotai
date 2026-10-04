@@ -62,3 +62,7 @@ Codex 独立增加[真实本地 MCP/桌面入口探针](../app/scripts/smoke-pro
 ## 2026-10-05 R5 首次 MCP 启动 ACL 作业
 
 在当前源码构建通过后，默认隔离项目盘首次启动仍报 `sonar_token_acl_failed`。新 R5 子计划 `plan-20261004-170037-d60a47` 的两文件合同已落库，Qwen 主作业因供应商 429 失败，DeepSeek 备用作业在 240 秒上限后超时；两者都没有候选改动，`executor-options` 报告写入池耗尽。没有把 CLI 安装状态或条件式预置权限测试算作生产修复。具体命令、退出码、证据边界与待处理项见[本轮核查](validation/r5-sonar-token-acl-worker-2026-10-05.md)。R5 仍未完成，R1–R6 完整目标和不打包约束保持。
+
+## 2026-10-05 Codex 接手源码与 R5 ACL 修复
+
+用户已[明确授权 Codex 接手已确认阶段一的剩余源码](decisions/2026-10-05-codex-source-takeover.md)，四项执行者反馈均写入原文并返回 answered。Codex 按 R5 两文件合同先补项目盘 RED 测试，再移除导致 Windows 拒绝访问的重复 Owner 设置。聚焦、394 文件全量测试、类型检查、源码构建通过；无需权限预置的实际 Electron/MCP 探针两次完整通过，另一次后续探针不稳定失败保留在[修复报告](validation/r5-sonar-token-acl-codex-2026-10-05.md)。此项不等于 R5 生产动作接线完成，GLM 只读复审和真实账号/平台验收仍独立保留。
