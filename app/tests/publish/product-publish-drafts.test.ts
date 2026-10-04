@@ -52,6 +52,26 @@ const assignment = (accountId: string, planId: string) => ({
 });
 
 describe('安全账号 × 已复核版本的产品草稿', () => {
+  it('只列出当前工程的安全草稿投影，取消后不会再被列出', async () => {
+    const { service, queue } = fixture();
+    await service.stage([assignment('douyin-a', 'plan-a')]);
+    const task = queue.list()[0]!;
+    expect(await service.listDrafts()).toEqual([{ taskId: task.id, accountId: 'douyin-a',
+      platform: 'douyin', batchId: 'batch-1', planId: 'plan-a',
+      title: metadata.title, createdAt: task.createdAt }]);
+    expect(JSON.stringify(await service.listDrafts())).not.toContain('videoRef');
+    expect(JSON.stringify(await service.listDrafts())).not.toContain(projectDir);
+    const firstProject = projectDir;
+    projectDir = join(root, 'other-project');
+    expect(await service.listDrafts()).toEqual([]);
+    await expect(service.cancelDraft({ taskId: task.id })).rejects.toMatchObject({ code: 'draft_not_found' });
+    projectDir = firstProject;
+    expect(await service.cancelDraft({ taskId: task.id })).toBe(true);
+    expect(queue.get(task.id)?.state).toBe('cancelled');
+    expect(await service.listDrafts()).toEqual([]);
+    await expect(service.cancelDraft({ taskId: task.id })).rejects.toMatchObject({ code: 'draft_not_cancellable' });
+  });
+
   it('同平台多账号可选不同版本，草稿持久化且不会调度', async () => {
     const { service, queue } = fixture();
     const input = [assignment('douyin-a', 'plan-a'), assignment('douyin-b', 'plan-b'),

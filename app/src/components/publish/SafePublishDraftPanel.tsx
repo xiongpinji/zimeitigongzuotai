@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AccountV2Dto, CompositionV1BatchDto } from '../../lib/electron-api';
-import type { ProductPublishDraftAssignment, ProductPublishDraftPreview } from
+import type { ProductPublishDraftAssignment, ProductPublishDraftDto, ProductPublishDraftPreview } from
   '../../../electron/publish/product-publish-drafts';
 
 const PLATFORM: Record<AccountV2Dto['platform'], string> = {
@@ -24,26 +24,37 @@ const errorText: Record<string, string> = {
 export function SafePublishDraftPanel({ projectDir }: { projectDir: string | null }) {
   const [accounts, setAccounts] = useState<AccountV2Dto[]>([]);
   const [batches, setBatches] = useState<CompositionV1BatchDto[]>([]);
+  const [drafts, setDrafts] = useState<ProductPublishDraftDto[]>([]);
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [preview, setPreview] = useState<{ key: string; value: ProductPublishDraftPreview } | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const refreshSerial = useRef(0);
 
   const refresh = async () => {
+    const serial = ++refreshSerial.current;
     setMessage('');
     setPreview(null);
     try {
-      const [accountResult, compositionResult] = await Promise.all([
+      const [accountResult, compositionResult, draftResult] = await Promise.all([
         window.accountV2API.list(), window.compositionV1API.list(),
+        window.publishV2DraftAPI.listDrafts(),
       ]);
-      if (!accountResult.ok || !compositionResult.ok) {
-        setMessage('安全账号或混剪版本暂不可用。'); return;
+      if (serial !== refreshSerial.current) return;
+      if (!accountResult.ok || !compositionResult.ok || !draftResult.ok) {
+        setMessage('安全账号、混剪版本或草稿暂不可用。'); return;
       }
       setAccounts(accountResult.accounts);
       setBatches(compositionResult.batches);
-    } catch { setMessage('服务暂不可用，请稍后刷新。'); }
+      setDrafts(draftResult.drafts);
+    } catch { if (serial === refreshSerial.current) setMessage('服务暂不可用，请稍后刷新。'); }
   };
-  useEffect(() => { if (projectDir) void refresh(); }, [projectDir]);
+  useEffect(() => {
+    refreshSerial.current++;
+    setAccounts([]); setBatches([]); setDrafts([]); setChoices({}); setPreview(null); setMessage('');
+    if (projectDir) void refresh();
+    return () => { refreshSerial.current++; };
+  }, [projectDir]);
 
   const versionsFor = (account: AccountV2Dto) => batches.flatMap((batch) =>
     batch.context?.platform === PLATFORM[account.platform] && !batch.contextMismatch
@@ -78,13 +89,29 @@ export function SafePublishDraftPanel({ projectDir }: { projectDir: string | nul
       if (stage) {
         const result = await window.publishV2DraftAPI.stage(input);
         if (!result.ok) { setPreview(null); setMessage(errorText[result.code] ?? '草稿操作未完成，请检查当前状态。'); }
-        else { setPreview(null); setMessage(`已保存 ${result.created} 个草稿，${result.existing} 个已存在；尚未向平台发布。`); }
+        else {
+          setPreview(null);
+          const list = await window.publishV2DraftAPI.listDrafts();
+          if (list.ok) setDrafts(list.drafts);
+          setMessage(`已保存 ${result.created} 个草稿，${result.existing} 个已存在；尚未向平台发布。`);
+        }
       } else {
         const result = await window.publishV2DraftAPI.preview(input);
         if (!result.ok) { setPreview(null); setMessage(errorText[result.code] ?? '草稿操作未完成，请检查当前状态。'); }
         else { setPreview({ key, value: result }); setMessage('预览通过，请核对重复版本风险后保存草稿。'); }
       }
     } catch { setPreview(null); setMessage('服务暂不可用，请稍后重试。'); }
+    finally { setBusy(false); }
+  };
+  const cancelDraft = async (taskId: string) => {
+    setBusy(true);
+    try {
+      const result = await window.publishV2DraftAPI.cancelDraft(taskId);
+      if (!result.ok) { setMessage(errorText[result.code] ?? '取消草稿失败，请刷新后重试。'); return; }
+      const list = await window.publishV2DraftAPI.listDrafts();
+      if (list.ok) setDrafts(list.drafts);
+      setMessage(result.cancelled ? '草稿已取消；未向平台发布。' : '草稿状态已变化，请刷新。');
+    } catch { setMessage('取消草稿失败，请稍后重试。'); }
     finally { setBusy(false); }
   };
 
@@ -119,6 +146,17 @@ export function SafePublishDraftPanel({ projectDir }: { projectDir: string | nul
         重复版本提醒：同一视频版本分配给 {risk.accountIds.length} 个账号，平台可能识别为重复内容。
       </p>)}
     </div>}
+    <div style={{ marginTop: 14 }}>
+      <strong>当前工程草稿（{drafts.length}）</strong>
+      {drafts.map((draft) => <div key={draft.taskId} style={{ display: 'flex', gap: 8,
+        alignItems: 'center', marginTop: 6 }}>
+        <span>{accounts.find((account) => account.id === draft.accountId)?.displayName ?? draft.accountId}
+          {' · '}{draft.title}{' · '}{draft.batchId}/{draft.planId}</span>
+        <button type="button" disabled={busy} onClick={() => void cancelDraft(draft.taskId)}>
+          取消草稿
+        </button>
+      </div>)}
+    </div>
     {message && <p role="status">{message}</p>}
   </section>;
 }

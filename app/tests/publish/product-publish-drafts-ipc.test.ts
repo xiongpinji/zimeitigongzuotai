@@ -11,6 +11,9 @@ describe('product publish draft IPC', () => {
         commerceBlocked: false }], duplicateVersionRisks: [] })),
       stage: vi.fn(async () => ({ created: 1, existing: 0,
         preview: { entries: [], duplicateVersionRisks: [] } })),
+      listDrafts: vi.fn(async () => [{ taskId: 'task-a', accountId: 'a', platform: 'douyin',
+        batchId: 'b', planId: 'p', title: 'safe', createdAt: 1 }]),
+      cancelDraft: vi.fn(async () => true),
     };
     registerProductPublishDraftIpc({
       ipc: { handle: (channel, handler) => { handlers.set(channel, handler); } },
@@ -18,11 +21,16 @@ describe('product publish draft IPC', () => {
     });
     const preview = handlers.get(PRODUCT_PUBLISH_DRAFT_CHANNELS.preview)!;
     const stage = handlers.get(PRODUCT_PUBLISH_DRAFT_CHANNELS.stage)!;
+    const list = handlers.get(PRODUCT_PUBLISH_DRAFT_CHANNELS.list)!;
+    const cancel = handlers.get(PRODUCT_PUBLISH_DRAFT_CHANNELS.cancel)!;
     expect(await preview('other', [{ filePath: 'C:\\private.mp4' }]))
       .toEqual({ ok: false, code: 'forbidden' });
     expect(service.preview).not.toHaveBeenCalled();
     expect(await preview('owner', [])).toMatchObject({ ok: true, entries: [{ accountId: 'a' }] });
     expect(await stage('owner', [])).toMatchObject({ ok: true, created: 1, existing: 0 });
+    expect(await list('owner')).toMatchObject({ ok: true, drafts: [{ taskId: 'task-a' }] });
+    expect(await cancel('other', { taskId: 'task-a' })).toEqual({ ok: false, code: 'forbidden' });
+    expect(await cancel('owner', { taskId: 'task-a' })).toEqual({ ok: true, cancelled: true });
     expect(JSON.stringify(await preview('owner', []))).not.toContain('private.mp4');
   });
 
@@ -33,7 +41,8 @@ describe('product publish draft IPC', () => {
       allowedSender: () => true,
       service: { preview: async () => { throw Object.assign(new Error('C:\\secret'),
         { code: 'review_not_ready' }); },
-      stage: async () => { throw new Error('C:\\secret'); } },
+      stage: async () => { throw new Error('C:\\secret'); },
+      listDrafts: async () => [], cancelDraft: async () => false },
     });
     expect(await handlers.get(PRODUCT_PUBLISH_DRAFT_CHANNELS.preview)!('owner'))
       .toEqual({ ok: false, code: 'review_not_ready' });

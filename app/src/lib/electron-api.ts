@@ -56,7 +56,7 @@ import type { AssetImportMetadata } from '../../electron/assets/local-asset-libr
 import type { AssetUsageContext, BrollQuery, BrollRecommendationResult } from '../../electron/assets/asset-rights';
 import type { CompositionReviewReport, HumanReviewDecision } from '../../electron/composition/review';
 import type { ProductionPlatform } from '../types/production-contracts';
-import type { ProductPublishDraftAssignment, ProductPublishDraftPreview } from
+import type { ProductPublishDraftAssignment, ProductPublishDraftDto, ProductPublishDraftPreview } from
   '../../electron/publish/product-publish-drafts';
 
 export type AppPage = 'welcome' | 'setup' | 'editor' | 'script-workbench' | 'settings' | 'auto-run' | 'publish' | 'highlights' | 'assets' | 'composition';
@@ -930,6 +930,8 @@ export interface ProductPublishDraftAPI {
   stage(assignments: ProductPublishDraftAssignment[]):
     Promise<ProductPublishDraftResult<{ created: number; existing: number;
       preview: ProductPublishDraftPreview }>>;
+  listDrafts(): Promise<ProductPublishDraftResult<{ drafts: ProductPublishDraftDto[] }>>;
+  cancelDraft(taskId: string): Promise<ProductPublishDraftResult<{ cancelled: boolean }>>;
 }
 
 declare global {

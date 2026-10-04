@@ -29,14 +29,21 @@ async function mount() {
     context: { platform: 'douyin', region: 'cn', commercialShortVideo: true },
     contextMismatch: false,
   }] })) };
+  let staged = false;
+  let cancelled = false;
   const draftApi = { preview: vi.fn(async () => ({ ok: true as const,
     entries: [{ accountId: 'account-a', platform: 'douyin', batchId: 'batch-1',
       planId: 'plan-a', videoVariantId: 'v', outputSha256: 'a'.repeat(64),
       commerceBlocked: false }],
     duplicateVersionRisks: [{ batchId: 'batch-1', planId: 'plan-a',
       accountIds: ['account-a', 'account-b'] }],
-  })), stage: vi.fn(async () => ({ ok: true as const, created: 2, existing: 0,
-    preview: { entries: [], duplicateVersionRisks: [] } })) };
+  })), stage: vi.fn(async () => { staged = true; return { ok: true as const,
+    created: 2, existing: 0, preview: { entries: [], duplicateVersionRisks: [] } }; }),
+    listDrafts: vi.fn(async () => ({ ok: true as const, drafts: staged && !cancelled
+      ? [{ taskId: 'pubjob_aaaaaaaaaaaaaaaaaaaaaaaa', accountId: 'account-a',
+        platform: 'douyin', batchId: 'batch-1', planId: 'plan-a',
+        title: '账号 A 标题', createdAt: 1 }] : [] })),
+    cancelDraft: vi.fn(async () => { cancelled = true; return { ok: true as const, cancelled: true }; }) };
   (window as unknown as { accountV2API: AccountV2API }).accountV2API = accountApi as unknown as AccountV2API;
   (window as unknown as { compositionV1API: CompositionV1API }).compositionV1API = compositionApi as unknown as CompositionV1API;
   (window as unknown as { publishV2DraftAPI: ProductPublishDraftAPI }).publishV2DraftAPI = draftApi as unknown as ProductPublishDraftAPI;
@@ -81,5 +88,11 @@ describe('安全账号草稿页面', () => {
     await click('保存草稿');
     expect(api.stage).toHaveBeenCalledTimes(1);
     expect(host!.textContent).toContain('尚未向平台发布');
+    expect(host!.textContent).toContain('当前工程草稿（1）');
+    await click('取消草稿');
+    expect(api.cancelDraft).toHaveBeenCalledWith('pubjob_aaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(host!.textContent).toContain('当前工程草稿（0）');
+    await act(async () => { root!.render(<SafePublishDraftPanel projectDir={null} />); });
+    expect(host!.textContent).not.toContain('account-a');
   });
 });

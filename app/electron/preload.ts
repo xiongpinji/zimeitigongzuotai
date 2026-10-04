@@ -876,6 +876,8 @@ contextBridge.exposeInMainWorld('compositionV1API', {
 contextBridge.exposeInMainWorld('publishV2DraftAPI', {
   preview: (assignments) => ipcRenderer.invoke('publish-v2:preview', assignments),
   stage: (assignments) => ipcRenderer.invoke('publish-v2:stage', assignments),
+  listDrafts: () => ipcRenderer.invoke('publish-v2:list-drafts'),
+  cancelDraft: (taskId) => ipcRenderer.invoke('publish-v2:cancel-draft', { taskId }),
 } satisfies ProductPublishDraftAPI);
 
 contextBridge.exposeInMainWorld('assetLibraryAPI', {

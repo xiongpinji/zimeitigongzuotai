@@ -17,7 +17,7 @@ const platforms: Record<AccountVaultPlatform, QueuePlatform> = {
 
 export type ProductPublishDraftErrorCode = 'invalid_input' | 'no_project' |
   'account_missing' | 'account_not_ready' | 'platform_mismatch' | 'review_not_ready' |
-  'video_ref_invalid' | 'video_ref_changed';
+  'video_ref_invalid' | 'video_ref_changed' | 'draft_not_found' | 'draft_not_cancellable';
 
 export class ProductPublishDraftError extends Error {
   constructor(readonly code: ProductPublishDraftErrorCode) {
@@ -39,13 +39,24 @@ export interface ProductPublishDraftDeps {
   accounts: { getAccount(id: string): { id: string; platform: AccountVaultPlatform;
     status: AccountVaultStatus; sessionRef: string | null } };
   review: Pick<ReturnType<typeof createCompositionReview>, 'readPassingReviewEvidence'>;
-  queue: Pick<DurablePublishQueue, 'enqueueDraftMatrices'>;
+  queue: Pick<DurablePublishQueue, 'enqueueDraftMatrices' | 'list' | 'get' | 'cancel'>;
 }
 
 export interface ProductPublishDraftPreview {
   entries: Array<{ accountId: string; platform: QueuePlatform; batchId: string;
     planId: string; videoVariantId: string; outputSha256: string; commerceBlocked: boolean }>;
   duplicateVersionRisks: Array<{ batchId: string; planId: string; accountIds: string[] }>;
+}
+
+/** Renderer-safe projection; no videoRef, account session, project path or queue internals. */
+export interface ProductPublishDraftDto {
+  taskId: string;
+  accountId: string;
+  platform: QueuePlatform;
+  batchId: string;
+  planId: string;
+  title: string;
+  createdAt: number;
 }
 
 type VideoRef = { schemaVersion: 1; projectDir: string; batchId: string; planId: string;
@@ -64,6 +75,12 @@ const normalizedPath = (value: string) => process.platform === 'win32'
 
 function variantId(projectDir: string, batchId: string, planId: string): string {
   return `compv1_${sha256(`${normalizedPath(projectDir)}\u0000${batchId}\u0000${planId}`)}`;
+}
+
+function activeProject(deps: ProductPublishDraftDeps): string {
+  const projectDir = deps.activeProjectDir();
+  if (!projectDir || !path.isAbsolute(projectDir)) fail('no_project');
+  return projectDir;
 }
 
 function metadataOf(value: unknown): QueueJobMetadata {
@@ -109,8 +126,7 @@ function decodeVideoRef(value: unknown): VideoRef {
 export function createProductPublishDraftService(deps: ProductPublishDraftDeps) {
   async function prepare(input: unknown): Promise<{ matrices: PublishMatrixInput[];
     preview: ProductPublishDraftPreview }> {
-    const projectDir = deps.activeProjectDir();
-    if (!projectDir || !path.isAbsolute(projectDir)) fail('no_project');
+    const projectDir = activeProject(deps);
     if (!Array.isArray(input) || input.length < 1 || input.length > 1000) fail('invalid_input');
     const seenAccounts = new Set<string>();
     const matrices: PublishMatrixInput[] = [];
@@ -158,6 +174,36 @@ export function createProductPublishDraftService(deps: ProductPublishDraftDeps) 
   }
 
   return {
+    async listDrafts(): Promise<ProductPublishDraftDto[]> {
+      const projectDir = activeProject(deps);
+      return deps.queue.list().flatMap((task) => {
+        if (task.state !== 'draft' || !task.videoRef.startsWith(PREFIX)) return [];
+        try {
+          const ref = decodeVideoRef(task.videoRef);
+          if (normalizedPath(ref.projectDir) !== normalizedPath(projectDir) ||
+              task.videoVariantId !== ref.videoVariantId) return [];
+          return [{ taskId: task.id, accountId: task.accountId, platform: task.platform,
+            batchId: ref.batchId, planId: ref.planId,
+            title: task.metadata.title, createdAt: task.createdAt }];
+        } catch { return []; }
+      });
+    },
+    async cancelDraft(input: unknown): Promise<boolean> {
+      if (!record(input) || !keysExactly(input, ['taskId']) ||
+          typeof input.taskId !== 'string' || !/^pubjob_[a-f0-9]{24}$/.test(input.taskId)) {
+        fail('invalid_input');
+      }
+      const projectDir = activeProject(deps);
+      const task = deps.queue.get(input.taskId);
+      if (!task || !task.videoRef.startsWith(PREFIX)) fail('draft_not_found');
+      let ref: VideoRef;
+      try { ref = decodeVideoRef(task.videoRef); }
+      catch { fail('draft_not_found'); }
+      if (normalizedPath(ref.projectDir) !== normalizedPath(projectDir) ||
+          task.videoVariantId !== ref.videoVariantId) fail('draft_not_found');
+      if (task.state !== 'draft') fail('draft_not_cancellable');
+      return deps.queue.cancel(task.id);
+    },
     async preview(input: unknown): Promise<ProductPublishDraftPreview> {
       return (await prepare(input)).preview;
     },
