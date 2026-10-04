@@ -115,6 +115,10 @@ export interface DurablePublishTaskV1 {
   /** 队列租约到期时间（epoch ms）；无租约为 null。 */
   leaseUntil: number | null;
   nextAttemptAt: number | null;
+  /** 最近一次已确认未提交的限流释放时间；旧 v1 文件可缺省。 */
+  throttleUntil?: number | null;
+  /** 限流停派范围；缺省 outcome 采用保守的账号范围。 */
+  throttleScope?: 'task' | 'account' | 'platform' | null;
   nextReconcileAt: number | null;
   cancelRequested: boolean;
   lastErrorCode: string | null;
@@ -149,7 +153,7 @@ export interface PublishAttemptInput {
 export type PublishAttemptOutcome =
   | { kind: 'submitted'; remoteId: string; remoteUrl?: string | null }
   | { kind: 'failed'; errorCode?: string; retryable?: boolean; confirmedNotSubmitted?: boolean }
-  | { kind: 'throttled'; retryAfterMs?: number; errorCode?: string; confirmedNotSubmitted?: boolean }
+  | { kind: 'throttled'; scope?: 'task' | 'account' | 'platform'; retryAfterMs?: number; errorCode?: string; confirmedNotSubmitted?: boolean }
   | { kind: 'needs_login'; errorCode?: string; confirmedNotSubmitted?: boolean }
   | { kind: 'needs_user_action'; errorCode?: string; confirmedNotSubmitted?: boolean }
   | { kind: 'unknown'; errorCode?: string };
@@ -597,6 +601,11 @@ function validatePersistedTask(input: unknown, index: number): DurablePublishTas
   for (const field of ['leaseUntil', 'nextAttemptAt', 'nextReconcileAt']) {
     if (!isNullableTimestamp(input[field])) fail(field);
   }
+  const throttleUntil = 'throttleUntil' in input ? input.throttleUntil : null;
+  const throttleScope = 'throttleScope' in input ? input.throttleScope : null;
+  if (!isNullableTimestamp(throttleUntil) || (throttleUntil !== null && throttleUntil < 0)) fail('throttleUntil');
+  if (throttleScope !== null && !['task', 'account', 'platform'].includes(throttleScope as string)) fail('throttleScope');
+  if ((throttleUntil === null) !== (throttleScope === null)) fail('throttleScope');
   const cancelRequested = input.cancelRequested;
   if (typeof cancelRequested !== 'boolean') return fail('cancelRequested');
   if (!(input.lastErrorCode === null || typeof input.lastErrorCode === 'string')) fail('lastErrorCode');
@@ -659,6 +668,8 @@ function validatePersistedTask(input: unknown, index: number): DurablePublishTas
     reconcileAttempts: input.reconcileAttempts as number,
     leaseUntil: input.leaseUntil as number | null,
     nextAttemptAt: input.nextAttemptAt as number | null,
+    throttleUntil: throttleUntil as number | null,
+    throttleScope: throttleScope as DurablePublishTaskV1['throttleScope'],
     nextReconcileAt: input.nextReconcileAt as number | null,
     cancelRequested,
     lastErrorCode: (input.lastErrorCode as string | null) ?? null,
@@ -910,6 +921,8 @@ export class DurablePublishQueue {
       reconcileAttempts: 0,
       leaseUntil: null,
       nextAttemptAt: null,
+      throttleUntil: null,
+      throttleScope: null,
       nextReconcileAt: null,
       cancelRequested: false,
       lastErrorCode: commerceRequest === null ? null : 'commerce_not_configured',
@@ -987,6 +1000,13 @@ export class DurablePublishQueue {
           .filter((task) => task.state === 'uploading' || task.state === 'unknown_submission')
           .map((task) => task.accountId),
       );
+      const throttledAccounts = new Set<string>();
+      const throttledPlatforms = new Set<QueuePlatform>();
+      for (const task of ordered) {
+        if (task.throttleUntil === null || task.throttleUntil === undefined || task.throttleUntil <= at) continue;
+        if (task.throttleScope === 'platform') throttledPlatforms.add(task.platform);
+        if (task.throttleScope === 'account') throttledAccounts.add(task.accountId);
+      }
 
       // 2) 提交领取：先到先得；互斥与预算在领取时一次性落实
       for (const task of ordered) {
@@ -997,6 +1017,9 @@ export class DurablePublishQueue {
         if (task.commerceRequest !== null) continue;
         if (task.metadata.scheduleAt !== null && task.metadata.scheduleAt > at) continue;
         if (task.nextAttemptAt !== null && task.nextAttemptAt > at) continue;
+        // retryNow 只提前排队，不能绕过适配器给出的任何范围的冷却时间。
+        if (task.throttleUntil !== null && task.throttleUntil !== undefined && task.throttleUntil > at) continue;
+        if (throttledPlatforms.has(task.platform) || throttledAccounts.has(task.accountId)) continue;
         if (uncertainAccounts.has(task.accountId)) continue;
         if (busyAccounts.has(task.accountId)) continue;
         const platformCount = selectedPlatforms.get(task.platform) ?? 0;
@@ -1173,15 +1196,19 @@ export class DurablePublishQueue {
         case 'throttled': {
           const code = sanitizeSafeCode(outcome.errorCode, 'throttled');
           task.leaseUntil = null;
-          if (task.attempt >= this.retryPolicy.maxAttempts) {
-            this.transition(task, 'terminal_failure', { at, errorCode: 'attempts_exhausted' });
-            return;
-          }
           const retryAfterMs = outcome.retryAfterMs;
           const delay =
             isFiniteNumber(retryAfterMs) && retryAfterMs >= 0
               ? retryAfterMs
               : this.backoffFor(task.attempt);
+          task.throttleUntil = at + delay;
+          task.throttleScope = outcome.scope === 'task' || outcome.scope === 'platform'
+            ? outcome.scope
+            : 'account';
+          if (task.attempt >= this.retryPolicy.maxAttempts) {
+            this.transition(task, 'terminal_failure', { at, errorCode: 'attempts_exhausted' });
+            return;
+          }
           this.transition(task, 'retryable_failure', { at, errorCode: code });
           task.nextAttemptAt = at + delay;
           return;

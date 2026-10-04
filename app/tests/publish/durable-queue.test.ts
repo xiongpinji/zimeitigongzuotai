@@ -474,6 +474,66 @@ describe('计划时间、取消与退避', () => {
     expect(stored.attempt).toBe(2);
   });
 
+  it('账号限流跨重开、手动重试和原任务取消仍停派同账号，其他账号继续', async () => {
+    const calls: Array<{ accountId: string; videoVariantId: string }> = [];
+    const executor = vi.fn(async (input: PublishAttemptInput): Promise<PublishAttemptOutcome> => {
+      calls.push({ accountId: input.accountId, videoVariantId: input.videoVariantId });
+      return calls.length === 1
+        ? { kind: 'throttled', confirmedNotSubmitted: true, retryAfterMs: 45_000, errorCode: 'rate_limited' }
+        : submitOk(`remote-${input.videoVariantId}`);
+    });
+    let q = openQueue({ executor, budgets: { global: 1, device: 1 } });
+    const first = q.enqueueMatrix(matrix({ videoVariantId: 'first', accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] })).created[0];
+    advance(1);
+    q.enqueueMatrix(matrix({ videoVariantId: 'sibling', accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    advance(1);
+    q.enqueueMatrix(matrix({ videoVariantId: 'other', accounts: [{ accountId: 'douyin_beta', platform: 'douyin' }] }));
+    advance(1);
+    await q.tick();
+    q.retryNow(first.id);
+    q = openQueue({ executor, budgets: { global: 1, device: 1 } });
+    await q.tick();
+    expect(calls.map((call) => call.videoVariantId)).toEqual(['first', 'other']);
+    q.cancel(first.id);
+    await q.tick();
+    expect(calls.some((call) => call.videoVariantId === 'sibling')).toBe(false);
+    advance(45_000);
+    await q.tick();
+    expect(calls.some((call) => call.videoVariantId === 'sibling')).toBe(true);
+  });
+
+  it('平台范围限流只停该平台，明确任务范围不阻挡同账号其他任务', async () => {
+    const calls: string[] = [];
+    const executor = vi.fn(async (input: PublishAttemptInput): Promise<PublishAttemptOutcome> => {
+      calls.push(input.videoVariantId);
+      if (input.videoVariantId === 'platform-first' && calls.filter((id) => id === 'platform-first').length === 1) {
+        return { kind: 'throttled', scope: 'platform', confirmedNotSubmitted: true, retryAfterMs: 45_000 };
+      }
+      if (input.videoVariantId === 'task-first') {
+        return { kind: 'throttled', scope: 'task', confirmedNotSubmitted: true, retryAfterMs: 45_000 };
+      }
+      return submitOk(`remote-${input.videoVariantId}`);
+    });
+    const q = openQueue({ executor, budgets: { global: 1, device: 1 } });
+    q.enqueueMatrix(matrix({ videoVariantId: 'platform-first', accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    advance(1);
+    q.enqueueMatrix(matrix({ videoVariantId: 'platform-sibling', accounts: [{ accountId: 'douyin_beta', platform: 'douyin' }] }));
+    advance(1);
+    const taskFirst = q.enqueueMatrix(matrix({ videoVariantId: 'task-first', accounts: [{ accountId: 'ks_alpha', platform: 'kuaishou' }] })).created[0];
+    advance(1);
+    q.enqueueMatrix(matrix({ videoVariantId: 'task-sibling', accounts: [{ accountId: 'ks_alpha', platform: 'kuaishou' }] }));
+    advance(1);
+    await q.tick();
+    await q.tick();
+    q.retryNow(taskFirst.id);
+    await q.tick();
+    expect(calls).toEqual(['platform-first', 'task-first', 'task-sibling']);
+    advance(45_000);
+    await q.tick();
+    await q.tick();
+    expect(calls).toContain('platform-sibling');
+  });
+
   it('缺省 retry-after 时使用有界指数退避并在尝试上限停机', async () => {
     const executor = vi.fn(async (): Promise<PublishAttemptOutcome> => ({
       kind: 'failed',
@@ -1305,6 +1365,25 @@ describe('人工决议返回值隔离', () => {
 });
 
 describe('持久化健壮性', () => {
+  it('旧 v1 任务缺少限流字段仍可读取，损坏的限流范围拒绝加载且不改盘', () => {
+    const seed = openQueue();
+    seed.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_alpha', platform: 'douyin' }] }));
+    const legacy = readStore();
+    delete legacy.tasks[0].throttleUntil;
+    delete legacy.tasks[0].throttleScope;
+    writeFileSync(storePath, JSON.stringify(legacy), 'utf-8');
+    const q = openQueue();
+    expect(q.list()).toHaveLength(1);
+    expect(q.list()[0].throttleUntil).toBeNull();
+    const bad = readStore();
+    bad.tasks[0].throttleUntil = current + 45_000;
+    bad.tasks[0].throttleScope = 'all_platforms';
+    const badBytes = JSON.stringify(bad);
+    writeFileSync(storePath, badBytes, 'utf-8');
+    expectQueueError(() => openQueue(), 'invalid_store');
+    expect(readFileSync(storePath, 'utf-8')).toBe(badBytes);
+  });
+
   it('旧进程遗留同名临时文件时仍能写盘，且不删除遗留文件', () => {
     const q = openQueue();
     const residualPath = `${storePath}.tmp-${process.pid}-1`;

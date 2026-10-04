@@ -66,3 +66,7 @@ Codex 独立增加[真实本地 MCP/桌面入口探针](../app/scripts/smoke-pro
 ## 2026-10-05 Codex 接手源码与 R5 ACL 修复
 
 用户已[明确授权 Codex 接手已确认阶段一的剩余源码](decisions/2026-10-05-codex-source-takeover.md)，四项执行者反馈均写入原文并返回 answered。Codex 按 R5 两文件合同先补项目盘 RED 测试，再移除导致 Windows 拒绝访问的重复 Owner 设置。聚焦、394 文件全量测试、类型检查、源码构建通过；无需权限预置的实际 Electron/MCP 探针两次完整通过，另一次后续探针不稳定失败保留在[修复报告](validation/r5-sonar-token-acl-codex-2026-10-05.md)。此项不等于 R5 生产动作接线完成，GLM 只读复审和真实账号/平台验收仍独立保留。
+
+## 2026-10-05 R6 账号冷却停派
+
+按[原离线红灯](validation/r6-account-cooldown-readiness-2026-09-28.md)修复通用队列：确认未提交的限流结果在任务中持久记录冷却时间和范围，默认停派该账号，显式 `task`/`platform` 范围分别处理；手动重试不得绕过等待。四平台标识的 12 个严格探针场景、队列相关聚焦测试、三项千任务负载/恢复测试、类型检查及源码构建结果见[修复验证](validation/r6-account-cooldown-codex-2026-10-05.md)。平台适配器仍未接真实限流信号，R6-P 真号发布与最终状态未验收。
