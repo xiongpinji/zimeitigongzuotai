@@ -174,6 +174,53 @@ describe('R4 composition similarity evidence and human review', () => {
     expect(low.reviewStatus).toBe('needs_resolution');
   });
 
+  it('reads passing review evidence only while two scores, render and sources remain current', async () => {
+    const { service, sourceGate, records, states } = await setup();
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-1'))
+      .rejects.toMatchObject({ code: 'stale_evidence' });
+    const report = await service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']);
+    await service.recordDecision(projectDir, BATCH, decision('plan-1', 'reviewer-a', report.evidenceSha256));
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-1'))
+      .rejects.toMatchObject({ code: 'review_not_passed' });
+    await service.recordDecision(projectDir, BATCH, decision('plan-1', 'reviewer-b', report.evidenceSha256));
+    const evidence = await service.readPassingReviewEvidence(projectDir, BATCH, 'plan-1');
+    expect(evidence).toMatchObject({ batchId: BATCH, planId: 'plan-1',
+      evidenceSha256: report.evidenceSha256, outputSha256: states.get('plan-1')!.outputSha256,
+      platform: 'douyin', region: 'cn', commercialShortVideo: true });
+    expect(evidence.outputPath).toBe(path.join(records[0].projectDir, states.get('plan-1')!.outputFile!));
+    expect(evidence.platformOriginality).toBe('unverified');
+    await fs.writeFile(evidence.outputPath, 'tampered');
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-1'))
+      .rejects.toThrow('output_conflict');
+    await fs.writeFile(evidence.outputPath, 'synthetic encoded plan-1');
+    sourceGate.mockRejectedValue(new Error('rights revoked'));
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-1'))
+      .rejects.toThrow('rights revoked');
+  });
+
+  it('rejects vetoed and corrupted review evidence even after two reviewer IDs', async () => {
+    const { service } = await setup();
+    const report = await service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']);
+    await service.recordDecision(projectDir, BATCH, decision('plan-2', 'reviewer-a', report.evidenceSha256));
+    await service.recordDecision(projectDir, BATCH, { ...decision('plan-2', 'reviewer-b', report.evidenceSha256),
+      vetoReasons: ['rights'] });
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-2'))
+      .rejects.toMatchObject({ code: 'review_not_passed' });
+    const file = path.join(projectDir, 'compositions', BATCH, 'review-decisions.json');
+    const data = JSON.parse(await fs.readFile(file, 'utf8'));
+    data.decisions[1].vetoReasons = [];
+    data.decisions[1].ratings.factual = 9;
+    await fs.writeFile(file, JSON.stringify(data));
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-2'))
+      .rejects.toMatchObject({ code: 'corrupt_review_file' });
+    const reportFile = path.join(projectDir, 'compositions', BATCH, 'review-report.json');
+    const malformed = JSON.parse(await fs.readFile(reportFile, 'utf8'));
+    malformed.versions[0] = null;
+    await fs.writeFile(reportFile, JSON.stringify(malformed));
+    await expect(service.readPassingReviewEvidence(projectDir, BATCH, 'plan-2'))
+      .rejects.toMatchObject({ code: 'stale_evidence' });
+  });
+
   it('rejects tampered outputs, changed evidence, invalid ratings and concurrent duplicate reviewers', async () => {
     const { service, states, records } = await setup();
     const report = await service.analyze(projectDir, BATCH, ['plan-1', 'plan-2', 'plan-3']);

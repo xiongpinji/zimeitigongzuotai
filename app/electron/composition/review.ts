@@ -64,10 +64,23 @@ export interface CompositionReviewDeps {
   nowIso?: () => string;
 }
 
+/** Main-process evidence projection; it is not an automatic publish authorization. */
+export interface PassingReviewEvidence {
+  batchId: string;
+  planId: string;
+  outputPath: string;
+  outputSha256: string;
+  evidenceSha256: string;
+  platform: string;
+  region: string;
+  commercialShortVideo: boolean;
+  platformOriginality: 'unverified';
+}
+
 export class CompositionReviewError extends Error {
   constructor(readonly code: string) { super(code); this.name = 'CompositionReviewError'; }
 }
-const fail = (code: string): never => { throw new CompositionReviewError(code); };
+function fail(code: string): never { throw new CompositionReviewError(code); }
 const validId = (value: unknown): value is string => typeof value === 'string' && ID.test(value) && !DEVICE.test(value);
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const hashJson = (value: unknown) => sha256(JSON.stringify(value));
@@ -245,6 +258,56 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   } finally { await fs.rm(temporary, { force: true }); }
 }
 
+async function currentReport(projectDir: string, batchId: string, batchDir: string,
+  deps: CompositionReviewDeps): Promise<CompositionReviewReport> {
+  const report = await readRegularJson(path.join(batchDir, REPORT_FILE)) as CompositionReviewReport | null;
+  if (!report || report.schemaVersion !== 1 || report.batchId !== batchId ||
+      !Array.isArray(report.versions) || report.versions.length < 3 ||
+      report.versions.some((version) => !version || typeof version !== 'object' ||
+        !validId(version.planId) ||
+        !SHA.test(version.outputSha256) || !SHA.test(version.planSha256) ||
+        !SHA.test(version.sourcesSha256)) ||
+      new Set(report.versions.map((version) => version.planId)).size !== report.versions.length ||
+      !Array.isArray(report.pairs) ||
+      report.pairs.length !== report.versions.length * (report.versions.length - 1) / 2 ||
+      report.pairs.some((pair) => !pair || !Array.isArray(pair.planIds) ||
+        pair.planIds.length !== 2 || !pair.planIds.every(validId) ||
+        pair.planIds[0] === pair.planIds[1] ||
+        pair.planIds.some((id) => !report.versions.some((version) => version.planId === id)) ||
+        ![pair.textSimilarity, pair.sourceOverlap].every((score) =>
+          typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 1) ||
+        ![pair.visualSimilarity, pair.audioSimilarity].every((score) => score === null ||
+          (typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 1)) ||
+        !Array.isArray(pair.flags) || pair.flags.some((flag) => typeof flag !== 'string')) ||
+      new Set(report.pairs.map((pair) => [...pair.planIds].sort().join('\u0000'))).size !== report.pairs.length ||
+      report.evidenceSha256 !== hashJson({ batchId, versions: report.versions, pairs: report.pairs }) ||
+      report.reviewRequired !== true || report.platformOriginality !== 'unverified') {
+    fail('stale_evidence');
+  }
+  for (const version of report.versions) {
+    const location = { projectDir, batchId, planId: version.planId };
+    const current = await readCompositionVersion(location);
+    const state = await deps.renderState.read(location);
+    await deps.sourceGate(location);
+    if (current.timelineModified || state?.state !== 'completed' ||
+        state.outputSha256 !== version.outputSha256 ||
+        current.manifest.planSha256 !== version.planSha256 ||
+        current.manifest.sourcesSha256 !== version.sourcesSha256) fail('stale_evidence');
+  }
+  return report;
+}
+
+function validStoredDecision(value: unknown): value is HumanReviewDecision {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as HumanReviewDecision;
+  return validId(item.planId) && validId(item.reviewerId) && SHA.test(item.evidenceSha256) &&
+    typeof item.submittedAt === 'string' && Number.isFinite(Date.parse(item.submittedAt)) &&
+    !!item.ratings && Object.keys(item.ratings).length === RATING_KEYS.length &&
+    RATING_KEYS.every((key) => Number.isInteger(item.ratings[key]) &&
+      item.ratings[key] >= 1 && item.ratings[key] <= 5) &&
+    Array.isArray(item.vetoReasons) && item.vetoReasons.every((reason) => VETO_REASONS.includes(reason));
+}
+
 export function createCompositionReview(deps: CompositionReviewDeps) {
   const now = deps.nowIso ?? (() => new Date().toISOString());
   const probe = deps.mediaProbe ?? probeCompositionMedia;
@@ -318,32 +381,15 @@ export function createCompositionReview(deps: CompositionReviewDeps) {
       const record = await readCompositionVersion({ projectDir, batchId, planId: decision.planId });
       const batchDir = path.dirname(record.projectDir);
       return locked(batchDir, async () => {
-        const report = await readRegularJson(path.join(batchDir, REPORT_FILE)) as CompositionReviewReport | null;
-        if (!report || report.schemaVersion !== 1 || report.batchId !== batchId ||
-            !Array.isArray(report.versions) || report.versions.length < 3 ||
-            new Set(report.versions.map((version) => version.planId)).size !== report.versions.length ||
-            report.versions.some((version) => !validId(version.planId) ||
-              !SHA.test(version.outputSha256) || !SHA.test(version.planSha256) ||
-              !SHA.test(version.sourcesSha256)) || !Array.isArray(report.pairs) ||
-            report.evidenceSha256 !== hashJson({ batchId, versions: report.versions, pairs: report.pairs }) ||
-            report.reviewRequired !== true || report.platformOriginality !== 'unverified' ||
-            report.evidenceSha256 !== decision.evidenceSha256 ||
+        const report = await currentReport(projectDir, batchId, batchDir, deps);
+        if (report.evidenceSha256 !== decision.evidenceSha256 ||
             !report.versions.some((version) => version.planId === decision.planId)) {
           throw new CompositionReviewError('stale_evidence');
         }
-        for (const version of report.versions) {
-          const location = { projectDir, batchId, planId: version.planId };
-          const current = await readCompositionVersion(location);
-          const state = await deps.renderState.read(location);
-          await deps.sourceGate(location);
-          if (current.timelineModified || state?.state !== 'completed' ||
-              state.outputSha256 !== version.outputSha256 ||
-              current.manifest.planSha256 !== version.planSha256 ||
-              current.manifest.sourcesSha256 !== version.sourcesSha256) fail('stale_evidence');
-        }
         const file = path.join(batchDir, DECISIONS_FILE);
         const prior = await readRegularJson(file) as { schemaVersion: 1; decisions: HumanReviewDecision[] } | null;
-        if (prior && (prior.schemaVersion !== 1 || !Array.isArray(prior.decisions))) fail('corrupt_review_file');
+        if (prior && (prior.schemaVersion !== 1 || !Array.isArray(prior.decisions) ||
+            prior.decisions.some((item) => !validStoredDecision(item)))) fail('corrupt_review_file');
         const decisions = prior?.decisions ?? [];
         if (decisions.some((item) => item.planId === decision.planId && item.reviewerId === decision.reviewerId &&
             item.evidenceSha256 === decision.evidenceSha256)) fail('duplicate_reviewer');
@@ -360,6 +406,45 @@ export function createCompositionReview(deps: CompositionReviewDeps) {
           : lowRating || disagreement ? 'needs_resolution' : 'ratings_agree';
         return { planId: decision.planId, distinctReviewerIds: new Set(current.map((item) => item.reviewerId)).size,
           reviewStatus, reviewRequired: true as const, platformOriginality: 'unverified' as const };
+      });
+    },
+
+    /** Revalidates review, render hash and current rights; never authorizes submission by itself. */
+    async readPassingReviewEvidence(projectDir: string, batchId: string,
+      planId: string): Promise<PassingReviewEvidence> {
+      if (!validId(batchId) || !validId(planId)) fail('invalid_input');
+      const location = { projectDir, batchId, planId };
+      const record = await readCompositionVersion(location);
+      const batchDir = path.dirname(record.projectDir);
+      return locked(batchDir, async () => {
+        const report = await currentReport(projectDir, batchId, batchDir, deps);
+        const version = report.versions.find((item) => item.planId === planId);
+        if (!version) fail('stale_evidence');
+        const stored = await readRegularJson(path.join(batchDir, DECISIONS_FILE)) as
+          { schemaVersion: 1; decisions: HumanReviewDecision[] } | null;
+        if (!stored) fail('review_not_passed');
+        if (stored.schemaVersion !== 1 || !Array.isArray(stored.decisions) ||
+            stored.decisions.some((item) => !validStoredDecision(item))) fail('corrupt_review_file');
+        const decisions = stored.decisions.filter((item) => item.planId === planId &&
+          item.evidenceSha256 === report.evidenceSha256);
+        const reviewers = decisions.map((item) => item.reviewerId);
+        if (decisions.length < 2 || new Set(reviewers).size !== decisions.length ||
+            decisions.some((item) => item.vetoReasons.length > 0 ||
+              RATING_KEYS.some((key) => item.ratings[key] < 4)) ||
+            RATING_KEYS.some((key) => Math.max(...decisions.map((item) => item.ratings[key])) -
+              Math.min(...decisions.map((item) => item.ratings[key])) > 1)) fail('review_not_passed');
+        const state = await deps.renderState.read(location);
+        if (state?.state !== 'completed' || !state.outputFile ||
+            !/^render-[a-f0-9]{64}\.mp4$/.test(state.outputFile) ||
+            state.outputSha256 !== version.outputSha256) fail('stale_evidence');
+        const outputPath = path.join(record.projectDir, state.outputFile);
+        const entry = await fs.lstat(outputPath).catch(() => fail('stale_evidence'));
+        if (!entry.isFile() || entry.isSymbolicLink()) fail('stale_evidence');
+        const context = record.manifest.sources.context;
+        return { batchId, planId, outputPath, outputSha256: state.outputSha256,
+          evidenceSha256: report.evidenceSha256, platform: context.platform,
+          region: context.region, commercialShortVideo: context.commercialShortVideo,
+          platformOriginality: 'unverified' };
       });
     },
   };
