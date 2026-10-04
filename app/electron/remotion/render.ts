@@ -1,4 +1,4 @@
-import { selectComposition, renderMedia } from '@remotion/renderer';
+import { selectComposition, renderMedia, makeCancelSignal } from '@remotion/renderer';
 import type { SrtEntry, TimelineData } from '../../src/types';
 import {
   insertOutputScaleFilter,
@@ -32,44 +32,59 @@ export interface RemotionRenderParams {
    */
   binariesDirectory?: string;
   onProgress?: (ratio: number) => void;
+  signal?: AbortSignal;
 }
 
 const COMPOSITION_ID = 'lingji-composition';
 
 export async function renderRemotionVideo(params: RemotionRenderParams): Promise<void> {
+  if (params.signal?.aborted) throw new Error('render_cancelled');
+  const cancellation = params.signal ? makeCancelSignal() : null;
+  const onAbort = () => cancellation?.cancel();
+  params.signal?.addEventListener('abort', onAbort, { once: true });
   const inputProps = {
     timeline: params.timeline,
     srtEntries: params.srtEntries,
     compiledCards: params.compiledCards,
   };
 
-  const composition = await selectComposition({
-    serveUrl: params.serveUrl,
-    id: COMPOSITION_ID,
-    inputProps,
-    binariesDirectory: params.binariesDirectory ?? null,
-  });
+  try {
+    const composition = await selectComposition({
+      serveUrl: params.serveUrl,
+      id: COMPOSITION_ID,
+      inputProps,
+      binariesDirectory: params.binariesDirectory ?? null,
+    });
+    if (params.signal?.aborted) throw new Error('render_cancelled');
 
-  await renderMedia({
-    composition,
-    serveUrl: params.serveUrl,
-    codec: 'h264',
-    outputLocation: params.outputPath,
-    inputProps,
-    concurrency: Math.max(1, params.concurrency),
-    scale: params.renderPlan.scale,
-    // 需要 FFmpeg 缩放时，预编码路径会在 stitcher 使用 -c:v copy，无法再应用 -vf。
-    disallowParallelEncoding: params.renderPlan.needsFinalScale,
-    ffmpegOverride: ({ type, args }) =>
-      type === 'stitcher' ? insertOutputScaleFilter(args, params.renderPlan) : args,
-    x264Preset: params.x264Preset,
-    // buildExportRenderConfig 产出的字符串始终满足 Remotion 的 Bitrate 模板类型（如 '1800k'），
-    // 这里 as 收窄一下，TS 才不会因为返回值是普通 string 而拒绝。
-    videoBitrate: params.videoBitrate as `${number}k`,
-    audioBitrate: params.audioBitrate as `${number}k`,
-    hardwareAcceleration: params.hardwareAcceleration,
-    binariesDirectory: params.binariesDirectory ?? null,
-    chromiumOptions: { ignoreCertificateErrors: false },
-    onProgress: ({ progress }) => params.onProgress?.(progress),
-  });
+    await renderMedia({
+      composition,
+      serveUrl: params.serveUrl,
+      codec: 'h264',
+      outputLocation: params.outputPath,
+      inputProps,
+      concurrency: Math.max(1, params.concurrency),
+      scale: params.renderPlan.scale,
+      // 需要 FFmpeg 缩放时，预编码路径会在 stitcher 使用 -c:v copy，无法再应用 -vf。
+      disallowParallelEncoding: params.renderPlan.needsFinalScale,
+      ffmpegOverride: ({ type, args }) =>
+        type === 'stitcher' ? insertOutputScaleFilter(args, params.renderPlan) : args,
+      x264Preset: params.x264Preset,
+      // buildExportRenderConfig 产出的字符串始终满足 Remotion 的 Bitrate 模板类型（如 '1800k'），
+      // 这里 as 收窄一下，TS 才不会因为返回值是普通 string 而拒绝。
+      videoBitrate: params.videoBitrate as `${number}k`,
+      audioBitrate: params.audioBitrate as `${number}k`,
+      hardwareAcceleration: params.hardwareAcceleration,
+      binariesDirectory: params.binariesDirectory ?? null,
+      chromiumOptions: { ignoreCertificateErrors: false },
+      onProgress: ({ progress }) => params.onProgress?.(progress),
+      cancelSignal: cancellation?.cancelSignal,
+    });
+    if (params.signal?.aborted) throw new Error('render_cancelled');
+  } catch (error) {
+    if (params.signal?.aborted) throw new Error('render_cancelled');
+    throw error;
+  } finally {
+    params.signal?.removeEventListener('abort', onAbort);
+  }
 }

@@ -66,7 +66,12 @@ export async function createRenderPublicDir(
   );
   const motionCardAssets = await collectMotionCardAssets(timeline, projectDir);
   const publicDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingjijianying-public-'));
-  await materializeRenderAssets(publicDir, [...assets, ...motionCardAssets]);
+  try {
+    await materializeRenderAssets(publicDir, [...assets, ...motionCardAssets]);
+  } catch (error) {
+    await fs.rm(publicDir, { recursive: true, force: true });
+    throw error;
+  }
 
   return {
     timeline: renderTimeline,
@@ -124,9 +129,14 @@ export async function hydrateAndExternalizeRenderCards(
 export async function prepareServeUrlFromPrebuilt(publicDir: string): Promise<string> {
   const prebuiltDir = path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-remotion');
   const serveDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingjijianying-serve-'));
-  await fs.cp(prebuiltDir, serveDir, { recursive: true });
-  await fs.cp(publicDir, path.join(serveDir, 'public'), { recursive: true });
-  return serveDir;
+  try {
+    await fs.cp(prebuiltDir, serveDir, { recursive: true });
+    await fs.cp(publicDir, path.join(serveDir, 'public'), { recursive: true });
+    return serveDir;
+  } catch (error) {
+    await fs.rm(serveDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /**
@@ -228,6 +238,9 @@ export async function renderVideoHeadless(
   opts: {
     onProgress?: (fraction: number) => void;
     onMotionCardCompileErrors?: (errors: CompiledCard[], total: number) => void;
+    signal?: AbortSignal;
+    /** Per-render cap for batch exports; legacy callers keep their previous default. */
+    frameConcurrency?: number;
     /**
      * 可选 telemetry 钩子，签名与 main.ts 的 makeMainTelemetry 产物兼容。
      * 缺省 no-op。发出 4 个 stage：export.assets / export.compile-cards / export.bundle / export.render。
@@ -237,8 +250,17 @@ export async function renderVideoHeadless(
 ): Promise<{ outputPath: string }> {
   const onProgress = opts.onProgress ?? (() => {});
   const tel = opts.telemetry ?? { emit: () => undefined };
+  const throwIfCancelled = () => {
+    if (opts.signal?.aborted) throw new Error('render_cancelled');
+  };
+  throwIfCancelled();
+  if (opts.frameConcurrency !== undefined &&
+      (!Number.isSafeInteger(opts.frameConcurrency) || opts.frameConcurrency < 1 || opts.frameConcurrency > 4)) {
+    throw new Error('render_invalid_concurrency');
+  }
 
   const isDev = !app.isPackaged;
+  const isBatch = !!opts.signal;
   const renderLogPrefix = '[render-video]';
   const renderStartedAt = Date.now();
   const timestamp = () => `${((Date.now() - renderStartedAt) / 1000).toFixed(2)}s`;
@@ -253,7 +275,7 @@ export async function renderVideoHeadless(
 
   const cpuCount = os.cpus().length;
   // 帧渲染是 Chromium 截图主导的 CPU 任务；cpu-2 给系统留一点喘息，避免输入卡顿。
-  const explicitConcurrency = Math.max(1, cpuCount - 2);
+  const explicitConcurrency = opts.frameConcurrency ?? Math.max(1, cpuCount - 2);
 
   // 把 UI 档位（resolution + quality）展开成完整的渲染配置：
   // - x264Preset / videoBitrate / audioBitrate 直接落到 renderMedia；
@@ -276,7 +298,7 @@ export async function renderVideoHeadless(
 
   if (isDev) {
     console.log(`${renderLogPrefix} 开始导出`, {
-      outputPath: args.outputPath,
+      outputPath: isBatch ? '[batch-output]' : args.outputPath,
       resolution: args.exportConfig.resolution,
       quality: args.exportConfig.quality,
       timelineSize: `${timelineData.width}x${timelineData.height}`,
@@ -311,23 +333,25 @@ export async function renderVideoHeadless(
   const { timeline: renderTimeline, publicDir } = await createRenderPublicDir(timelineData);
   // 打包态复用预打包 Remotion 产物时会 copy 出可写临时站点目录，导出后在 finally 清理。
   let prebuiltServeDir: string | undefined;
-  const projectDir = inferProjectDirFromTimeline(timelineData);
-  const { timeline: hydratedTimeline, externalizedCount } = await hydrateAndExternalizeRenderCards(
-    renderTimeline, publicDir, projectDir,
-  );
-  if (isDev && externalizedCount > 0) {
-    console.log(
-      `${renderLogPrefix} 外置卡片内联图片 ${externalizedCount} 个 → ${publicDir}/card-assets`,
-    );
-  }
-  tel.emit('stage.end', {
-    stage: 'export.assets',
-    durationMs: Date.now() - assetsStart,
-    ok: true,
-    externalizedCardAssets: externalizedCount,
-  });
-
   try {
+    throwIfCancelled();
+    const projectDir = inferProjectDirFromTimeline(timelineData);
+    const { timeline: hydratedTimeline, externalizedCount } = await hydrateAndExternalizeRenderCards(
+      renderTimeline, publicDir, projectDir,
+    );
+    throwIfCancelled();
+    if (isDev && externalizedCount > 0) {
+      console.log(
+        `${renderLogPrefix} 外置卡片内联图片 ${externalizedCount} 个${isBatch ? '' : ` → ${publicDir}/card-assets`}`,
+      );
+    }
+    tel.emit('stage.end', {
+      stage: 'export.assets',
+      durationMs: Date.now() - assetsStart,
+      ok: true,
+      externalizedCardAssets: externalizedCount,
+    });
+
     // ── stage: export.compile-cards ─────────────────────────────────
     const compileStart = Date.now();
     // 编译 motion 卡片 TSX → CJS，随 inputProps 传入 Remotion，由 CardHost 在无头 Chrome 内求值。
@@ -336,6 +360,7 @@ export async function renderVideoHeadless(
     const compiledCards = await compileCards(cardSources, {
       onCompileErrors: opts.onMotionCardCompileErrors,
     });
+    throwIfCancelled();
     tel.emit('stage.end', {
       stage: 'export.compile-cards',
       durationMs: Date.now() - compileStart,
@@ -365,6 +390,7 @@ export async function renderVideoHeadless(
         prebuiltServeDir = await prepareServeUrlFromPrebuilt(publicDir);
         serveUrl = prebuiltServeDir;
       }
+      throwIfCancelled();
       tel.emit('stage.end', {
         stage: 'export.bundle',
         durationMs: Date.now() - bundleStart,
@@ -375,7 +401,7 @@ export async function renderVideoHeadless(
         stage: 'export.bundle',
         durationMs: Date.now() - bundleStart,
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: isBatch ? 'render_failed' : err instanceof Error ? err.message : String(err),
       });
       throw err;
     }
@@ -389,21 +415,33 @@ export async function renderVideoHeadless(
     });
     onProgress(0.05);
     try {
-      await withPackagedRemotionCwd(() => renderRemotionVideo({
-        serveUrl,
-        outputPath: args.outputPath,
-        timeline: renderTimeline,
-        srtEntries,
-        compiledCards,
-        renderPlan,
-        x264Preset: renderConfig.x264Preset,
-        videoBitrate: renderConfig.videoBitrate,
-        audioBitrate: renderConfig.audioBitrate,
-        concurrency: explicitConcurrency,
-        hardwareAcceleration: 'if-possible',
-        binariesDirectory: resolveRemotionBinariesDirectory(),
-        onProgress: (ratio) => onProgress(Math.max(0.05, Math.min(0.98, ratio))),
-      }));
+      await withPackagedRemotionCwd(async () => {
+        try {
+          await renderRemotionVideo({
+            serveUrl,
+            outputPath: args.outputPath,
+            timeline: renderTimeline,
+            srtEntries,
+            compiledCards,
+            renderPlan,
+            x264Preset: renderConfig.x264Preset,
+            videoBitrate: renderConfig.videoBitrate,
+            audioBitrate: renderConfig.audioBitrate,
+            concurrency: explicitConcurrency,
+            hardwareAcceleration: 'if-possible',
+            binariesDirectory: resolveRemotionBinariesDirectory(),
+            signal: opts.signal,
+            onProgress: (ratio) => onProgress(Math.max(0.05, Math.min(0.98, ratio))),
+          });
+        } finally {
+          // 打包态直到本次临时站点清理完才释放进程级 cwd 门槛。
+          if (app.isPackaged) {
+            await fs.rm(publicDir, { recursive: true, force: true });
+            if (prebuiltServeDir) await fs.rm(prebuiltServeDir, { recursive: true, force: true });
+          }
+        }
+      });
+      throwIfCancelled();
       onProgress(1);
       tel.emit('stage.end', {
         stage: 'export.render',
@@ -415,7 +453,7 @@ export async function renderVideoHeadless(
         stage: 'export.render',
         durationMs: Date.now() - renderStart,
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: isBatch ? 'render_failed' : err instanceof Error ? err.message : String(err),
       });
       throw err;
     }
@@ -429,7 +467,7 @@ export async function renderVideoHeadless(
     return { outputPath: args.outputPath };
   } catch (err) {
     if (isDev) {
-      console.error(`${renderLogPrefix} 导出失败 @${timestamp()}`, err);
+      console.error(`${renderLogPrefix} 导出失败 @${timestamp()}`, isBatch ? 'render_failed' : err);
     }
     throw err;
   } finally {
