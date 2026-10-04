@@ -299,6 +299,103 @@ describe('并发预算与单账号互斥', () => {
   });
 });
 
+describe('挂起执行器的有界调度', () => {
+  it('有界返回后迟到的状态写入失败会阻止后续调度', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const q = openQueue({
+      executor: async () => { await gate; return submitOk('remote-late'); },
+      retryPolicy: { tickWaitMs: 20 },
+    });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_hung', platform: 'douyin' }] }));
+    const first = await q.tick();
+    expect(first.inFlight).toEqual([taskOf(q, 'douyin_hung').id]);
+    const claimedBytes = readFileSync(storePath);
+    rmSync(storePath, { force: true });
+    mkdirSync(storePath, { recursive: true });
+    release();
+    await vi.waitFor(() => {
+      let code = 'none';
+      try { openQueue(); }
+      catch (error) { code = (error as DurableQueueError).code; }
+      expect(code).not.toBe('none');
+      expect(code).not.toBe('store_in_use');
+    });
+    rmSync(storePath, { recursive: true, force: true });
+    writeFileSync(storePath, claimedBytes);
+    await expect(q.tick()).rejects.toMatchObject({ code: 'store_write_failed' });
+    expect(taskOf(q, 'douyin_hung').state).toBe('uploading');
+  });
+
+  it('到等待上限后释放调度轮次，但保留在途账号锁并允许其他平台使用空闲 worker', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executor = vi.fn(async (input: PublishAttemptInput) => {
+      if (input.accountId === 'douyin_hung') await gate;
+      return submitOk(`remote-${input.accountId}`);
+    });
+    const q = openQueue({ executor, retryPolicy: { tickWaitMs: 20 },
+      budgets: { global: 2, device: 2 } });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_hung', platform: 'douyin' }] }));
+    const first = q.tick();
+    try {
+      await expect(Promise.race([first, new Promise((_, reject) => setTimeout(() =>
+        reject(new Error('tick remained blocked by executor')), 200))])).resolves.toMatchObject({
+        claimed: [taskOf(q, 'douyin_hung').id],
+        inFlight: [taskOf(q, 'douyin_hung').id],
+      });
+      expect(taskOf(q, 'douyin_hung').state).toBe('uploading');
+      expectQueueError(() => openQueue(), 'store_in_use');
+      q.enqueueMatrix(matrix({ videoVariantId: 'variant-2', accounts: [
+        { accountId: 'douyin_other', platform: 'douyin' },
+        { accountId: 'kuaishou_free', platform: 'kuaishou' },
+      ] }));
+      const second = await q.tick();
+      expect(second.claimed).toEqual([taskOf(q, 'kuaishou_free').id]);
+      expect(second.inFlight).toEqual([taskOf(q, 'douyin_hung').id]);
+      expect(executor).toHaveBeenCalledTimes(2);
+      expect(taskOf(q, 'douyin_other').state).toBe('queued');
+    } finally {
+      release();
+      await first.catch(() => {});
+    }
+    await vi.waitFor(() => expect(taskOf(q, 'douyin_hung').state).toBe('verifying'));
+    expect(executor).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { global: 1, device: 2 },
+    { global: 2, device: 1 },
+  ])('挂起调用占用预算 global=$global device=$device，下一轮不得超额领取', async (budgets) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executor = vi.fn(async (input: PublishAttemptInput) => {
+      if (input.accountId === 'douyin_hung') await gate;
+      return submitOk(`remote-${input.accountId}`);
+    });
+    const q = openQueue({ executor, retryPolicy: { tickWaitMs: 20 }, budgets });
+    q.enqueueMatrix(matrix({ accounts: [{ accountId: 'douyin_hung', platform: 'douyin' }] }));
+    const first = q.tick();
+    try {
+      await expect(Promise.race([first, new Promise((_, reject) => setTimeout(() =>
+        reject(new Error('tick remained blocked by executor')), 200))])).resolves.toBeDefined();
+      q.enqueueMatrix(matrix({ videoVariantId: 'variant-2', accounts: [
+        { accountId: 'kuaishou_free', platform: 'kuaishou' },
+      ] }));
+      const second = await q.tick();
+      expect(second.claimed).toEqual([]);
+      expect(second.inFlight).toEqual([taskOf(q, 'douyin_hung').id]);
+      expect(executor).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await first.catch(() => {});
+    }
+    await vi.waitFor(() => expect(taskOf(q, 'douyin_hung').state).toBe('verifying'));
+    await q.tick();
+    expect(executor).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('计划时间、取消与退避', () => {
   it('计划时间未到的任务不被领取，到点后才领取', async () => {
     const executor = vi.fn(async (input: PublishAttemptInput) => submitOk(`remote-${input.taskId}`));

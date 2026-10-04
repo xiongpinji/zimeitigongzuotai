@@ -11,6 +11,8 @@
  * - 同进程实例隔离：同一 store 有在途提交 / 核对的实例时拒绝打开；每个实例写盘前
  *   核验磁盘字节指纹，外部改写后拒绝用陈旧快照整库覆盖；
  * - 未知提交必须先经注入的 reconcile 得到远端 ID / 最终状态，或人工解决。
+ * - 单轮 tick 等待有上限；超时只释放调度等待，不中止或释放仍在途的上传。
+ *   后续 tick 把在途调用计入全局、设备、平台预算和账号锁，绝不并发补发。
  *
  * 边界：
  * - 只依赖注入的 clock / executor / reconciler，不调用任何真实平台或云端；
@@ -209,6 +211,8 @@ export interface QueueRetryPolicy {
   maxReconcileAttempts?: number;
   /** 队列租约时长，默认 600000ms。 */
   leaseMs?: number;
+  /** tick 最多等待在途调用多久；超过后调用继续占预算和账号锁。默认 30000ms。 */
+  tickWaitMs?: number;
 }
 
 export interface DurableQueueOptions {
@@ -250,6 +254,8 @@ export interface QueueTickReport {
   reconciled: string[];
   /** 本轮因 cancelRequested 而终止的未提交任务 ID。 */
   cancelled: string[];
+  /** 返回时仍在主进程内执行的任务；调用方不能把本轮返回当作上传完成。 */
+  inFlight: string[];
 }
 
 export interface QueueManualResolution {
@@ -276,6 +282,7 @@ export interface ResolvedQueueRetryPolicy {
   maxBackoffMs: number;
   maxReconcileAttempts: number;
   leaseMs: number;
+  tickWaitMs: number;
 }
 
 export interface DurableQueueSnapshot {
@@ -451,6 +458,14 @@ function requirePositiveInt(value: number | undefined, fallback: number, field: 
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || value < 1) {
     throw new DurableQueueError('invalid_task_input', `${field} 必须为 >= 1 的整数`);
+  }
+  return value;
+}
+
+function requireTimerMs(value: number | undefined, fallback: number, field: string): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) {
+    throw new DurableQueueError('invalid_task_input', `${field} 必须为有效定时器毫秒数`);
   }
   return value;
 }
@@ -701,6 +716,7 @@ export class DurablePublishQueue {
   private readonly clock: () => number;
   private readonly running = new Map<string, RunningEntry>();
   private tickInFlight: Promise<QueueTickReport> | null = null;
+  private lateOperationFailure: unknown | null = null;
   private file: DurableQueueFileV1;
   /** 本实例最近一次读 / 写盘得到的字节指纹；null 表示当时文件不存在。 */
   private expectedStoreDigest: string | null = null;
@@ -762,6 +778,7 @@ export class DurablePublishQueue {
         'retryPolicy.maxReconcileAttempts',
       ),
       leaseMs: requirePositiveInt(options.retryPolicy?.leaseMs, 600_000, 'retryPolicy.leaseMs'),
+      tickWaitMs: requireTimerMs(options.retryPolicy?.tickWaitMs, 30_000, 'retryPolicy.tickWaitMs'),
     };
 
     this.file = this.load();
@@ -951,6 +968,9 @@ export class DurablePublishQueue {
    * 再对 verifying / unknown_submission 任务执行远端核对。并发调用会合并到同一轮。
    */
   tick(): Promise<QueueTickReport> {
+    // A prior bounded tick may have returned while work was still running. If its eventual
+    // state write failed, subsequent dispatch must stop until the owner is restarted/recovered.
+    if (this.lateOperationFailure !== null) return Promise.reject(this.lateOperationFailure);
     if (this.tickInFlight) return this.tickInFlight;
     const run = this.doTick().finally(() => {
       if (this.tickInFlight === run) this.tickInFlight = null;
@@ -961,12 +981,16 @@ export class DurablePublishQueue {
 
   private async doTick(): Promise<QueueTickReport> {
     const at = this.clock();
-    const report: QueueTickReport = { at, claimed: [], reconciled: [], cancelled: [] };
+    const report: QueueTickReport = { at, claimed: [], reconciled: [], cancelled: [], inFlight: [] };
     const submissions: Array<{ task: DurablePublishTaskV1; controller: AbortController }> = [];
     const reconciliations: Array<{ task: DurablePublishTaskV1; controller: AbortController }> = [];
     const busyAccounts = new Set<string>();
     for (const entry of this.running.values()) busyAccounts.add(entry.accountId);
     const selectedPlatforms = new Map<QueuePlatform, number>();
+    const runningSubmissions = [...this.running.values()].filter((entry) => entry.kind === 'submit');
+    for (const entry of runningSubmissions) {
+      selectedPlatforms.set(entry.platform, (selectedPlatforms.get(entry.platform) ?? 0) + 1);
+    }
 
     this.mutate((draft) => {
       const ordered = [...draft.tasks].sort(compareTasks);
@@ -1010,8 +1034,8 @@ export class DurablePublishQueue {
 
       // 2) 提交领取：先到先得；互斥与预算在领取时一次性落实
       for (const task of ordered) {
-        if (submissions.length >= this.budgets.global) break;
-        if (submissions.length >= this.budgets.device) break;
+        if (this.running.size + submissions.length >= this.budgets.global) break;
+        if (runningSubmissions.length + submissions.length >= this.budgets.device) break;
         if (!EXECUTABLE_STATES.has(task.state) || task.cancelRequested) continue;
         // 挂车任务即使状态可执行也绝不进入普通发布执行器。
         if (task.commerceRequest !== null) continue;
@@ -1072,9 +1096,32 @@ export class DurablePublishQueue {
       beginStoreOperation(this.normalizedStorePath);
       work.push(this.runReconciliation(entry.task, entry.controller));
     }
-    const settled = await Promise.allSettled(work);
-    const failure = settled.find((result) => result.status === 'rejected');
+    if (work.length === 0) {
+      report.inFlight = [...this.running.keys()];
+      return report;
+    }
+    const settled = Promise.allSettled(work);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      settled.then((items) => ({ kind: 'settled' as const, items })),
+      new Promise<{ kind: 'wait_expired' }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: 'wait_expired' }), this.retryPolicy.tickWaitMs);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+    // In-flight promises retain their running/store-operation locks until the actual adapter
+    // settles. They remain counted on later ticks; timing out a caller never means no upload.
+    if (result.kind === 'wait_expired') {
+      void settled.then((items) => {
+        const failure = items.find((item) => item.status === 'rejected');
+        if (failure && failure.status === 'rejected') this.lateOperationFailure = failure.reason;
+      });
+      report.inFlight = [...this.running.keys()];
+      return report;
+    }
+    const failure = result.items.find((item) => item.status === 'rejected');
     if (failure && failure.status === 'rejected') throw failure.reason;
+    report.inFlight = [...this.running.keys()];
     return report;
   }
 
