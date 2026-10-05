@@ -118,4 +118,22 @@ describe('受信任生产活动授权', () => {
     expect(f.store.authorizeHighlightDetection(f.project)).toEqual({ allowed: false,
       reason: 'grant_missing' });
   });
+
+  it('混剪生成有独立授权，工程切换、撤销和到期后拒绝', () => {
+    const f = fixture();
+    f.store.issueHighlightDetection(f.project, 30);
+    expect(f.store.authorizeCompositionBuild(f.project)).toEqual({ allowed: false,
+      reason: 'action_not_allowed' });
+    expect(f.store.issueCompositionBuild(f.project, 30).allowedActions).toContain('build_compositions');
+    expect(f.reopen().authorizeCompositionBuild(f.project)).toEqual({ allowed: true });
+    expect(f.store.authorizeCompositionBuild(join(f.root, 'other'))).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    f.advance(30 * 60_000);
+    expect(f.store.authorizeCompositionBuild(f.project)).toEqual({ allowed: false,
+      reason: 'grant_expired' });
+    f.store.issueCompositionBuild(f.project, 30);
+    f.store.revoke(f.project);
+    expect(f.store.authorizeCompositionBuild(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+  });
 });

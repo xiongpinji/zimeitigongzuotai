@@ -10,6 +10,8 @@ let projectDir: string;
 const owner = { id: 'main-window' };
 
 function setup() {
+  let allowed = false;
+  let activeProject = projectDir;
   const handlers = new Map<string, (event: unknown, input?: unknown) => Promise<unknown>>();
   const run = vi.fn(async () => ({ batchId: 'batch-1', versions: [
     { planId: 'plan-1', state: 'completed', reviewRequired: true,
@@ -27,16 +29,19 @@ function setup() {
   const recommend = vi.fn(async () => ({ status: 'ok', recommendations: [
     { assetId: `asset_${'a'.repeat(64)}`, similarity: 0.9, reasons: ['content'] },
   ] }));
-  registerCompositionIpc({
+  const bridge = registerCompositionIpc({
     ipc: { handle: (channel, handler) => { handlers.set(channel, handler as typeof handlers extends Map<string, infer H> ? H : never); } },
     allowedSender: (event) => event === owner,
-    activeProjectDir: () => projectDir,
+    activeProjectDir: () => activeProject,
+    authorizeAgentBuild: () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' },
     renderBatch: { run, read, cancel },
     review: { analyze, recordDecision },
     resources, createBatch, recommend,
   } as unknown as CompositionIpcOptions);
   const call = (channel: string, input?: unknown, event: unknown = owner) => handlers.get(channel)!(event, input);
-  return { call, run, read, cancel, analyze, recordDecision, resources, createBatch, recommend, handlers };
+  return { call, run, read, cancel, analyze, recordDecision, resources, createBatch, recommend,
+    handlers, bridge, setAllowed: (value: boolean) => { allowed = value; },
+    setProject: (value: string) => { activeProject = value; } };
 }
 
 beforeEach(async () => {
@@ -109,5 +114,78 @@ describe('R4 owner-window composition IPC', () => {
     expect(fx.recommend).toHaveBeenCalledWith('匿名主题', {
       platform: 'douyin', region: 'cn', commercialShortVideo: false,
     });
+  });
+
+  it('prepares reviewed inputs for one Agent call and rechecks project and grant', async () => {
+    const fx = setup();
+    const receiptId = `hclip_${'a'.repeat(64)}`;
+    const assetId = `asset_${'b'.repeat(64)}`;
+    const input = { aspectRatio: '9:16', platform: 'douyin', region: 'cn',
+      commercialShortVideo: false, approvedForModel: true,
+      selectedReceipts: [{ receiptId, anonymousTopic: '匿名主题', approvedTranscriptExcerpt: null }],
+      selectedAssets: [{ assetId, anonymousDescription: '已授权画面' }] };
+    fx.resources.mockResolvedValue({ receipts: [{ id: receiptId, highlightId: 'h',
+      startMs: 0, endMs: 1000, topic: '匿名主题' }],
+      assets: [{ id: assetId, description: '已授权画面', mediaType: 'video' }] });
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: false, code: 'authorization_expired' });
+    fx.setAllowed(true);
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild,
+      { ...input, approvedForModel: false })).toEqual({ ok: false, code: 'invalid_input' });
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: true, prepared: true });
+    fx.setProject(path.join(root, 'other-project'));
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'authorization_expired' });
+    expect(fx.createBatch).not.toHaveBeenCalled();
+    fx.setProject(projectDir);
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'not_prepared' });
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: true, prepared: true });
+    fx.createBatch.mockImplementationOnce(async (_input, beforePersist) => {
+      fx.setAllowed(false);
+      beforePersist?.();
+      return { batchId: 'batch-1', plans: [], reviewFlags: [], reviewRequired: true };
+    });
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'authorization_expired' });
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'not_prepared' });
+  });
+
+  it('consumes one prepared build, refuses concurrent triggers and honors revocation during generation', async () => {
+    const fx = setup();
+    const receiptId = `hclip_${'a'.repeat(64)}`;
+    fx.resources.mockResolvedValue({ receipts: [{ id: receiptId, highlightId: 'h',
+      startMs: 0, endMs: 1000, topic: '匿名主题' }], assets: [] });
+    fx.setAllowed(true);
+    const input = { aspectRatio: '9:16', platform: 'douyin', region: 'cn',
+      commercialShortVideo: false, approvedForModel: true,
+      selectedReceipts: [{ receiptId, anonymousTopic: '匿名主题', approvedTranscriptExcerpt: null }],
+      selectedAssets: [] };
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: true, prepared: true });
+    fx.createBatch.mockResolvedValueOnce({ batchId: 'batch-1',
+      plans: ['plan-1', 'plan-2', 'plan-3'].map((planId) => ({ planId,
+        narrativeSummary: planId, centralQuestion: planId, segmentCount: 1 })),
+      reviewFlags: [], reviewRequired: true });
+    expect(await fx.bridge.build()).toEqual({ ok: true, batchId: 'batch-1',
+      planIds: ['plan-1', 'plan-2', 'plan-3'] });
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'not_prepared' });
+
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: true, prepared: true });
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    fx.createBatch.mockImplementationOnce(async (_input, beforePersist) => {
+      await hold;
+      beforePersist?.();
+      return { batchId: 'late', plans: [], reviewFlags: [], reviewRequired: true };
+    });
+    const pending = fx.bridge.build();
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'batch_busy' });
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentBuild, input))
+      .toEqual({ ok: false, code: 'batch_busy' });
+    fx.bridge.clear();
+    release();
+    expect(await pending).toEqual({ ok: false, code: 'authorization_expired' });
+    expect(await fx.bridge.build()).toEqual({ ok: false, code: 'not_prepared' });
   });
 });

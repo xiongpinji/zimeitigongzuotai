@@ -910,6 +910,12 @@ export interface CompositionV1API {
     Promise<CompositionV1Result<{ batchId: string; plans: Array<{ planId: string;
       narrativeSummary: string; centralQuestion: string; segmentCount: number }>;
       reviewFlags: Array<{ planIds: [string, string]; reason: string }>; reviewRequired: true }>>;
+  prepareAgentBuild(input: { aspectRatio: '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
+    platform: ProductionPlatform; region: string; commercialShortVideo: boolean;
+    selectedReceipts: Array<{ receiptId: string; anonymousTopic: string;
+      approvedTranscriptExcerpt: null }>;
+    selectedAssets: Array<{ assetId: string; anonymousDescription: string }>;
+    approvedForModel: true }): Promise<CompositionV1Result<{ prepared: true }>>;
   list(): Promise<CompositionV1Result<{ batches: CompositionV1BatchDto[] }>>;
   open(batchId: string, planId: string): Promise<CompositionV1Result<{ projectDir: string; timelineModified: boolean }>>;
   render(input: { batchId: string; planIds: string[]; platform: ProductionPlatform; region: string;
@@ -945,6 +951,7 @@ export interface ProductionActivityAPI {
   issueAnalysis(): Promise<ProductionActivityResult>;
   issueRecordingImport(): Promise<ProductionActivityResult>;
   issueHighlightDetection(): Promise<ProductionActivityResult>;
+  issueCompositionBuild(): Promise<ProductionActivityResult>;
   revoke(): Promise<ProductionActivityResult>;
 }
 

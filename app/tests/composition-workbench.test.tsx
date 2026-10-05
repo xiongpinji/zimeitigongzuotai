@@ -91,6 +91,7 @@ describe('R4 composition workbench', () => {
         recommendations: [{ assetId, similarity: 0.91, reasons: ['内容匹配'] }] })),
       create: vi.fn(async () => ({ ok: true as const, batchId: 'batch-1', plans: [],
         reviewFlags: [], reviewRequired: true as const })),
+      prepareAgentBuild: vi.fn(async () => ({ ok: true as const, prepared: true as const })),
     } as unknown as CompositionV1API;
     await mount(api);
     const createButton = [...host!.querySelectorAll('button')].find((entry) =>
@@ -117,6 +118,13 @@ describe('R4 composition workbench', () => {
       selectedReceipts: [{ receiptId, anonymousTopic: '匿名的功能讲解', approvedTranscriptExcerpt: null }],
       selectedAssets: [{ assetId, anonymousDescription: '无人物的产品特写' }],
       platform: 'douyin', region: 'cn', commercialShortVideo: false,
+    }));
+    await act(async () => { consent.click(); });
+    await click('准备供智能体生成一次');
+    expect(api.prepareAgentBuild).toHaveBeenCalledWith(expect.objectContaining({
+      approvedForModel: true,
+      selectedReceipts: [{ receiptId, anonymousTopic: '匿名的功能讲解', approvedTranscriptExcerpt: null }],
+      selectedAssets: [{ assetId, anonymousDescription: '无人物的产品特写' }],
     }));
   });
 });

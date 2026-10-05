@@ -108,4 +108,17 @@ describe('R4 controlled composition creation', () => {
     await expect(invalid(fx.input)).rejects.toMatchObject({ code: 'invalid_model_output' });
     await expect(fs.stat(path.join(projectDir, 'compositions'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  it('does not persist proposals when authorization expires during model generation', async () => {
+    const fx = fixture();
+    const beforePersist = vi.fn(() => { throw Object.assign(new Error('authorization_expired'),
+      { code: 'authorization_expired' }); });
+    const guarded = createCompositionBatch({ getDocument: async () => fx.document,
+      sourceServices: fx.services, generate: fx.generate, model: 'offline-fake',
+      promptVersion: 'test-v1', nowIso: () => NOW, beforePersist });
+    await expect(guarded(fx.input)).rejects.toMatchObject({ code: 'authorization_expired' });
+    expect(fx.generate).toHaveBeenCalledOnce();
+    expect(beforePersist).toHaveBeenCalledOnce();
+    await expect(fs.stat(path.join(projectDir, 'compositions'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

@@ -22,6 +22,8 @@ export interface CreateCompositionBatchDeps {
   model: string;
   promptVersion: string;
   nowIso?: () => string;
+  /** Recheck the current project and grant after the asynchronous model and source checks. */
+  beforePersist?: () => void;
 }
 
 export class CreateCompositionBatchError extends Error {
@@ -83,7 +85,9 @@ export function createCompositionBatch(deps: CreateCompositionBatchDeps) {
       }, deps.sourceServices);
       versions.push({ plan, sources, timeline: buildCompositionTimeline(plan, sources) });
     }
-    await persistCompositionVersions({ projectDir: input.projectDir, batchId: proposal.batchId, versions });
+    deps.beforePersist?.();
+    await persistCompositionVersions({ projectDir: input.projectDir, batchId: proposal.batchId,
+      versions, beforeCommit: deps.beforePersist });
     return { batchId: proposal.batchId,
       plans: proposal.plans.map((plan) => ({ planId: plan.id,
         narrativeSummary: plan.narrativeSummary, centralQuestion: plan.editorial!.centralQuestion,

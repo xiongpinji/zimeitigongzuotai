@@ -868,6 +868,7 @@ contextBridge.exposeInMainWorld('compositionV1API', {
   recommend: (input) => ipcRenderer.invoke('composition-v1:recommend', input),
   resources: () => ipcRenderer.invoke('composition-v1:resources'),
   create: (input) => ipcRenderer.invoke('composition-v1:create', input),
+  prepareAgentBuild: (input) => ipcRenderer.invoke('composition-v1:prepare-agent-build', input),
   list: () => ipcRenderer.invoke('composition-v1:list'),
   open: (batchId, planId) => ipcRenderer.invoke('composition-v1:open', { batchId, planId }),
   render: (input) => ipcRenderer.invoke('composition-v1:render', input),
@@ -889,6 +890,7 @@ contextBridge.exposeInMainWorld('productionActivityAPI', {
   issueAnalysis: () => ipcRenderer.invoke('production-activity:issue-analysis', 30),
   issueRecordingImport: () => ipcRenderer.invoke('production-activity:issue-recording-import', 30),
   issueHighlightDetection: () => ipcRenderer.invoke('production-activity:issue-highlight-detection', 30),
+  issueCompositionBuild: () => ipcRenderer.invoke('production-activity:issue-composition-build', 30),
   revoke: () => ipcRenderer.invoke('production-activity:revoke'),
 } satisfies ProductionActivityAPI);
 

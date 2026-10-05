@@ -5,6 +5,7 @@ import { readCompositionVersion } from './version-projects';
 import type { createCompositionRenderBatch } from './render-batch';
 import type { createCompositionReview, HumanReviewDecision } from './review';
 import type { CreateCompositionBatchInput } from './create-batch';
+import type { AgentActionGateDecision } from '../production/agent-action-gate';
 
 export const COMPOSITION_V1_CHANNELS = {
   list: 'composition-v1:list',
@@ -15,6 +16,7 @@ export const COMPOSITION_V1_CHANNELS = {
   review: 'composition-v1:review',
   resources: 'composition-v1:resources',
   create: 'composition-v1:create',
+  prepareAgentBuild: 'composition-v1:prepare-agent-build',
   recommend: 'composition-v1:recommend',
 } as const;
 
@@ -31,9 +33,10 @@ export interface CompositionIpcOptions {
   resources: (projectDir: string) => Promise<{ receipts: Array<{ id: string; highlightId: string;
     startMs: number; endMs: number; topic: string }>; assets: Array<{
       id: string; description: string; mediaType: 'video' | 'image' }> }>;
-  createBatch: (input: CreateCompositionBatchInput) => Promise<{ batchId: string;
+  createBatch: (input: CreateCompositionBatchInput, beforePersist?: () => void) => Promise<{ batchId: string;
     plans: Array<{ planId: string; narrativeSummary: string; centralQuestion: string; segmentCount: number }>;
     reviewFlags: Array<{ planIds: [string, string]; reason: string }>; reviewRequired: true }>;
+  authorizeAgentBuild: (projectDir: string) => AgentActionGateDecision;
   recommend: (query: string, context: CreateCompositionBatchInput['context']) => Promise<{
     status: 'ok' | 'no_eligible_assets' | 'index_unavailable';
     recommendations: Array<{ assetId: string; similarity: number; reasons: string[] }> }>;
@@ -52,6 +55,7 @@ const SAFE_CODES = new Set([
   'unsafe_project', 'conflicting_source', 'invalid_catalog',
   'model_unavailable', 'invalid_model_output', 'insufficient_plans', 'duplicate_plans',
   'source_unavailable', 'duplicate_receipt', 'unsupported_voiceover',
+  'authorization_expired',
 ]);
 
 function validId(value: unknown): value is string {
@@ -112,7 +116,57 @@ async function batches(projectDir: string, renderBatch: CompositionIpcOptions['r
   return result;
 }
 
-export function registerCompositionIpc(options: CompositionIpcOptions): void {
+function createInput(projectDir: string, input: unknown): CreateCompositionBatchInput | null {
+  if (!object(input) || !Array.isArray(input.selectedReceipts) ||
+      !Array.isArray(input.selectedAssets) ||
+      !['16:9', '9:16', '1:1', '4:3', '3:4'].includes(input.aspectRatio as string) ||
+      !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
+      typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
+      typeof input.commercialShortVideo !== 'boolean') return null;
+  return { projectDir,
+    aspectRatio: input.aspectRatio as CreateCompositionBatchInput['aspectRatio'],
+    context: { platform: input.platform as CreateCompositionBatchInput['context']['platform'],
+      region: input.region, commercialShortVideo: input.commercialShortVideo },
+    selectedReceipts: input.selectedReceipts as CreateCompositionBatchInput['selectedReceipts'],
+    selectedAssets: input.selectedAssets as CreateCompositionBatchInput['selectedAssets'] };
+}
+
+export interface PreparedCompositionAgentBridge {
+  build(): Promise<{ ok: true; batchId: string; planIds: string[] } | { ok: false; code: string }>;
+  clear(): void;
+}
+
+export function registerCompositionIpc(options: CompositionIpcOptions): PreparedCompositionAgentBridge {
+  let prepared: CreateCompositionBatchInput | null = null;
+  let running = false;
+  let generation = 0;
+  const clear = () => { prepared = null; generation += 1; };
+  const authorized = (projectDir: string) => options.authorizeAgentBuild(projectDir).allowed;
+  const bridge: PreparedCompositionAgentBridge = {
+    clear,
+    async build() {
+      if (running) return { ok: false, code: 'batch_busy' };
+      const input = prepared;
+      prepared = null; // One trigger, including a failed or concurrent trigger.
+      if (!input) return { ok: false, code: 'not_prepared' };
+      if (options.activeProjectDir() !== input.projectDir || !authorized(input.projectDir)) {
+        return { ok: false, code: 'authorization_expired' };
+      }
+      const activeGeneration = generation;
+      const beforePersist = () => {
+        if (generation !== activeGeneration || options.activeProjectDir() !== input.projectDir ||
+            !authorized(input.projectDir)) {
+          throw Object.assign(new Error('authorization_expired'), { code: 'authorization_expired' });
+        }
+      };
+      running = true;
+      try {
+        const result = await options.createBatch(input, beforePersist);
+        return { ok: true, batchId: result.batchId, planIds: result.plans.map((plan) => plan.planId) };
+      } catch (error) { return { ok: false, code: code(error) }; }
+      finally { running = false; }
+    },
+  };
   const handle = (channel: string, operation: (projectDir: string, input: unknown) => Promise<unknown>) => {
     options.ipc.handle(channel, async (event, input) => {
       if (!options.allowedSender(event)) return { ok: false, code: 'forbidden' };
@@ -182,22 +236,48 @@ export function registerCompositionIpc(options: CompositionIpcOptions): void {
     ({ ok: true, ...(await options.resources(projectDir)) }));
 
   handle(COMPOSITION_V1_CHANNELS.create, async (projectDir, input) => {
-    if (!object(input) || !Array.isArray(input.selectedReceipts) ||
-        !Array.isArray(input.selectedAssets) ||
-        !['16:9', '9:16', '1:1', '4:3', '3:4'].includes(input.aspectRatio as string) ||
-        !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
-        typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
-        typeof input.commercialShortVideo !== 'boolean') {
+    const selected = createInput(projectDir, input);
+    if (!selected) return { ok: false, code: 'invalid_input' };
+    const result = await options.createBatch(selected);
+    return { ok: true, ...result };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.prepareAgentBuild, async (projectDir, input) => {
+    if (running) return { ok: false, code: 'batch_busy' };
+    clear();
+    if (!object(input) || input.approvedForModel !== true) {
       return { ok: false, code: 'invalid_input' };
     }
-    const result = await options.createBatch({ projectDir,
-      aspectRatio: input.aspectRatio as CreateCompositionBatchInput['aspectRatio'],
-      context: { platform: input.platform as CreateCompositionBatchInput['context']['platform'],
-        region: input.region, commercialShortVideo: input.commercialShortVideo },
-      selectedReceipts: input.selectedReceipts as CreateCompositionBatchInput['selectedReceipts'],
-      selectedAssets: input.selectedAssets as CreateCompositionBatchInput['selectedAssets'],
-    });
-    return { ok: true, ...result };
+    const selected = createInput(projectDir, input);
+    if (!selected || selected.selectedReceipts.length < 1 || selected.selectedReceipts.length > 12 ||
+        selected.selectedAssets.length > 12 ||
+        selected.selectedReceipts.some((item) => !object(item) ||
+          typeof item.receiptId !== 'string' || !/^hclip_[a-f0-9]{64}$/.test(item.receiptId) ||
+          typeof item.anonymousTopic !== 'string' || !item.anonymousTopic.trim() ||
+          item.anonymousTopic.length > 500 || item.approvedTranscriptExcerpt !== null) ||
+        selected.selectedAssets.some((item) => !object(item) ||
+          typeof item.assetId !== 'string' || !/^asset_[a-f0-9]{64}$/.test(item.assetId) ||
+          typeof item.anonymousDescription !== 'string' || !item.anonymousDescription.trim() ||
+          item.anonymousDescription.length > 500) ||
+        new Set(selected.selectedReceipts.map((item) => item.receiptId)).size !== selected.selectedReceipts.length ||
+        new Set(selected.selectedAssets.map((item) => item.assetId)).size !== selected.selectedAssets.length) {
+      return { ok: false, code: 'invalid_input' };
+    }
+    if (!authorized(projectDir)) return { ok: false, code: 'authorization_expired' };
+    const available = await options.resources(projectDir);
+    const receiptIds = new Set(available.receipts.map((item) => item.id));
+    const assetIds = new Set(available.assets.map((item) => item.id));
+    if (selected.selectedReceipts.some((item) => !receiptIds.has(item.receiptId)) ||
+        selected.selectedAssets.some((item) => !assetIds.has(item.assetId))) {
+      return { ok: false, code: 'source_unavailable' };
+    }
+    if (options.activeProjectDir() !== projectDir || !authorized(projectDir)) {
+      return { ok: false, code: 'authorization_expired' };
+    }
+    prepared = { ...selected,
+      selectedReceipts: selected.selectedReceipts.map((item) => ({ ...item })),
+      selectedAssets: selected.selectedAssets.map((item) => ({ ...item })) };
+    return { ok: true, prepared: true };
   });
 
   handle(COMPOSITION_V1_CHANNELS.recommend, async (_projectDir, input) => {
@@ -213,4 +293,5 @@ export function registerCompositionIpc(options: CompositionIpcOptions): void {
       region: input.region, commercialShortVideo: input.commercialShortVideo,
     })) };
   });
+  return bridge;
 }

@@ -263,7 +263,7 @@ async function main() {
     phase = 'production-tools';
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
-      ['lingji_production_detect_highlights',
+      ['lingji_production_build_compositions', 'lingji_production_detect_highlights',
         'lingji_production_import_recordings', 'lingji_production_list_drafts',
         'lingji_production_list_recordings',
         'lingji_production_preview_publish',
@@ -309,6 +309,11 @@ async function main() {
       name: 'lingji_production_detect_highlights', arguments: detectInput,
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(detectBefore.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const buildBefore = await productionClient.callTool({
+      name: 'lingji_production_build_compositions', arguments: {},
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(buildBefore.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     phase = 'production-activity-issue';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
@@ -528,6 +533,23 @@ async function main() {
       name: 'lingji_production_detect_highlights', arguments: { taskIds: [imported.recordings[0].id] },
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(detectRevoked.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    phase = 'production-composition-grant-without-preparation';
+    const compositionGrant = await page.evaluate(() => window.productionActivityAPI.issueCompositionBuild());
+    assert.equal(compositionGrant.ok, true);
+    assert.equal(compositionGrant.status.allowedActions.includes('build_compositions'), true);
+    const unpreparedBuild = await productionClient.callTool({
+      name: 'lingji_production_build_compositions', arguments: {},
+    }, undefined, { timeout: 15_000 });
+    assert.equal(unpreparedBuild.isError, true);
+    assert.deepEqual(JSON.parse(unpreparedBuild.content.find((item) => item.type === 'text').text),
+      { code: 'not_prepared' });
+    assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.revoke()),
+      { ok: true, status: { active: false } });
+    const buildRevoked = await productionClient.callTool({
+      name: 'lingji_production_build_compositions', arguments: {},
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(buildRevoked.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
     assert.equal(activities.includes(projectPath), false);

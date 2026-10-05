@@ -20,6 +20,9 @@ export type ProductionRecordingList = () =>
 export type ProductionHighlightDetection = (taskIds: string[]) => Promise<
   | { ok: true; startedIds: string[] }
   | { ok: false; code: string }>;
+export type ProductionCompositionBuild = () => Promise<
+  | { ok: true; batchId: string; planIds: string[] }
+  | { ok: false; code: string }>;
 const metadata = z.object({ title: z.string(), description: z.string(),
   tags: z.array(z.string()), coverRefs: z.array(z.string()),
   scheduleAt: z.number().finite().nonnegative().nullable() }).strict();
@@ -43,7 +46,9 @@ export function registerProductionReadTools(server: McpServer,
   authorizeRecordingImport?: () => AgentActionGateDecision,
   getRecordingList?: () => ProductionRecordingList | null,
   getHighlightDetection?: () => ProductionHighlightDetection | null,
-  authorizeHighlightDetection?: () => AgentActionGateDecision): void {
+  authorizeHighlightDetection?: () => AgentActionGateDecision,
+  getCompositionBuild?: () => ProductionCompositionBuild | null,
+  authorizeCompositionBuild?: () => AgentActionGateDecision): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -139,6 +144,24 @@ export function registerProductionReadTools(server: McpServer,
       const final = authorizeHighlightDetection?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
       if (!final.allowed) return result({ code: final.reason }, true);
       return started.ok ? result({ startedIds: started.startedIds }) : result({ code: started.code }, true);
+    } catch { return result({ code: 'internal_error' }, true); }
+  });
+
+  server.registerTool('lingji_production_build_compositions', {
+    title: '从桌面已准备的审核素材生成独立混剪版本',
+    description: '仅消费当前工程桌面端一次性准备的审核切片、授权素材与匿名摘要；不接受路径、文本或模型密钥，不自动渲染或发布。需要单独限时授权。',
+    inputSchema: {},
+  }, async () => {
+    const first = authorizeCompositionBuild?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+    if (!first.allowed) return result({ code: first.reason }, true);
+    const build = getCompositionBuild?.();
+    if (!build) return result({ code: 'service_unavailable' }, true);
+    try {
+      const built = await build();
+      const final = authorizeCompositionBuild?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+      if (!final.allowed) return result({ code: final.reason }, true);
+      return built.ok ? result({ batchId: built.batchId, planIds: built.planIds,
+        reviewRequired: true }) : result({ code: built.code }, true);
     } catch { return result({ code: 'internal_error' }, true); }
   });
 }

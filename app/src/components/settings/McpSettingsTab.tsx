@@ -50,7 +50,7 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
     }
   }, []);
 
-  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'recordings' | 'highlights' | 'revoke') => {
+  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'recordings' | 'highlights' | 'compositions' | 'revoke') => {
     setActivityBusy(true);
     try {
       setActivity(action === 'issue'
@@ -61,6 +61,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
             ? await window.productionActivityAPI.issueRecordingImport()
             : action === 'highlights'
               ? await window.productionActivityAPI.issueHighlightDetection()
+            : action === 'compositions'
+              ? await window.productionActivityAPI.issueCompositionBuild()
           : await window.productionActivityAPI.revoke());
     } finally { setActivityBusy(false); }
   }, []);
@@ -143,13 +145,15 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
           <h2 className={styles.sectionTitle}>智能体分析授权</h2>
         </div>
         <p className={styles.sectionDesc}>
-          可授权预检、素材检索、录屏导入，或使用您配置的模型检测高光。此授权不允许登录或发布。
+          可授权预检、素材检索、录屏导入、高光检测和生成待审混剪版本。混剪请先在此授权，再到混剪台准备一次。此授权不允许登录或发布。
         </p>
         <div className={styles.statusRow}>
           <span className={styles.statusText}>
             {activity?.ok && activity.status.active
               ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}（${
-                activity.status.allowedActions?.includes('detect_highlights')
+                activity.status.allowedActions?.includes('build_compositions')
+                  ? '质检、素材检索、录屏导入、高光检测与混剪生成'
+                  : activity.status.allowedActions?.includes('detect_highlights')
                   ? '质检、素材检索、录屏导入与高光检测'
                   : activity.status.allowedActions?.includes('import_recordings')
                     ? '质检、素材检索与录屏导入'
@@ -169,6 +173,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
             onClick={() => updateActivity('recordings')}>授权录屏导入与分析 30 分钟</Button>
           <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
             onClick={() => updateActivity('highlights')}>授权智能体高光检测 30 分钟</Button>
+          <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
+            onClick={() => updateActivity('compositions')}>授权智能体混剪生成 30 分钟</Button>
           <Button type="button" variant="destructive" size="sm" disabled={activityBusy || !(activity?.ok && activity.status.active)}
             onClick={() => updateActivity('revoke')}>撤销</Button>
         </div>

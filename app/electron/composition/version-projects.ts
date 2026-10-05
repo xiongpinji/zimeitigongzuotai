@@ -26,6 +26,8 @@ export class CompositionVersionError extends Error {
 export interface CompositionVersionInput {
   projectDir: string;
   batchId: string;
+  /** Synchronous authorization check just before each version becomes visible. */
+  beforeCommit?: () => void;
   versions: Array<{
     plan: CompositionPlanV1;
     timeline: TimelineData;
@@ -328,6 +330,7 @@ export async function persistCompositionVersions(input: CompositionVersionInput)
       await fs.writeFile(path.join(stage, MANIFEST_FILE), JSON.stringify(manifest, null, 2), { flag: 'wx' });
       // Existing nonempty destinations cannot be replaced by a directory rename on supported OSes.
       if (await lstatOrNull(finalDir)) fail('conflict', `composition version ${plan.id} already exists`);
+      input.beforeCommit?.();
       try {
         await fs.rename(stage, finalDir);
       } catch (error) {

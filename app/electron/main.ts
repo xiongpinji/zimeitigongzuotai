@@ -79,7 +79,7 @@ import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headle
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
 import type { ProductionRecordingImport, ProductionRecordingList,
-  ProductionHighlightDetection } from './mcp/production-tools';
+  ProductionHighlightDetection, ProductionCompositionBuild } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
 import { ProductionHighlightJobManager } from './production/highlight-job-manager';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
@@ -98,7 +98,7 @@ import { buildLiveCompositionDocument } from './composition/live-document';
 import { createCompositionRenderBatch } from './composition/render-batch';
 import { createCompositionReview } from './composition/review';
 import { createCompositionReviewSourceGate } from './composition/review-source-gate';
-import { registerCompositionIpc } from './composition/composition-ipc';
+import { registerCompositionIpc, type PreparedCompositionAgentBridge } from './composition/composition-ipc';
 import { createCompositionBatch } from './composition/create-batch';
 import { configuredCompositionModel, CompositionModelError } from './composition/model-generator';
 import { LocalAssetLibrary } from './assets/local-asset-library';
@@ -251,6 +251,7 @@ let productionActivityStore: ProductionActivityStore | null = null;
 let productionAssetSearch: ProductionAssetSearch | null = null;
 let preparedRecordingImport: PreparedRecordingImportBridge | null = null;
 let productionHighlightJobs: ProductionHighlightJobManager | null = null;
+let preparedCompositionAgent: PreparedCompositionAgentBridge | null = null;
 function authorizeProductionQualityCheck() {
   const projectDir = getActiveProjectPath();
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
@@ -271,6 +272,13 @@ function authorizeProductionHighlightDetection() {
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
   return productionActivityStore.authorizeHighlightDetection(projectDir);
 }
+function authorizeProductionCompositionBuild() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeCompositionBuild(projectDir);
+}
+const buildProductionCompositions: ProductionCompositionBuild = async () =>
+  preparedCompositionAgent?.build() ?? { ok: false, code: 'service_unavailable' };
 const detectProductionHighlights: ProductionHighlightDetection = async (taskIds) =>
   productionHighlightJobs?.start(taskIds) ?? { ok: false, code: 'service_unavailable' };
 const importProductionRecordings: ProductionRecordingImport = async (maxClips) => {
@@ -2929,7 +2937,8 @@ registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProd
   () => productionAssetSearch, authorizeProductionAssetSearch,
   () => importProductionRecordings, authorizeProductionRecordingImport,
   () => listProductionRecordings, () => detectProductionHighlights,
-  authorizeProductionHighlightDetection);
+  authorizeProductionHighlightDetection, () => buildProductionCompositions,
+  authorizeProductionCompositionBuild);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -2999,7 +3008,20 @@ app.whenReady().then(async () => {
       });
       return response === 1;
     },
-    onActivityChanged: (dir) => productionHighlightJobs?.onActivityChanged(dir),
+    confirmCompositionBuild: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体生成混剪版本',
+        message: '允许智能体在当前工程触发已准备的混剪版本生成 30 分钟？',
+        detail: '授权后，请到混剪台选择已审核切片和授权素材，检查匿名摘要并单独准备。调用您配置的 AI 模型时会发送这些摘要；生成的版本仍需人工复核。不会登录账号、渲染成片或发布。可随时撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
+    onActivityChanged: (dir) => {
+      productionHighlightJobs?.onActivityChanged(dir);
+      preparedCompositionAgent?.clear();
+    },
   });
   let productCompositionReview: ReturnType<typeof createCompositionReview> | null = null;
   // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
@@ -3091,13 +3113,14 @@ app.whenReady().then(async () => {
     productCompositionReview = createCompositionReview({ renderState: compositionRenderBatch,
       sourceGate: createCompositionReviewSourceGate({ getDocument: compositionDocument,
         sourceServices: compositionSources }) });
-    registerCompositionIpc({
+    preparedCompositionAgent = registerCompositionIpc({
       ipc: ipcMain,
       allowedSender: (event) =>
         !!mainWindow && !mainWindow.isDestroyed() &&
         (event as { sender?: unknown }).sender === mainWindow.webContents &&
         (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
       activeProjectDir: getActiveProjectPath,
+      authorizeAgentBuild: (dir) => productionActivityStore!.authorizeCompositionBuild(dir),
       renderBatch: compositionRenderBatch,
       review: productCompositionReview,
       resources: async (projectDir) => {
@@ -3118,13 +3141,15 @@ app.whenReady().then(async () => {
           }),
         };
       },
-      createBatch: async (input) => {
+      createBatch: async (input, beforePersist) => {
+        beforePersist?.();
         const settings = await loadGlobalSettings(app.getPath('userData'));
         if (!settings?.aiSettings) throw new CompositionModelError('model_unavailable');
         const model = configuredCompositionModel(settings.aiSettings);
         return createCompositionBatch({ getDocument: compositionDocument,
           sourceServices: compositionSources, model: model.model,
           promptVersion: 'composition-v1-2026-10-05', generate: model.generate,
+          beforePersist,
         })(input);
       },
       recommend: async (query, context) => {
@@ -3251,7 +3276,8 @@ app.whenReady().then(async () => {
       authorizeProductionQualityCheck, () => productionAssetSearch,
       authorizeProductionAssetSearch, () => importProductionRecordings,
       authorizeProductionRecordingImport, () => listProductionRecordings,
-      () => detectProductionHighlights, authorizeProductionHighlightDetection);
+      () => detectProductionHighlights, authorizeProductionHighlightDetection,
+      () => buildProductionCompositions, authorizeProductionCompositionBuild);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

@@ -143,6 +143,22 @@ describe('R4 independent composition version projects', () => {
       .toEqual(versions[2].timeline);
   });
 
+  it('stops committing later versions when an Agent grant is revoked during persistence', async () => {
+    let checks = 0;
+    await expect(persistCompositionVersions({ projectDir, batchId: BATCH_ID,
+      versions: threeVersions(), beforeCommit: () => {
+        checks += 1;
+        if (checks === 2) throw Object.assign(new Error('authorization_expired'),
+          { code: 'authorization_expired' });
+      } })).rejects.toMatchObject({ code: 'authorization_expired' });
+    expect(checks).toBe(2);
+    expect(await fs.stat(path.join(projectDir, 'compositions', BATCH_ID, 'plan-1'))).toBeTruthy();
+    await expect(fs.stat(path.join(projectDir, 'compositions', BATCH_ID, 'plan-2')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(path.join(projectDir, 'compositions', BATCH_ID, 'plan-3')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects same-name changed content without altering the saved version', async () => {
     const versions = threeVersions();
     const records = await persistCompositionVersions({ projectDir, batchId: BATCH_ID, versions });

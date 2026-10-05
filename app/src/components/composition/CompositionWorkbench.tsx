@@ -20,6 +20,7 @@ const ERROR_TEXT: Record<string, string> = {
   render_not_complete: '请先完成全部版本的渲染。',
   stale_evidence: '复核证据已过期，请重新分析。',
   batch_busy: '该批次正在运行。', internal_error: '本地操作失败，请检查工程和素材。',
+  authorization_expired: '请先到设置授权智能体混剪生成，再返回这里准备；授权过期后也需重新授权。',
 };
 const RATING_LABELS = [
   ['independentClarity', '表达独立性'], ['appeal', '吸引力'], ['boundaries', '剪辑边界'],
@@ -126,6 +127,20 @@ export function CompositionWorkbench({ active, projectDir, returnProjectDir,
     } else setMessage(ERROR_TEXT[result.code] ?? '版本生成失败。');
   });
 
+  const prepareAgentBuild = () => action(async () => {
+    if (!api || !approvedForModel || !selectedReceipts.length) return;
+    const result = await api.prepareAgentBuild({ aspectRatio, platform, region,
+      commercialShortVideo, approvedForModel: true,
+      selectedReceipts: selectedReceipts.map((receiptId) => ({ receiptId,
+        anonymousTopic: anonymousTopics[receiptId]?.trim() ?? '', approvedTranscriptExcerpt: null })),
+      selectedAssets: selectedAssets.map((assetId) => ({ assetId,
+        anonymousDescription: anonymousAssets[assetId]?.trim() ?? '' })),
+    });
+    setMessage(result.ok ? '已为当前工程准备一次智能体混剪生成；授权有效期内可触发，生成后仍要人工复核。'
+      : ERROR_TEXT[result.code] ?? '准备失败，请检查当前工程、素材与授权。');
+    if (result.ok) setApprovedForModel(false);
+  });
+
   const recommend = () => action(async () => {
     if (!api) return;
     const query = selectedReceipts.map((id) => anonymousTopics[id]?.trim()).filter(Boolean).join('；');
@@ -229,6 +244,10 @@ export function CompositionWorkbench({ active, projectDir, returnProjectDir,
           selectedReceipts.some((id) => !anonymousTopics[id]?.trim()) ||
           selectedAssets.some((id) => !anonymousAssets[id]?.trim()) || !/^[a-z]{2}$/.test(region)}
         onClick={() => void create()}>用当前 AI 生成至少三版</button>
+        <button type="button" disabled={busy || !approvedForModel || !selectedReceipts.length ||
+          selectedReceipts.some((id) => !anonymousTopics[id]?.trim()) ||
+          selectedAssets.some((id) => !anonymousAssets[id]?.trim()) || !/^[a-z]{2}$/.test(region)}
+        onClick={() => void prepareAgentBuild()}>准备供智能体生成一次</button>
       </section>}
       {projectDir && !batches.length && <section className={styles.empty}>
         <h2>当前工程还没有混剪版本</h2>

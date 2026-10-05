@@ -128,4 +128,28 @@ describe('生产 MCP 质检门控', () => {
     expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
     expect(revoked.content[0].text).not.toContain(taskId);
   });
+
+  it('混剪工具没有文本或路径入参，授权撤销时不泄露生成结果', async () => {
+    const handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+    const server = { registerTool: (name: string, _spec: unknown,
+      handler: (args: unknown) => Promise<unknown>) => { handlers.set(name, handler); } };
+    let allowed = false;
+    const build = vi.fn(async () => { allowed = false;
+      return { ok: true as const, batchId: 'secret-batch', planIds: ['secret-plan'] }; });
+    registerProductionReadTools(server as never, () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }),
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }),
+      () => build, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' });
+    const call = () => handlers.get('lingji_production_build_compositions')!({}) as
+      Promise<{ isError?: boolean; content: { text: string }[] }>;
+    expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(build).not.toHaveBeenCalled();
+    allowed = true;
+    const revoked = await call();
+    expect(revoked.isError).toBe(true);
+    expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(revoked.content[0].text).not.toContain('secret-batch');
+  });
 });
