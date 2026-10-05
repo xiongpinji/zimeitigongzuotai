@@ -27,6 +27,11 @@ const projectPath = path.join(runDir, 'project');
 const mediaDir = path.join(runDir, 'media');
 const batchId = 'synthetic-render-batch';
 const planIds = ['synthetic-plan-1', 'synthetic-plan-2', 'synthetic-plan-3'];
+const variantSeconds = Number(process.env.LINGJI_RENDER_PROBE_DURATION_SECONDS || '1');
+assert.ok(Number.isInteger(variantSeconds) && variantSeconds >= 1 && variantSeconds <= 60,
+  'Synthetic variant duration must be an integer from 1 to 60 seconds');
+const reviewedSeconds = Math.max(3, variantSeconds + 1);
+const recordingSeconds = reviewedSeconds + 1;
 const ffmpeg = process.env.FFMPEG_PATH || require('ffmpeg-static');
 const sha256 = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,13 +113,13 @@ async function prepareFixture() {
   const api = fixtureModule();
   fs.writeFileSync(path.join(projectPath, 'project.json'), JSON.stringify(api.createDefaultProjectData()));
   const recordingFile = path.join(mediaDir, 'synthetic-recording.mp4');
-  ffmpegRun(['-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=10:d=4',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4',
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-t', '4', recordingFile]);
+  ffmpegRun(['-y', '-f', 'lavfi', '-i', `testsrc2=s=640x360:r=10:d=${recordingSeconds}`,
+    '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=48000:duration=${recordingSeconds}`,
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-t', String(recordingSeconds), recordingFile]);
   const sourceSha256 = sha256(recordingFile);
   const nowIso = new Date().toISOString();
   const recording = { id: '00000000-0000-4000-8000-000000000001',
-    sourceRef: recordingFile, sourceSha256, capturedAt: null, durationMs: 4000,
+    sourceRef: recordingFile, sourceSha256, capturedAt: null, durationMs: recordingSeconds * 1000,
     mimeType: 'video/mp4', transcriptRef: null, importedAt: nowIso };
   const queue = new api.HighlightBatchQueue({
     storePath: path.join(profile, 'highlights-v1', 'queue.json'), now: Date.now });
@@ -126,8 +131,8 @@ async function prepareFixture() {
     [task] = queue.enqueueBatch([{ recording, observedSourceSha256: sourceSha256,
       options: { maxClips: 1 } }]);
     const claimed = queue.claim(task.id, 1);
-    bundle = artifacts.commit(claimed, [{ id: 'synthetic-upstream', startSec: 0, endSec: 3,
-      startMs: 0, endMs: 3000, title: '合成片段', hook: '合成开场', score: 0.8,
+    bundle = artifacts.commit(claimed, [{ id: 'synthetic-upstream', startSec: 0, endSec: reviewedSeconds,
+      startMs: 0, endMs: reviewedSeconds * 1000, title: '合成片段', hook: '合成开场', score: 0.8,
       reason: '离线合成测试', recommended: true, reviewNote: null, visualEvidence: null }], nowIso);
     queue.complete(task.id, claimed.attempt, { candidateIds: bundle.candidateIds,
       highlightIds: bundle.highlightIds });
@@ -136,14 +141,15 @@ async function prepareFixture() {
     const reviewedRoot = path.join(profile, 'highlights-v1', 'reviewed-clips');
     fs.mkdirSync(reviewedRoot, { recursive: true });
     const receiptId = api.expectedReviewedClipId({ taskId: task.id,
-      highlightId: bundle.highlightIds[0], sourceSha256, startMs: 0, endMs: 3000 });
+      highlightId: bundle.highlightIds[0], sourceSha256, startMs: 0,
+      endMs: reviewedSeconds * 1000 });
     const receiptBody = { schemaVersion: 1, id: receiptId,
       taskId: task.id, highlightId: bundle.highlightIds[0],
-      recordingId: recording.id, sourceSha256, startMs: 0, endMs: 3000,
+      recordingId: recording.id, sourceSha256, startMs: 0, endMs: reviewedSeconds * 1000,
       reviewedBy: 'local-owner', reviewedAt: nowIso, renderedAt: nowIso,
-      outputSha256: '', outputDurationMs: 3000 };
+      outputSha256: '', outputDurationMs: reviewedSeconds * 1000 };
     const reviewedPath = path.join(reviewedRoot, `${receiptBody.id}.mp4`);
-    ffmpegRun(['-y', '-i', recordingFile, '-t', '3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+    ffmpegRun(['-y', '-i', recordingFile, '-t', String(reviewedSeconds), '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', reviewedPath]);
     receiptBody.outputSha256 = sha256(reviewedPath);
     const receipt = api.buildReviewedClipReceipt(receiptBody);
@@ -169,7 +175,7 @@ async function prepareFixture() {
           openingClaim: `开场 ${index + 1}`, endingMessage: `结尾 ${index + 1}` },
         segments: [{ id: `segment-${index + 1}`, order: 0, description: '合成审核片段',
           source: { kind: 'highlight', sourceId: bundle.highlightIds[0],
-            inMs, outMs: inMs + 1000 }, editorial: { narrativeRole: 'evidence',
+            inMs, outMs: inMs + variantSeconds * 1000 }, editorial: { narrativeRole: 'evidence',
             visualIntent: '合成画面', audioIntent: '保留原声' } }],
         timelineRef: null, createdAt: nowIso, updatedAt: nowIso };
       const sources = await api.resolveCompositionSources({ document, plan,
@@ -177,9 +183,9 @@ async function prepareFixture() {
       const timeline = api.createDefaultTimeline();
       timeline.width = 640; timeline.height = 360; timeline.fps = 10;
       timeline.overlays.push({ id: `clip-${index + 1}`, type: 'video', assetPath: reviewedPath,
-        trackId: 'visual-1', startMs: 0, durationMs: 1000,
+        trackId: 'visual-1', startMs: 0, durationMs: variantSeconds * 1000,
         position: { x: 0, y: 0, width: 640, height: 360 },
-        videoData: { trimStartMs: inMs, sourceDurationMs: 3000 } });
+        videoData: { trimStartMs: inMs, sourceDurationMs: reviewedSeconds * 1000 } });
       versions.push({ plan, sources, timeline });
     }
     await api.persistCompositionVersions({ projectDir: projectPath, batchId, versions });
@@ -254,6 +260,7 @@ async function main() {
     assert.equal(listed.ok, true);
     assert.ok(JSON.stringify(listed).includes(batchId));
     const beforeHashes = fixture.protectedPaths.map(sha256);
+    fs.copyFileSync(path.join(projectPath, 'project.json'), path.join(runDir, 'root-project-before-render.json'));
     phase = 'production-connect';
     const productionTokenFile = path.join(isolatedHome, '.lingji', 'production-mcp-token');
     await until(() => fs.existsSync(productionTokenFile), 5_000);
@@ -301,7 +308,8 @@ async function main() {
         (rendered.jobStatus === 'settled' &&
           rendered.versions.every((item) => ['completed', 'failed', 'cancelled', 'unknown']
             .includes(item.state)));
-    }, 120_000, 1_000);
+    }, variantSeconds > 1 ? 240_000 : 120_000, 1_000);
+    const statusSettledMs = Date.now() - startedAt;
     fs.writeFileSync(path.join(runDir, 'render-tool-result.json'), JSON.stringify(rendered, null, 2));
     assert.equal(rendered.jobStatus, 'settled');
     assert.equal(rendered.batchId, batchId);
@@ -320,14 +328,26 @@ async function main() {
       return { planId, bytes: fs.statSync(output).size, sha256: state.outputSha256 };
     });
     assert.equal(new Set(outputs.map((item) => item.sha256)).size, 3);
-    assert.deepEqual(fixture.protectedPaths.map(sha256), beforeHashes);
+    const afterHashes = fixture.protectedPaths.map(sha256);
+    assert.deepEqual(afterHashes.slice(1), beforeHashes.slice(1),
+      'Version projects and manifests must remain byte-for-byte unchanged');
+    const rootBefore = JSON.parse(fs.readFileSync(path.join(runDir, 'root-project-before-render.json'), 'utf8'));
+    const rootAfter = JSON.parse(fs.readFileSync(path.join(projectPath, 'project.json'), 'utf8'));
+    const { updatedAt: initialUpdatedAt, ...rootBeforeContent } = rootBefore;
+    const { updatedAt: finalUpdatedAt, ...rootAfterContent } = rootAfter;
+    assert.deepEqual(rootAfterContent, rootBeforeContent,
+      'The editor may autosave its timestamp but must not change root project content');
     const second = await client.callTool({ name: 'lingji_production_render_variants', arguments: {} },
       undefined, { timeout: 15_000 });
     assert.deepEqual(mcpJson(second), { code: 'not_prepared' });
     const report = { probePassed: true, kind: 'synthetic_electron_mcp_render',
       sourceBuildSha256: sha256(mainPath), batchId, planIds, outputs,
-      protectedFilesUnchanged: true, oneShotVerified: true,
+      versionFilesByteUnchanged: true,
+      rootProjectContentUnchangedExceptUpdatedAt: true,
+      rootAutosaveTimestampChanged: initialUpdatedAt !== finalUpdatedAt,
+      oneShotVerified: true,
       mcpStartReturnedBeforeEncoding: true, statusPollingVerified: true, startLatencyMs,
+      variantSeconds, statusSettledMs,
       realDiscoveryMetadataUnchanged: true,
       realLoginAttempted: false, publicationAttempted: false, modelInvoked: false };
     assert.deepEqual(realDiscoveryMetadata(), discoveryBefore);
