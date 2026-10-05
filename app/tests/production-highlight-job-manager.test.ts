@@ -9,6 +9,21 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('智能体高光后台作业', () => {
+  it('授权状态改变会清除尚未领取的一次性模型参数', () => {
+    const root = mkdtempSync(join(tmpdir(), 'highlight-job-manager-')); roots.push(root);
+    const project = join(root, 'project');
+    const store = new ProductionActivityStore(join(root, 'state'), () => 1000);
+    store.issueHighlightDetection(project, 30);
+    const bridge = { runSelectedForAgent: vi.fn(), clearPreparedAgentRun: vi.fn() };
+    const manager = new ProductionHighlightJobManager({ store,
+      controller: { list: () => [], cancel: vi.fn() } as never,
+      bridge: bridge as never, activeProjectDir: () => project });
+    store.issueHighlightDetection(project, 30);
+    manager.onActivityChanged(project);
+    expect(bridge.clearPreparedAgentRun).toHaveBeenCalledOnce();
+    manager.stop();
+  });
+
   it('仅启动当前工程绑定任务，撤销立即取消该任务且不碰其他工程', async () => {
     const root = mkdtempSync(join(tmpdir(), 'highlight-job-manager-')); roots.push(root);
     const projectA = join(root, 'a');

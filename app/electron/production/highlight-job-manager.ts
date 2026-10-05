@@ -56,14 +56,8 @@ export class ProductionHighlightJobManager {
   };
 
   onActivityChanged(_projectDir: string): void {
+    this.deps.bridge.clearPreparedAgentRun();
     this.checkActive();
-    const projectDir = this.deps.activeProjectDir();
-    if (!projectDir) { this.deps.bridge.clearPreparedAgentRun(); return; }
-    try {
-      if (!this.deps.store.status(projectDir).allowedActions?.includes('detect_highlights')) {
-        this.deps.bridge.clearPreparedAgentRun();
-      }
-    } catch { this.deps.bridge.clearPreparedAgentRun(); }
   }
 
   /** Shutdown leaves durable running tasks for existing startup reconciliation. */

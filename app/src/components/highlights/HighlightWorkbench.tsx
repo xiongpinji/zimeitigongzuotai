@@ -352,7 +352,7 @@ export function HighlightWorkbench({ active, onImportClip }: {
             onClick={() => void run()}>运行排队任务</button>
           <button type="button" disabled={!canRun || actionBusy}
             onClick={() => void prepareAgentRun()}>准备智能体高光参数</button>
-          <p>智能体运行前，还需在设置中授权高光检测 30 分钟；模型配置仅用于当前会话。</p>
+          <p>请先在设置中授权高光检测 30 分钟，再准备智能体参数；模型配置仅用于当前会话。</p>
         </section>
 
         <section className={styles.card}>
