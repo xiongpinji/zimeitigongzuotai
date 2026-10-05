@@ -329,7 +329,9 @@ export class HighlightArtifactStore {
 export interface DurableHotClipRunnerOptions {
   artifacts: HighlightArtifactStore;
   /** Caller supplies an explicitly user-configured executable and authorized local media path. */
-  resolveRunOptions: (task: HighlightBatchTaskV1) => Omit<RunHotClipHighlightsOptions, 'signal' | 'maxClips'>;
+  resolveRunOptions: (task: HighlightBatchTaskV1, signal: AbortSignal) =>
+    Omit<RunHotClipHighlightsOptions, 'signal' | 'maxClips'> |
+    Promise<Omit<RunHotClipHighlightsOptions, 'signal' | 'maxClips'>>;
   /** Must re-observe bytes at the resolved path before starting the sidecar. */
   observeSourceSha256: (task: HighlightBatchTaskV1, videoPath: string, signal: AbortSignal) => Promise<string>;
   createdAt: () => string;
@@ -338,7 +340,7 @@ export interface DurableHotClipRunnerOptions {
 /** Sidecar → validated local receipt → queue IDs. The scheduler commits the queue after this returns. */
 export function createDurableHotClipRunner(options: DurableHotClipRunnerOptions): HighlightBatchRunner {
   return async (task, signal) => {
-    const configured = options.resolveRunOptions(task);
+    const configured = await options.resolveRunOptions(task, signal);
     let observed: string;
     try {
       observed = await options.observeSourceSha256(task, configured.videoPath, signal);

@@ -11,6 +11,7 @@ import { ReviewedClipExportError, type ReviewedClipErrorCode } from './reviewed-
 export const HIGHLIGHT_V1_CHANNELS = {
   chooseRoot: 'highlight-v1:choose-root',
   chooseRecordings: 'highlight-v1:choose-recordings',
+  chooseSubtitles: 'highlight-v1:choose-subtitles',
   chooseNode: 'highlight-v1:choose-node',
   chooseHotClip: 'highlight-v1:choose-hotclip',
   import: 'highlight-v1:import',
@@ -107,6 +108,11 @@ function within(root: string, child: string): boolean {
   return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+function pathKey(path: string): string {
+  const canonical = resolve(path);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -130,6 +136,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   const { ipc, controller, exporter } = options;
   let mediaRoot: string | null = null;
   let selectedRecordings: string[] = [];
+  const selectedSubtitles = new Map<string, string>();
   let nodeExecutable: string | null = null;
   let hotClipDir: string | null = null;
   let choosing = false;
@@ -159,12 +166,14 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     if (!isAbsolute(root) || !directory(root)) return { ok: false, code: 'invalid_selection' };
     mediaRoot = resolve(root);
     selectedRecordings = [];
+    selectedSubtitles.clear();
     return { ok: true, label: displayName(mediaRoot) };
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseRecordings, async () => {
     if (!mediaRoot) return { ok: false, code: 'selection_required' };
     selectedRecordings = [];
+    selectedSubtitles.clear();
     const selected = await choose(() => options.pickFiles('选择直播录屏（最多 100 个）', mediaRoot!));
     if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
     if (!selected) return { ok: false, code: 'selection_required' };
@@ -177,6 +186,35 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     }
     selectedRecordings = paths.map((path) => resolve(path));
     return { ok: true, names: selectedRecordings.map(displayName) };
+  });
+
+  handle(HIGHLIGHT_V1_CHANNELS.chooseSubtitles, async () => {
+    if (!mediaRoot || !selectedRecordings.length) return { ok: false, code: 'selection_required' };
+    selectedSubtitles.clear();
+    const selected = await choose(() => options.pickFiles('选择与录屏同名的 SRT 字幕（可选）', mediaRoot!));
+    if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
+    if (!selected) return { ok: false, code: 'selection_required' };
+    const paths = selected.filePaths;
+    if (!Array.isArray(paths) || paths.length < 1 || paths.length > selectedRecordings.length ||
+        paths.some((path) => typeof path !== 'string' || !isAbsolute(path) ||
+          !within(mediaRoot!, path) || !regularFile(path) || extname(path).toLowerCase() !== '.srt')) {
+      return { ok: false, code: 'invalid_selection' };
+    }
+    const stems = selectedRecordings.map((path) => pathKey(path.slice(0, -extname(path).length)));
+    const stemCounts = new Map<string, number>();
+    for (const stem of stems) stemCounts.set(stem, (stemCounts.get(stem) ?? 0) + 1);
+    const recordingByStem = new Map(selectedRecordings.map((path, index) => [stems[index], pathKey(path)]));
+    for (const raw of paths) {
+      const path = resolve(raw);
+      const stem = pathKey(path.slice(0, -extname(path).length));
+      const recording = recordingByStem.get(stem);
+      if (!recording || stemCounts.get(stem) !== 1 || selectedSubtitles.has(recording)) {
+        selectedSubtitles.clear();
+        return { ok: false, code: 'invalid_selection' };
+      }
+      selectedSubtitles.set(recording, path);
+    }
+    return { ok: true, names: paths.map(displayName) };
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseNode, async () => {
@@ -215,9 +253,12 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
       return { ok: false, code: 'invalid_request' };
     }
     const paths = selectedRecordings;
+    const subtitlePaths = paths.map((path) => selectedSubtitles.get(pathKey(path)) ?? null);
     selectedRecordings = [];
+    selectedSubtitles.clear();
     const tasks = await controller.importRecordings({
-      mediaRootDir: mediaRoot, videoPaths: paths, maxClips: (input.maxClips as number | null | undefined) ?? null,
+      mediaRootDir: mediaRoot, videoPaths: paths, subtitlePaths,
+      maxClips: (input.maxClips as number | null | undefined) ?? null,
     });
     return { ok: true, tasks: tasks.map(dto) };
   });

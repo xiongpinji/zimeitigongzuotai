@@ -39,4 +39,4 @@ node app/scripts/probe-hotclip-local-win.cjs timeout
 
 探针要求 HotClip 源码和依赖已在忽略的 `data/tools/hotclip/`。`generate-hotclip-trial.cjs` 在缺少测试素材时生成 120 秒视频、SRT 和预标注，不覆盖已有文件；可传一个短小写名称，在 `data/media/synthetic/` 下新建隔离子目录。探针本身不会自动安装 HotClip、下载 LLM 权重或生成素材。探针只将候选 ID、时间码、评分等安全摘要写入 `data/runtime/validation/`，失败仅记错误码和耗时；直接 CLI 的原始诊断只在忽略目录。本次复现不应被引用为用户素材的双人盲审、平台原创判定或 P0-3 整体验收。
 
-当前产品批量高光控制器仍拒绝 `transcriptRef` 非空的任务，因为缺少字幕来源的独立哈希收据与运行前复核。本次 SRT 试验通过 sidecar 直连，不证明产品入口已支持 SRT 批量导入。若要把现有录屏字幕用于产品，需要先补字幕授权、持久身份和变更检测，再接批量调度；不能仅向上游 CLI 多传一个路径。
+本试验当时的产品批量高光控制器仍拒绝 `transcriptRef` 非空的任务；这里的 SRT 结果来自 sidecar 直连。随后已补用户选择、私有字幕快照、持久身份与运行前哈希复核，并实跑产品队列，见 [R3 产品 SRT 收据验证](r3-product-srt-receipt-2026-10-05.md)。两次试验的证据层级仍分别保留。

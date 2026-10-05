@@ -111,6 +111,45 @@ describe('product highlight controller (synthetic sidecar, no LLM call)', () => 
     expect(readFileSync(join(root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain('SYNTHETIC-SECRET-DO-NOT-STORE');
   });
 
+  it('restores an SRT-backed task after restart and passes the verified snapshot to HotClip', async () => {
+    const { root, mediaRootDir, runtime, controller } = fixture();
+    const source = join(mediaRootDir, 'session.mp4');
+    const subtitle = join(mediaRootDir, 'session.srt');
+    writeFileSync(source, 'synthetic-video');
+    writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    const script = join(root, 'check-srt-hotclip.cjs');
+    writeFileSync(script, `const fs=require('node:fs'); const args=process.argv.slice(2); const index=args.indexOf('--subtitles');
+if(index<0 || !fs.readFileSync(args[index+1],'utf8').includes('First')) process.exit(3);
+process.stdout.write(JSON.stringify([{id:1,startSec:1,endSec:3,title:'Synthetic',hook:'Hook',score:80,reason:'Fixture',recommended:true}]));`);
+    const [task] = await controller.importRecordings({ mediaRootDir, videoPaths: [source], subtitlePaths: [subtitle] });
+    expect(task.recording.transcriptRef).toContain('highlights-v1');
+    writeFileSync(subtitle, 'original path changed after import');
+    runtime.close();
+    const next = bootstrapProductHighlights(root);
+    runtimes.push(next);
+    const resumed = new ProductHighlightController({ runtime: next, userDataPath: root });
+    await resumed.runQueued(fakeConfig(root, mediaRootDir, script));
+    expect(next.queue.get(task.id)).toMatchObject({ state: 'completed',
+      candidateIds: [expect.stringMatching(/^hcand_[a-f0-9]{64}$/)] });
+    expect(resumed.readArtifact(task.id)).toMatchObject({ reviewRequired: true });
+  });
+
+  it('refuses a changed SRT snapshot before spawning HotClip', async () => {
+    const { root, mediaRootDir, runtime, controller } = fixture();
+    const source = join(mediaRootDir, 'session.mp4');
+    const subtitle = join(mediaRootDir, 'session.srt');
+    writeFileSync(source, 'synthetic-video');
+    writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    const marker = join(root, 'spawned.marker');
+    const script = join(root, 'marker-hotclip.cjs');
+    writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`);
+    const [task] = await controller.importRecordings({ mediaRootDir, videoPaths: [source], subtitlePaths: [subtitle] });
+    writeFileSync(task.recording.transcriptRef!, 'tampered');
+    await controller.runQueued(fakeConfig(root, mediaRootDir, script));
+    expect(runtime.queue.get(task.id)).toMatchObject({ state: 'failed', lastErrorCode: 'source_unavailable' });
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it('rejects missing model-download consent before claiming a task', async () => {
     const { root, mediaRootDir, runtime, controller } = fixture();
     const source = join(mediaRootDir, 'source.mp4');

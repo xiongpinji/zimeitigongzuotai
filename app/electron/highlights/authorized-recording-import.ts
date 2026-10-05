@@ -4,6 +4,7 @@ import { extname, isAbsolute, resolve } from 'node:path';
 import type { RecordingV1 } from '../../src/types/production-contracts';
 import { HighlightBatchQueue, type HighlightBatchTaskV1 } from './highlight-batch-queue';
 import { observeAuthorizedLocalSourceSha256 } from './local-source-observer';
+import { snapshotAuthorizedSrt } from './authorized-subtitle-snapshot';
 
 const MAX_BATCH_SIZE = 100;
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -32,6 +33,10 @@ export interface AuthorizedRecordingImportOptions {
   /** An explicitly selected directory containing the recording files. */
   mediaRootDir: string;
   videoPaths: readonly string[];
+  /** Explicitly paired with videoPaths by index; null lets HotClip use ASR. */
+  subtitlePaths?: readonly (string | null)[];
+  /** Caller-owned private receipt directory; required for any selected SRT. */
+  subtitleStoreDir?: string;
   maxClips?: number | null;
   signal?: AbortSignal;
 }
@@ -47,8 +52,21 @@ export async function importAuthorizedRecordings(
   if (!options || !(options.queue instanceof HighlightBatchQueue) ||
       typeof options.mediaRootDir !== 'string' || !isAbsolute(options.mediaRootDir) ||
       !Array.isArray(options.videoPaths) || options.videoPaths.length < 1 ||
-      options.videoPaths.length > MAX_BATCH_SIZE) {
+      options.videoPaths.length > MAX_BATCH_SIZE ||
+      (options.subtitlePaths !== undefined &&
+        (!Array.isArray(options.subtitlePaths) || options.subtitlePaths.length !== options.videoPaths.length)) ||
+      (options.subtitlePaths?.some((path) => path !== null) &&
+        (typeof options.subtitleStoreDir !== 'string' || !isAbsolute(options.subtitleStoreDir)))) {
     throw new AuthorizedRecordingImportError('invalid_request');
+  }
+  if (options.subtitlePaths) {
+    for (let index = 0; index < options.subtitlePaths.length; index++) {
+      const path = options.subtitlePaths[index];
+      if (!Object.prototype.hasOwnProperty.call(options.subtitlePaths, index) ||
+          (path !== null && typeof path !== 'string')) {
+        throw new AuthorizedRecordingImportError('invalid_request');
+      }
+    }
   }
   const paths: string[] = [];
   const seen = new Set<string>();
@@ -71,7 +89,7 @@ export async function importAuthorizedRecordings(
     observedSourceSha256: string;
     options: { maxClips: number | null };
   }> = [];
-  for (const videoPath of paths) {
+  for (const [index, videoPath] of paths.entries()) {
     let sourceSha256: string;
     try {
       sourceSha256 = await observeAuthorizedLocalSourceSha256({
@@ -80,8 +98,33 @@ export async function importAuthorizedRecordings(
     } catch {
       throw new AuthorizedRecordingImportError('source_unavailable');
     }
+    const subtitlePath = options.subtitlePaths?.[index] ?? null;
+    if (subtitlePath !== null && (typeof subtitlePath !== 'string' || !isAbsolute(subtitlePath) ||
+        extname(subtitlePath).toLowerCase() !== '.srt')) {
+      throw new AuthorizedRecordingImportError('invalid_request');
+    }
+    if (subtitlePath !== null) {
+      const expected = resolve(videoPath.slice(0, -extname(videoPath).length) + '.srt');
+      const selected = resolve(subtitlePath);
+      if ((process.platform === 'win32' ? selected.toLowerCase() : selected) !==
+          (process.platform === 'win32' ? expected.toLowerCase() : expected)) {
+        throw new AuthorizedRecordingImportError('invalid_request');
+      }
+    }
+    let transcriptRef: string | null = null;
+    if (subtitlePath !== null) {
+      try {
+        transcriptRef = await snapshotAuthorizedSrt({
+          mediaRootDir: options.mediaRootDir,
+          subtitlePath,
+          storeDir: options.subtitleStoreDir!,
+          signal,
+        });
+      } catch { throw new AuthorizedRecordingImportError('source_unavailable'); }
+    }
     const previous = existing.find((task) =>
-      task.recording.sourceRef === videoPath && task.sourceSha256 === sourceSha256);
+      task.recording.sourceRef === videoPath && task.sourceSha256 === sourceSha256 &&
+      task.recording.transcriptRef === transcriptRef);
     const recording: RecordingV1 = previous?.recording ?? {
       id: randomUUID(),
       sourceRef: videoPath,
@@ -89,7 +132,7 @@ export async function importAuthorizedRecordings(
       capturedAt: null,
       durationMs: null,
       mimeType: MIME_BY_EXTENSION[extname(videoPath).toLowerCase()],
-      transcriptRef: null,
+      transcriptRef,
       importedAt: new Date().toISOString(),
     };
     inputs.push({

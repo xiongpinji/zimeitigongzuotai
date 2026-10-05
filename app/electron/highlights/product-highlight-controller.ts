@@ -11,6 +11,7 @@ import {
 import type { HighlightBatchTaskV1 } from './highlight-batch-queue';
 import { HighlightBatchSourceError, HighlightBatchScheduler } from './highlight-batch-scheduler';
 import { createAuthorizedLocalHotClipRunner } from './local-source-observer';
+import { verifyStoredSrt } from './authorized-subtitle-snapshot';
 import type { ProductHighlightRuntime } from './product-highlight-bootstrap';
 
 export type ProductHighlightControllerErrorCode = 'invalid_configuration' | 'busy' | 'stopped';
@@ -87,6 +88,7 @@ function validateRunConfiguration(value: ProductHighlightRunConfiguration): Prod
 export class ProductHighlightController {
   private readonly runtime: ProductHighlightRuntime;
   private readonly sidecarHome: string;
+  private readonly subtitleStoreDir: string;
   private activeScheduler: HighlightBatchScheduler | null = null;
   private importController: AbortController | null = null;
   private importPromise: Promise<HighlightBatchTaskV1[]> | null = null;
@@ -96,6 +98,7 @@ export class ProductHighlightController {
     if (!options?.runtime || typeof options.userDataPath !== 'string' || !isAbsolute(options.userDataPath)) invalid();
     this.runtime = options.runtime;
     this.sidecarHome = join(options.userDataPath, 'highlights-v1', 'sidecar-home');
+    this.subtitleStoreDir = join(options.userDataPath, 'highlights-v1', 'subtitles');
   }
 
   get hasActiveWork(): boolean {
@@ -106,7 +109,7 @@ export class ProductHighlightController {
     return this.runtime.queue.list();
   }
 
-  importRecordings(input: Omit<AuthorizedRecordingImportOptions, 'queue'>): Promise<HighlightBatchTaskV1[]> {
+  importRecordings(input: Omit<AuthorizedRecordingImportOptions, 'queue' | 'subtitleStoreDir'>): Promise<HighlightBatchTaskV1[]> {
     if (this.stopping) return Promise.reject(new ProductHighlightControllerError('stopped'));
     if (this.importPromise || this.activeScheduler) return Promise.reject(new ProductHighlightControllerError('busy'));
     const controller = new AbortController();
@@ -116,6 +119,7 @@ export class ProductHighlightController {
     this.importController = controller;
     const operation = importAuthorizedRecordings({
       ...input, queue: this.runtime.queue, signal: controller.signal,
+      subtitleStoreDir: this.subtitleStoreDir,
     });
     const settled = operation.finally(() => {
       input.signal?.removeEventListener('abort', onAbort);
@@ -157,14 +161,21 @@ export class ProductHighlightController {
       artifacts: this.runtime.artifacts,
       mediaRootDir: config.mediaRootDir,
       createdAt: () => new Date().toISOString(),
-      resolveRunOptions: (task) => {
-        // Transcript imports need their own immutable source receipt before dispatch.
-        if (task.recording.transcriptRef !== null) throw new HighlightBatchSourceError('source_unavailable');
+      resolveRunOptions: async (task, signal) => {
+        let subtitlesPath: string | undefined;
+        if (task.recording.transcriptRef !== null) {
+          try {
+            subtitlesPath = await verifyStoredSrt(
+              this.subtitleStoreDir, task.recording.transcriptRef, signal,
+            );
+          } catch { throw new HighlightBatchSourceError('source_unavailable'); }
+        }
         return {
           executable: config.executable,
           argsPrefix: config.argsPrefix,
           cwd: config.cwd,
           videoPath: task.recording.sourceRef,
+          subtitlesPath,
           timeoutMs: config.timeoutMs,
           env,
         };

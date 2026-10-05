@@ -45,6 +45,7 @@ describe('highlight workbench', () => {
     const api = {
       chooseRoot: vi.fn(async () => ({ ok: true as const, label: 'media' })),
       chooseRecordings: vi.fn(async () => ({ ok: true as const, names: ['live.mp4'] })),
+      chooseSubtitles: vi.fn(async () => ({ ok: true as const, names: ['live.srt'] })),
       chooseNode: vi.fn(async () => ({ ok: true as const, label: 'node.exe' })),
       chooseHotClip: vi.fn(async () => ({ ok: true as const, label: 'hotclip' })),
       importRecordings: vi.fn(async () => ({ ok: true as const, tasks })),
@@ -79,6 +80,9 @@ describe('highlight workbench', () => {
     expect(host?.textContent).toContain('待人工审核');
     await click('选择录屏目录');
     await click('选择录屏文件');
+    await click('选择已有 SRT 字幕');
+    expect(api.chooseSubtitles).toHaveBeenCalledOnce();
+    expect(host?.textContent).toContain('live.srt');
     await click('导入录屏');
     expect(api.importRecordings).toHaveBeenCalledWith({ maxClips: 3 });
     await click('选择 Node.js');

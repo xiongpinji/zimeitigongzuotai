@@ -118,6 +118,38 @@ describe('owner-only highlight IPC', () => {
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.import)).toEqual({ ok: false, code: 'selection_required' });
   });
 
+  it('pairs explicitly selected same-name SRT files without exposing paths to the renderer', async () => {
+    const { media, source, outsider, choices, invoke, controller } = fixture();
+    const subtitle = join(media, 'session.srt');
+    const wrong = join(media, 'unpaired.srt');
+    writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    writeFileSync(wrong, 'unpaired');
+    choices.push([media], [source], [wrong]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseSubtitles)).toEqual({ ok: false, code: 'invalid_selection' });
+    choices.push([join(dirname(outsider), 'outside.srt')]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseSubtitles)).toEqual({ ok: false, code: 'invalid_selection' });
+    choices.push([subtitle]);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseSubtitles)).toMatchObject({ ok: true, names: ['session.srt'] });
+    const imported = await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 2 });
+    expect(imported).toMatchObject({ ok: true });
+    expect(JSON.stringify(imported)).not.toContain(subtitle);
+    expect(controller.list()[0].recording.transcriptRef).toContain('highlights-v1');
+  });
+
+  it('rejects ambiguous same-stem recordings for one selected SRT', async () => {
+    const { media, source, choices, invoke } = fixture();
+    const second = join(media, 'session.mov');
+    const subtitle = join(media, 'session.srt');
+    writeFileSync(second, 'another synthetic recording');
+    writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    choices.push([media], [source, second], [subtitle]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.chooseSubtitles)).toEqual({ ok: false, code: 'invalid_selection' });
+  });
+
   it('requires explicit runtime selections and model-download consent before dispatch', async () => {
     const { media, source, outsider, hotclip, choices, invoke } = fixture();
     choices.push([media], [source]);

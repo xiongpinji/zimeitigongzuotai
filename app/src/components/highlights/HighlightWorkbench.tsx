@@ -59,6 +59,7 @@ export function HighlightWorkbench({ active, onImportClip }: {
   const [message, setMessage] = useState('');
   const [rootLabel, setRootLabel] = useState('');
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  const [selectedSubtitleNames, setSelectedSubtitleNames] = useState<string[]>([]);
   const [nodeLabel, setNodeLabel] = useState('');
   const [hotClipLabel, setHotClipLabel] = useState('');
   const [maxClips, setMaxClips] = useState(3);
@@ -123,6 +124,7 @@ export function HighlightWorkbench({ active, onImportClip }: {
       const result = await api.importRecordings({ maxClips });
       if (result.ok) {
         setSelectedNames([]);
+        setSelectedSubtitleNames([]);
         setMessage(`已导入 ${result.tasks.length} 个录屏任务。`);
         await refresh();
       } else setMessage(ERROR_TEXT[result.code]);
@@ -269,10 +271,10 @@ export function HighlightWorkbench({ active, onImportClip }: {
 
         <section className={styles.card}>
           <div className={styles.sectionHeader}><span className={styles.step}>01</span><h2>录屏来源</h2></div>
-          <p>目录和文件都通过系统对话框选择；每次最多导入 100 个视频。</p>
+          <p>目录和文件都通过系统对话框选择；每次最多导入 100 个视频。已有字幕可选同目录、同文件名的 SRT；未选择的录屏由 HotClip 转写。</p>
           <div className={styles.row}>
             <button type="button" onClick={() => api && void select(api.chooseRoot, (result) => {
-              setRootLabel(result.label); setSelectedNames([]);
+              setRootLabel(result.label); setSelectedNames([]); setSelectedSubtitleNames([]);
               setArtifacts([]); setClipSelections({}); setReviewConfirmed(false);
             })} disabled={!api || actionBusy}>选择录屏目录</button>
             <span>{rootLabel || '未选择目录'}</span>
@@ -280,11 +282,21 @@ export function HighlightWorkbench({ active, onImportClip }: {
           <div className={styles.row}>
             <button type="button" onClick={() => {
               if (!api) return;
-              setSelectedNames([]);
+              setSelectedNames([]); setSelectedSubtitleNames([]);
               void select(api.chooseRecordings, (result) => setSelectedNames(result.names));
             }}
               disabled={!api || !rootLabel || actionBusy}>选择录屏文件</button>
             <span>{selectedNames.length ? `已选择 ${selectedNames.length} 个：${selectedNames.slice(0, 3).join('、')}` : '未选择录屏'}</span>
+          </div>
+          <div className={styles.row}>
+            <button type="button" onClick={() => {
+              if (!api) return;
+              setSelectedSubtitleNames([]);
+              void select(api.chooseSubtitles, (result) => setSelectedSubtitleNames(result.names));
+            }} disabled={!api || !selectedNames.length || actionBusy}>选择已有 SRT 字幕</button>
+            <span>{selectedSubtitleNames.length
+              ? `已配对 ${selectedSubtitleNames.length} 份：${selectedSubtitleNames.slice(0, 3).join('、')}`
+              : '未选择字幕'}</span>
           </div>
           <div className={styles.row}>
             <label>每条最多候选 <input aria-label="每条最多候选" type="number" min="1" max="12" value={maxClips}

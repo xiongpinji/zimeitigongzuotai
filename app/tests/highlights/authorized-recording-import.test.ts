@@ -47,6 +47,84 @@ afterEach(() => {
 });
 
 describe('authorized local recording batch import', () => {
+  it('stores an explicitly paired SRT by content hash and gives changed subtitles a new task identity', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const subtitlePath = file(mediaRootDir, 'session.srt', '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    const subtitleStoreDir = join(root, 'private-subtitles');
+    const input = { queue, mediaRootDir, videoPaths: [videoPath], subtitlePaths: [subtitlePath], subtitleStoreDir };
+    const [first] = await importAuthorizedRecordings(input);
+    const digest = createHash('sha256').update(readFileSync(subtitlePath)).digest('hex');
+    expect(first.recording.transcriptRef).toBe(join(subtitleStoreDir, `${digest}.srt`));
+    expect(readFileSync(first.recording.transcriptRef!, 'utf8')).toBe(readFileSync(subtitlePath, 'utf8'));
+    const [repeat] = await importAuthorizedRecordings(input);
+    expect(repeat.id).toBe(first.id);
+    writeFileSync(subtitlePath, '1\n00:00:00,000 --> 00:00:02,000\nChanged\n');
+    const [changed] = await importAuthorizedRecordings(input);
+    expect(changed.id).not.toBe(first.id);
+    expect(changed.recording.transcriptRef).not.toBe(first.recording.transcriptRef);
+    expect(queue.list()).toHaveLength(2);
+  });
+
+  it('rejects an outside or missing SRT without adding any task', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const outside = join(root, 'outside.srt');
+    writeFileSync(outside, 'outside');
+    const subtitleStoreDir = join(root, 'private-subtitles');
+    await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [videoPath], subtitlePaths: [outside], subtitleStoreDir }), 'invalid_request');
+    await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [videoPath], subtitlePaths: [join(mediaRootDir, 'session.srt')], subtitleStoreDir }), 'source_unavailable');
+    expect(queue.list()).toEqual([]);
+  });
+
+  it('does not silently repair a tampered content-addressed subtitle receipt on reimport', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const subtitlePath = file(mediaRootDir, 'session.srt', '1\n00:00:00,000 --> 00:00:02,000\nFirst\n');
+    const input = { queue, mediaRootDir, videoPaths: [videoPath],
+      subtitlePaths: [subtitlePath], subtitleStoreDir: join(root, 'private-subtitles') };
+    const [task] = await importAuthorizedRecordings(input);
+    writeFileSync(task.recording.transcriptRef!, 'tampered');
+    await expectImportError(() => importAuthorizedRecordings(input), 'source_unavailable');
+    expect(queue.list()).toHaveLength(1);
+    expect(readFileSync(task.recording.transcriptRef!, 'utf8')).toBe('tampered');
+  });
+
+  it('bounds SRT snapshot size before enqueueing', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const subtitlePath = join(mediaRootDir, 'session.srt');
+    writeFileSync(subtitlePath, Buffer.alloc(16 * 1024 * 1024 + 1));
+    await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [videoPath], subtitlePaths: [subtitlePath],
+      subtitleStoreDir: join(root, 'private-subtitles') }), 'source_unavailable');
+    expect(queue.list()).toEqual([]);
+  });
+
+  it('rejects a subtitle paired to a different recording name', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const wrong = file(mediaRootDir, 'other.srt', '1\n00:00:00,000 --> 00:00:02,000\nOther\n');
+    await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [videoPath], subtitlePaths: [wrong],
+      subtitleStoreDir: join(root, 'private-subtitles') }), 'invalid_request');
+    expect(queue.list()).toEqual([]);
+  });
+
+  it('rejects missing subtitle array entries instead of treating them as an ASR choice', async () => {
+    const { root, mediaRootDir, queue } = fixture();
+    const videoPath = file(mediaRootDir, 'session.mp4', 'synthetic-video');
+    const subtitleStoreDir = join(root, 'private-subtitles');
+    const sparse = new Array<string | null>(1);
+    for (const subtitlePaths of [sparse, [undefined] as unknown as (string | null)[]]) {
+      await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+        videoPaths: [videoPath], subtitlePaths, subtitleStoreDir }), 'invalid_request');
+    }
+    expect(queue.list()).toEqual([]);
+  });
+
   it('hashes two authorized videos and atomically enqueues source-bound tasks', async () => {
     const { root, mediaRootDir, queue } = fixture();
     const first = file(mediaRootDir, 'one.mp4', 'synthetic-video-one');

@@ -16,6 +16,7 @@ const projectDir = path.join(runDir, 'project');
 const recordingsDir = path.join(runDir, 'recordings');
 const recordings = ['synthetic-red.mp4', 'synthetic-blue.mp4']
   .map((name) => path.join(recordingsDir, name));
+const subtitle = path.join(recordingsDir, 'synthetic-red.srt');
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 fs.mkdirSync(profile, { recursive: true });
@@ -32,6 +33,7 @@ function writeSyntheticRecording(color, target) {
 for (const [index, color] of ['red', 'blue'].entries()) {
   writeSyntheticRecording(color, recordings[index]);
 }
+fs.writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:02,000\nSynthetic first clip\n', 'utf8');
 
 const pageErrors = [];
 
@@ -59,9 +61,12 @@ async function selectSyntheticRecordings(app) {
       if (options.title === '选择直播录屏（最多 100 个）') {
         return Promise.resolve({ canceled: false, filePaths: selected.files });
       }
+      if (options.title === '选择与录屏同名的 SRT 字幕（可选）') {
+        return Promise.resolve({ canceled: false, filePaths: [selected.subtitle] });
+      }
       return original(...args);
     };
-  }, { root: recordingsDir, files: recordings });
+  }, { root: recordingsDir, files: recordings, subtitle });
 }
 
 async function importThroughUi(page) {
@@ -69,6 +74,8 @@ async function importThroughUi(page) {
   await page.getByText('recordings', { exact: true }).waitFor({ timeout: 15_000 });
   await page.getByRole('button', { name: '选择录屏文件' }).click();
   await page.getByText('已选择 2 个', { exact: false }).waitFor({ timeout: 15_000 });
+  await page.getByRole('button', { name: '选择已有 SRT 字幕' }).click();
+  await page.getByText('已配对 1 份', { exact: false }).waitFor({ timeout: 15_000 });
   await page.getByRole('button', { name: '导入录屏' }).click();
   await page.getByRole('status').getByText('已导入 2 个录屏任务。')
     .waitFor({ timeout: 20_000 });
@@ -103,6 +110,12 @@ async function main() {
     assert.equal(new Set(initial.map((task) => task.sourceSha256)).size, 2);
     assert.deepEqual(initial.map((task) => task.name), recordings.map((file) => path.basename(file)));
     assert.ok(initial.every((task) => task.state === 'queued'));
+    assert.equal(JSON.stringify(initial).includes(subtitle), false);
+    const stored = JSON.parse(fs.readFileSync(path.join(profile, 'highlights-v1', 'queue.json'), 'utf8'));
+    const snapshot = stored.tasks[0].recording.transcriptRef;
+    assert.ok(snapshot.startsWith(path.join(profile, 'highlights-v1', 'subtitles')));
+    assert.equal(fs.readFileSync(snapshot, 'utf8'), fs.readFileSync(subtitle, 'utf8'));
+    assert.equal(stored.tasks[1].recording.transcriptRef, null);
     assert.equal(await page.getByTestId('run-highlights').isDisabled(), true);
     const deniedRun = await page.evaluate(() => window.highlightV1API.run({
       llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic',
@@ -144,6 +157,7 @@ async function main() {
       profile, recordings, taskIds: initial.map((task) => task.id),
       imported: 2, cancelled: 1, persistedAfterRestart: true,
       duplicateImportAdded: 0, changedSourceAdded: 1, consentGuardDenied: true,
+      subtitleSnapshotVerified: true,
       highlightAnalysisStarted: false, publicationAttempted: false, pageErrors,
     }, null, 2));
     process.stdout.write(`${runDir}\n`);

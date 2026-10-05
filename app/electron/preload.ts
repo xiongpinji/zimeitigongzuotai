@@ -848,6 +848,7 @@ contextBridge.exposeInMainWorld('accountV2API', {
 contextBridge.exposeInMainWorld('highlightV1API', {
   chooseRoot: () => ipcRenderer.invoke('highlight-v1:choose-root'),
   chooseRecordings: () => ipcRenderer.invoke('highlight-v1:choose-recordings'),
+  chooseSubtitles: () => ipcRenderer.invoke('highlight-v1:choose-subtitles'),
   chooseNode: () => ipcRenderer.invoke('highlight-v1:choose-node'),
   chooseHotClip: () => ipcRenderer.invoke('highlight-v1:choose-hotclip'),
   importRecordings: (input) => ipcRenderer.invoke('highlight-v1:import', input),

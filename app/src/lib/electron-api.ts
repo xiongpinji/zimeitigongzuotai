@@ -848,6 +848,7 @@ export interface AccountV2API {
 export interface HighlightV1API {
   chooseRoot(): Promise<HighlightV1Result<{ label: string }>>;
   chooseRecordings(): Promise<HighlightV1Result<{ names: string[] }>>;
+  chooseSubtitles(): Promise<HighlightV1Result<{ names: string[] }>>;
   chooseNode(): Promise<HighlightV1Result<{ label: string }>>;
   chooseHotClip(): Promise<HighlightV1Result<{ label: string }>>;
   importRecordings(input: { maxClips: number | null }): Promise<HighlightV1Result<{ tasks: HighlightV1TaskDto[] }>>;
