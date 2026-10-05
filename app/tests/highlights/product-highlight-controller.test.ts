@@ -111,6 +111,22 @@ describe('product highlight controller (synthetic sidecar, no LLM call)', () => 
     expect(readFileSync(join(root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain('SYNTHETIC-SECRET-DO-NOT-STORE');
   });
 
+  it('selected execution leaves another queued recording untouched', async () => {
+    const { root, mediaRootDir, runtime, controller } = fixture();
+    const own = join(mediaRootDir, 'own.mp4');
+    const other = join(mediaRootDir, 'other.mp4');
+    writeFileSync(own, 'synthetic-own');
+    writeFileSync(other, 'synthetic-other');
+    const script = join(root, 'fake-hotclip.cjs');
+    writeFileSync(script, 'process.stdout.write("[]")');
+    const [owned, unrelated] = await controller.importRecordings({
+      mediaRootDir, videoPaths: [own, other], maxClips: 2,
+    });
+    const completed = await controller.runSelected(fakeConfig(root, mediaRootDir, script), [owned.id]);
+    expect(completed).toMatchObject([{ id: owned.id, state: 'completed' }]);
+    expect(runtime.queue.get(unrelated.id)).toMatchObject({ state: 'queued', attempt: 0 });
+  });
+
   it('restores an SRT-backed task after restart and passes the verified snapshot to HotClip', async () => {
     const { root, mediaRootDir, runtime, controller } = fixture();
     const source = join(mediaRootDir, 'session.mp4');

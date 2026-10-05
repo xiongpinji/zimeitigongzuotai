@@ -43,6 +43,7 @@ const MESSAGES: Readonly<Record<HighlightBatchSchedulerErrorCode, string>> = {
 };
 
 const HIGHLIGHT_ID_PATTERN = /^hlcv1-[a-f0-9]{64}$/;
+const TASK_ID_PATTERN = /^hbatch_[a-f0-9]{64}$/;
 const CANDIDATE_ID_DOMAIN = 'lingji-hotclip-candidate-v1';
 
 /** Shared deterministic identity for an upstream candidate inside one durable task. */
@@ -161,13 +162,42 @@ export class HighlightBatchScheduler {
 
   /** Run only tasks queued at this call. Failed tasks require an explicit queue.retry(). */
   runQueued(): Promise<HighlightBatchTaskV1[]> {
+    return this.startDrain(null);
+  }
+
+  /** Claim only explicit queued task IDs; callers must first enforce project ownership. */
+  runSelected(rawIds: readonly string[]): Promise<HighlightBatchTaskV1[]> {
+    const ids: string[] = [];
+    try {
+      if (!Array.isArray(rawIds) || rawIds.length < 1 || rawIds.length > 100) {
+        throw new Error('invalid selection');
+      }
+      for (let index = 0; index < rawIds.length; index += 1) {
+        const entry = Object.getOwnPropertyDescriptor(rawIds, String(index));
+        if (!entry || !('value' in entry) || typeof entry.value !== 'string' ||
+            !TASK_ID_PATTERN.test(entry.value)) throw new Error('invalid task');
+        ids.push(entry.value);
+      }
+      if (new Set(ids).size !== ids.length ||
+          ids.some((id) => this.queue.get(id)?.state !== 'queued')) {
+        throw new Error('invalid selection');
+      }
+    } catch {
+      return Promise.reject(new HighlightBatchSchedulerError('invalid_configuration'));
+    }
+    return this.startDrain(ids);
+  }
+
+  private startDrain(selectedIds: readonly string[] | null): Promise<HighlightBatchTaskV1[]> {
     if (this.stopping) {
       return Promise.reject(new HighlightBatchSchedulerError('scheduler_stopped'));
     }
     if (this.activeDrain) {
       return Promise.reject(new HighlightBatchSchedulerError('scheduler_busy'));
     }
-    const execution = Promise.resolve().then(() => this.drain());
+    const ids = selectedIds ?? this.queue.list()
+      .filter((task) => task.state === 'queued').map((task) => task.id);
+    const execution = Promise.resolve().then(() => this.drain(ids, selectedIds !== null));
     const active = execution.finally(() => { this.activeDrain = null; });
     this.activeDrain = active;
     return active;
@@ -184,8 +214,7 @@ export class HighlightBatchScheduler {
     await this.activeDrain;
   }
 
-  private async drain(): Promise<HighlightBatchTaskV1[]> {
-    const queuedIds = this.queue.list().filter((task) => task.state === 'queued').map((task) => task.id);
+  private async drain(queuedIds: readonly string[], selected: boolean): Promise<HighlightBatchTaskV1[]> {
     let cursor = 0;
     const worker = async (): Promise<void> => {
       while (!this.stopping && cursor < queuedIds.length) {
@@ -198,7 +227,9 @@ export class HighlightBatchScheduler {
     const outcomes = await Promise.allSettled(workers);
     const rejected = outcomes.find((entry): entry is PromiseRejectedResult => entry.status === 'rejected');
     if (rejected) throw rejected.reason;
-    return this.queue.list();
+    return selected
+      ? queuedIds.map((id) => this.queue.get(id)).filter((task): task is HighlightBatchTaskV1 => task !== null)
+      : this.queue.list();
   }
 
   private async runOne(id: string): Promise<void> {

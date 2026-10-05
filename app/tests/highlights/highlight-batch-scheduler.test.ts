@@ -56,6 +56,32 @@ async function waitForPidGone(pid: number): Promise<boolean> {
 const EMPTY = { candidateIds: [], highlightIds: [] };
 
 describe('HighlightBatchScheduler（合成录屏与假 runner）', () => {
+  it('只执行显式选择的任务，拒绝未知或重复 ID，其他工程队列不被领取', async () => {
+    const store = queue();
+    const [first, other, third] = store.enqueueBatch([input('owned-a'), input('other-project'), input('owned-b')]);
+    const started: string[] = [];
+    const scheduler = new HighlightBatchScheduler({
+      queue: store, concurrency: 2, maxAttempts: 2,
+      runner: async (task) => { started.push(task.id); return EMPTY; },
+    });
+    await expect(scheduler.runSelected([first.id, first.id]))
+      .rejects.toMatchObject({ code: 'invalid_configuration' });
+    await expect(scheduler.runSelected([`hbatch_${'f'.repeat(64)}`]))
+      .rejects.toMatchObject({ code: 'invalid_configuration' });
+    await expect(scheduler.runSelected(new Array<string>(1)))
+      .rejects.toMatchObject({ code: 'invalid_configuration' });
+    const accessorIds = [first.id];
+    Object.defineProperty(accessorIds, '0', { get: () => first.id });
+    await expect(scheduler.runSelected(accessorIds))
+      .rejects.toMatchObject({ code: 'invalid_configuration' });
+    expect(store.list().map((task) => task.state)).toEqual(['queued', 'queued', 'queued']);
+    const selected = await scheduler.runSelected([first.id, third.id]);
+    expect(selected.map((task) => task.id)).toEqual([first.id, third.id]);
+    expect(started).toEqual([first.id, third.id]);
+    expect(store.get(other.id)).toMatchObject({ state: 'queued', attempt: 0 });
+    store.close();
+  });
+
   it('退出时停止新派发并中止在途 runner，保留 running 供下次产物恢复', async () => {
     const store = queue();
     const [first, second] = store.enqueueBatch([input('stop-a'), input('stop-b')]);

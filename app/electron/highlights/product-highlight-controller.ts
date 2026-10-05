@@ -145,7 +145,17 @@ export class ProductHighlightController {
     return this.runtime.queue.retry(id, maxAttempts);
   }
 
-  async runQueued(raw: ProductHighlightRunConfiguration): Promise<HighlightBatchTaskV1[]> {
+  runQueued(raw: ProductHighlightRunConfiguration): Promise<HighlightBatchTaskV1[]> {
+    return this.run(raw, null);
+  }
+
+  /** Trusted caller must bind every selected ID to the active project before invoking this. */
+  runSelected(raw: ProductHighlightRunConfiguration, taskIds: readonly string[]): Promise<HighlightBatchTaskV1[]> {
+    return this.run(raw, taskIds);
+  }
+
+  private async run(raw: ProductHighlightRunConfiguration,
+    taskIds: readonly string[] | null): Promise<HighlightBatchTaskV1[]> {
     if (this.stopping) throw new ProductHighlightControllerError('stopped');
     if (this.activeScheduler || this.importPromise) throw new ProductHighlightControllerError('busy');
     const config = validateRunConfiguration(raw);
@@ -189,7 +199,7 @@ export class ProductHighlightController {
     });
     this.activeScheduler = scheduler;
     try {
-      return await scheduler.runQueued();
+      return await (taskIds === null ? scheduler.runQueued() : scheduler.runSelected(taskIds));
     } finally {
       if (this.activeScheduler === scheduler) this.activeScheduler = null;
     }
