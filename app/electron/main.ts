@@ -240,6 +240,7 @@ let isAppQuitting = false;
 const videoImportService = getVideoImportService();
 let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
+let productPublishDraftService: ReturnType<typeof createProductPublishDraftService> | null = null;
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
 let reviewedClipExporter: ReviewedClipExporter | null = null;
@@ -2847,7 +2848,7 @@ if (process.env.NODE_ENV_ELECTRON_VITE === 'development') {
 
 registerAgentIpc(() => mainWindow);
 registerConversationIpc(() => mainWindow);
-registerMcpIpc(() => mainWindow);
+registerMcpIpc(() => mainWindow, () => productPublishDraftService);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -3069,19 +3070,21 @@ app.whenReady().then(async () => {
   }
   if (productAccountVault && productPublishQueue && productCompositionReview) {
     try {
+      const draftService = createProductPublishDraftService({
+        activeProjectDir: getActiveProjectPath,
+        accounts: productAccountVault,
+        review: productCompositionReview,
+        queue: productPublishQueue,
+      });
       registerProductPublishDraftIpc({
         ipc: ipcMain,
         allowedSender: (event) =>
           !!mainWindow && !mainWindow.isDestroyed() &&
           (event as { sender?: unknown }).sender === mainWindow.webContents &&
           (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
-        service: createProductPublishDraftService({
-          activeProjectDir: getActiveProjectPath,
-          accounts: productAccountVault,
-          review: productCompositionReview,
-          queue: productPublishQueue,
-        }),
+        service: draftService,
       });
+      productPublishDraftService = draftService;
     } catch (err) {
       writeAppLog('error', 'publish-v2', '审核版草稿入口注册失败',
         err instanceof Error ? err.name : 'unknown error');
@@ -3099,7 +3102,7 @@ app.whenReady().then(async () => {
   });
   // 启动 MCP Server
   try {
-    await startMcpServer(19820, () => mainWindow);
+    await startMcpServer(19820, () => mainWindow, () => productPublishDraftService);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

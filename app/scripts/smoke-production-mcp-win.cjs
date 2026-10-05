@@ -1,5 +1,5 @@
 // Real local MCP protocol + source-build desktop probe with synthetic project data.
-// This verifies the existing tool surface, not R5 production acceptance.
+// Verifies the legacy surface and the separate authenticated read-only production surface.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -61,7 +61,8 @@ function prepareOwnTokenFixture() {
 
 // Observe discovery-file metadata only; never read real tokens or user configuration.
 const realDiscoveryDir = path.join(os.homedir(), '.lingji');
-const discoveryNames = ['mcp-endpoint.json', 'sonar-token', 'sonar-inbox.json', 'agent-config.json'];
+const discoveryNames = ['mcp-endpoint.json', 'sonar-token', 'production-mcp-token',
+  'sonar-inbox.json', 'agent-config.json'];
 function discoveryMetadata() {
   return discoveryNames.map((name) => {
     const file = path.join(realDiscoveryDir, name);
@@ -159,7 +160,10 @@ async function main() {
   let page;
   let client;
   let transport;
+  let productionClient;
+  let productionTransport;
   let report;
+  let phase = 'launch';
   const pageErrors = [];
   try {
     electronApp = await _electron.launch({
@@ -216,10 +220,66 @@ async function main() {
     const opened = parseResult(await call('lingji_open_project', { path: projectPath }));
     assert.equal(opened.ok, true);
     await waitUntil(async () => parseResult(await call('lingji_get_active_project')).projectPath === projectPath, 10_000);
+    await waitUntil(async () => parseResult(await call('lingji_get_editor_state')).projectDir === projectPath, 10_000);
     const editorState = parseResult(await call('lingji_get_editor_state'));
     assert.equal(editorState.projectDir, projectPath, 'The Renderer must report the same synthetic project opened through MCP');
     const tasks = parseResult(await call('lingji_list_tasks', { projectPath }));
     assert.deepEqual(tasks, [], 'No production task should start during the read/create/open probe');
+    const productionUrl = new URL(status.url);
+    productionUrl.pathname = '/production-mcp';
+    phase = 'production-token';
+    const productionTokenFile = path.join(isolatedHome, '.lingji', 'production-mcp-token');
+    await waitUntil(() => fs.existsSync(productionTokenFile), 5000);
+    const productionToken = fs.readFileSync(productionTokenFile, 'utf8').trim();
+    assert.match(productionToken, /^[a-f0-9]{48}$/);
+    for (const headers of [{}, { 'x-lingji-production-token': 'b'.repeat(48) },
+      { 'x-lingji-production-token': productionToken, Origin: 'http://localhost:3000' }]) {
+      phase = 'production-denied';
+      const denied = await localFetch(productionUrl, { method: 'POST', headers });
+      assert.equal(denied.status, 401, 'Production route must deny missing, wrong or browser-origin credentials');
+      assert.equal(denied.headers.get('access-control-allow-origin'), null);
+    }
+    phase = 'production-invalid-session';
+    const invalidSession = await localFetch(productionUrl, { method: 'POST', headers: {
+      'content-type': 'application/json', 'x-lingji-production-token': productionToken,
+      'mcp-session-id': '__proto__',
+    }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) });
+    assert.equal(invalidSession.status, 404, 'Prototype-like session IDs must never resolve to a transport');
+    phase = 'production-oversized';
+    const oversized = await localFetch(productionUrl, { method: 'POST', headers: {
+      'content-type': 'application/json', 'x-lingji-production-token': productionToken,
+    }, body: 'x'.repeat(1024 * 1024 + 1) });
+    assert.equal(oversized.status, 413, 'Production requests must have a bounded body');
+    phase = 'production-connect';
+    productionClient = new Client({ name: 'zimeiti-production-read-probe', version: '1.0.0' }, { capabilities: {} });
+    productionTransport = new StreamableHTTPClientTransport(productionUrl, {
+      fetch: (input, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set('x-lingji-production-token', productionToken);
+        return localFetch(input, { ...init, headers });
+      },
+    });
+    await productionClient.connect(productionTransport, { timeout: 15_000 });
+    phase = 'production-tools';
+    const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
+    assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
+      ['lingji_production_list_drafts', 'lingji_production_preview_publish']);
+    phase = 'production-list';
+    const listedDrafts = parseResult(await productionClient.callTool({
+      name: 'lingji_production_list_drafts', arguments: {},
+    }, undefined, { timeout: 15_000 }));
+    assert.deepEqual(listedDrafts, { drafts: [] });
+    phase = 'production-preview';
+    const previewError = await productionClient.callTool({
+      name: 'lingji_production_preview_publish', arguments: { assignments: [{
+        accountId: 'missing-account', batchId: 'batch-1', planId: 'plan-1',
+        metadata: { title: '合成测试', description: '', tags: [], coverRefs: [], scheduleAt: null },
+        commerceRequest: null,
+      }] },
+    }, undefined, { timeout: 15_000 });
+    assert.equal(previewError.isError, true);
+    assert.deepEqual(JSON.parse(previewError.content.find((item) => item.type === 'text').text),
+      { code: 'account_missing' });
     assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: path.join(runDir, 'project-opened.png') });
     const productionIdFields = ['recordingIds', 'highlightId', 'compositionPlanId', 'videoVariantId', 'activityGrantId', 'accountIds'];
@@ -232,6 +292,7 @@ async function main() {
       advertisedActionIdentifiers: names.filter((name) => AGENT_PRODUCTION_ACTIONS.some((action) => name.includes(action))),
       productionIdFieldsInSchemas: productionIdFields.filter((field) => tools.some((tool) => JSON.stringify(tool.inputSchema).includes(`"${field}"`))),
       createProject: true, openProject: true, activeProject: true, editorIpcRoundTrip: true,
+      authenticatedProductionRead: true, productionToolNames: productionTools.tools.map((tool) => tool.name),
       projectState: state, editorState, taskList: tasks, pageErrors,
       productionAcceptanceTested: false, realLoginAttempted: false,
       publicationAttempted: false, modelInvoked: false, mediaEncoded: false,
@@ -244,12 +305,14 @@ async function main() {
     fs.writeFileSync(path.join(runDir, 'failure.json'), JSON.stringify({
       probePassed: false, evidenceDir: runDir, status, startup,
       fixtureTokenAclPrepared,
-      error: error.message === 'probe_condition_timeout' ? 'probe_condition_timeout' : 'probe_failed',
+      error: error.message === 'probe_condition_timeout' ? 'probe_condition_timeout' : 'probe_failed', phase,
       productionAcceptanceTested: false, publicationAttempted: false, modelInvoked: false,
     }, null, 2));
     process.stdout.write(`${JSON.stringify({ evidenceDir: runDir, status, startup, probePassed: false }, null, 2)}\n`);
     throw error;
   } finally {
+    if (productionTransport) await productionTransport.terminateSession().catch(() => undefined);
+    if (productionClient) await productionClient.close().catch(() => undefined);
     if (transport) await transport.terminateSession().catch(() => undefined);
     if (client) await client.close().catch(() => undefined);
     if (electronApp) await electronApp.close();
@@ -261,6 +324,8 @@ async function main() {
       fs.writeFileSync(path.join(runDir, 'result.json'), JSON.stringify(report, null, 2));
       process.stdout.write(`${JSON.stringify({ evidenceDir: runDir, toolCount: report.toolCount, toolNames: report.toolNames,
         fixtureTokenAclPrepared,
+        authenticatedProductionRead: report.authenticatedProductionRead,
+        productionToolNames: report.productionToolNames,
         advertisedActionIdentifiers: report.advertisedActionIdentifiers, productionIdFieldsInSchemas: report.productionIdFieldsInSchemas,
         editorIpcRoundTrip: true, realDiscoveryMetadataUnchanged: true, productionAcceptanceTested: false }, null, 2)}\n`);
     } else {

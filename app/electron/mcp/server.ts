@@ -4,6 +4,8 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -13,11 +15,16 @@ import { writeEndpointFile, removeEndpointFile } from './endpoint-file';
 import { createSonarInboxStore, type SonarInboxStore } from '../sonar/inbox-store';
 import { getOrCreateSonarToken } from '../sonar/token';
 import { handleSonarHttp, isSonarPath } from '../sonar/routes';
+import { authorizeProductionMcpRequest } from './production-auth';
+import { registerProductionReadTools, type ProductionReadService } from './production-tools';
 
 // ─── 模块状态 ─────────────────────────────────────────────
 let httpServer: Server | null = null;
 let currentPort = 19820;
 let getMainWindowFn: (() => BrowserWindow | null) | null = null;
+let getProductionReadServiceFn: (() => ProductionReadService | null) | null = null;
+let productionToken = '';
+const PRODUCTION_TOKEN_FILE = join(homedir(), '.lingji', 'production-mcp-token');
 
 // ─── 声呐桥状态 ───────────────────────────────────────────
 let sonarStore: SonarInboxStore | null = null;
@@ -34,15 +41,17 @@ export function getSonarBridgeInfo(): { port: number; token: string } {
 }
 
 /** sessionId → { transport, server } 映射 */
-const sessions: Record<string, { transport: StreamableHTTPServerTransport; server: McpServer }> = {};
+const sessions: Record<string, { transport: StreamableHTTPServerTransport; server: McpServer }> = Object.create(null);
+const productionSessions: typeof sessions = Object.create(null);
 
 /** 为每个新会话创建独立的 McpServer 实例 */
-function createSessionServer(): McpServer {
+function createSessionServer(production: boolean): McpServer {
   const server = new McpServer(
     { name: 'lingji-editor', version: '1.0.0' },
     { capabilities: { logging: {} } },
   );
-  registerTools(server, getMainWindowFn!);
+  if (production) registerProductionReadTools(server, () => getProductionReadServiceFn?.() ?? null);
+  else registerTools(server, getMainWindowFn!);
   return server;
 }
 
@@ -55,11 +64,20 @@ function setCorsHeaders(res: ServerResponse): void {
 }
 
 // ─── 请求体解析 ──────────────────────────────────────────
-function parseRequestBody(req: IncomingMessage): Promise<unknown> {
+class RequestTooLargeError extends Error {}
+
+function parseRequestBody(req: IncomingMessage, maxBytes = Infinity): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let bytes = 0;
+    let tooLarge = false;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) { tooLarge = true; return; }
+      if (!tooLarge) chunks.push(chunk);
+    });
     req.on('end', () => {
+      if (tooLarge) { reject(new RequestTooLargeError()); return; }
       const raw = Buffer.concat(chunks).toString('utf-8');
       if (!raw) {
         resolve(undefined);
@@ -85,6 +103,7 @@ function parseRequestBody(req: IncomingMessage): Promise<unknown> {
 export async function startMcpServer(
   port = 19820,
   getMainWindow: () => BrowserWindow | null,
+  getProductionReadService?: () => ProductionReadService | null,
 ): Promise<void> {
   // 防止重复启动
   if (httpServer) {
@@ -94,15 +113,44 @@ export async function startMcpServer(
 
   currentPort = port;
   getMainWindowFn = getMainWindow;
+  getProductionReadServiceFn = getProductionReadService ?? null;
 
   // 声呐桥：待创作箱 store + 共享 token（loopback + token 鉴权）
   sonarStore = createSonarInboxStore();
   sonarToken = await getOrCreateSonarToken();
+  productionToken = '';
+  if (getProductionReadServiceFn) {
+    try { productionToken = await getOrCreateSonarToken(PRODUCTION_TOKEN_FILE); }
+    catch { console.error('[MCP] production token unavailable'); }
+  }
 
   // 创建 HTTP 服务
   httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const pathname = url.pathname;
+
+    // Production transport is separate from the legacy editor surface. Every
+    // POST/GET/DELETE is authenticated before MCP sees the request or session.
+    if (pathname === '/production-mcp') {
+      if (!authorizeProductionMcpRequest({
+        remoteAddress: req.socket.remoteAddress,
+        origin: req.headers.origin,
+        tokenHeader: req.headers['x-lingji-production-token'],
+      }, productionToken)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      try { await handleMcpRequest(req, res, true); }
+      catch (error) {
+        if (!res.headersSent) {
+          const tooLarge = error instanceof RequestTooLargeError;
+          res.writeHead(tooLarge ? 413 : 500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: tooLarge ? 'Request too large' : 'Internal server error' }));
+        }
+      }
+      return;
+    }
 
     // 所有响应都带 CORS 头
     setCorsHeaders(res);
@@ -192,14 +240,16 @@ export async function startMcpServer(
  */
 export async function stopMcpServer(): Promise<void> {
   // 关闭所有活跃的 session
-  for (const sessionId of Object.keys(sessions)) {
-    try {
-      await sessions[sessionId].transport.close();
-      await sessions[sessionId].server.close();
-    } catch {
-      // 忽略关闭错误
+  for (const bucket of [sessions, productionSessions]) {
+    for (const sessionId of Object.keys(bucket)) {
+      try {
+        await bucket[sessionId].transport.close();
+        await bucket[sessionId].server.close();
+      } catch {
+        // 忽略关闭错误
+      }
+      delete bucket[sessionId];
     }
-    delete sessions[sessionId];
   }
 
   // 关闭 HTTP 服务
@@ -212,6 +262,8 @@ export async function stopMcpServer(): Promise<void> {
   }
 
   console.log('[MCP] Server 已停止');
+  productionToken = '';
+  getProductionReadServiceFn = null;
 }
 
 /**
@@ -227,27 +279,29 @@ export function getMcpServerStatus(): { running: boolean; port: number; url: str
 
 // ─── 内部：MCP 请求分发 ───────────────────────────────────
 
-async function handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleMcpRequest(req: IncomingMessage, res: ServerResponse,
+  production = false): Promise<void> {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  const bucket = production ? productionSessions : sessions;
 
   // ── POST：消息请求 ──
   if (req.method === 'POST') {
-    const body = await parseRequestBody(req);
+    const body = await parseRequestBody(req, production ? 1024 * 1024 : Infinity);
 
     // 已有会话 → 复用 transport
-    if (sessionId && sessions[sessionId]) {
-      await sessions[sessionId].transport.handleRequest(req, res, body);
+    if (sessionId && bucket[sessionId]) {
+      await bucket[sessionId].transport.handleRequest(req, res, body);
       return;
     }
 
     // 新初始化请求 → 创建独立的 McpServer + transport
     if (!sessionId && isInitializeRequest(body)) {
-      const server = createSessionServer();
+      const server = createSessionServer(production);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid: string) => {
           console.log(`[MCP] 新会话已建立: ${sid}`);
-          sessions[sid] = { transport, server };
+          bucket[sid] = { transport, server };
         },
       });
 
@@ -262,8 +316,8 @@ async function handleMcpRequest(req: IncomingMessage, res: ServerResponse): Prom
     }
 
     // session ID 存在但 session 已过期 → 提示重新初始化
-    if (sessionId && !sessions[sessionId]) {
-      console.warn(`[MCP] 会话已过期: ${sessionId}, 当前活跃会话: [${Object.keys(sessions).join(', ')}]`);
+    if (sessionId && !bucket[sessionId]) {
+      console.warn(`[MCP] 会话已过期: ${sessionId}`);
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         jsonrpc: '2.0',
@@ -285,27 +339,27 @@ async function handleMcpRequest(req: IncomingMessage, res: ServerResponse): Prom
 
   // ── GET：SSE 流 ──
   if (req.method === 'GET') {
-    if (!sessionId || !sessions[sessionId]) {
+    if (!sessionId || !bucket[sessionId]) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or missing session ID' }));
       return;
     }
-    await sessions[sessionId].transport.handleRequest(req, res);
+    await bucket[sessionId].transport.handleRequest(req, res);
     return;
   }
 
   // ── DELETE：会话终止 ──
   if (req.method === 'DELETE') {
-    if (!sessionId || !sessions[sessionId]) {
+    if (!sessionId || !bucket[sessionId]) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid or missing session ID' }));
       return;
     }
-    const session = sessions[sessionId];
+    const session = bucket[sessionId];
     await session.transport.handleRequest(req, res);
     // DELETE 请求后清理 session
     session.server.close().catch(() => {});
-    delete sessions[sessionId];
+    delete bucket[sessionId];
     console.log(`[MCP] 会话已终止: ${sessionId}`);
     return;
   }
