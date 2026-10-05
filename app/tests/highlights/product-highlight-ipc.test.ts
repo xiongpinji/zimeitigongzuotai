@@ -252,6 +252,29 @@ describe('owner-only highlight IPC', () => {
     expect(readFileSync(join(f.root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain(config.llmApiKey);
   });
 
+  it('invalid replacement preparation clears the previous one-time model settings', async () => {
+    const f = fixture();
+    f.choices.push([f.media], [f.source], [process.execPath], [f.hotclip]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { tasks: { id: string }[] };
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseNode);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseHotClip);
+    f.setAgentRunAllowed(true);
+    const config = { llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic-model',
+      concurrency: 1, maxAttempts: 1, timeoutMs: 10_000, allowModelDownload: true };
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, config))
+      .toEqual({ ok: true, ready: true });
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun,
+      { ...config, allowModelDownload: false }))
+      .toEqual({ ok: false, code: 'consent_required' });
+    await expect(Promise.resolve().then(() => f.bridge.runSelectedForAgent(
+      join(f.root, 'project-a'), [imported.tasks[0].id], () => true)))
+      .rejects.toMatchObject({ code: 'selection_required' });
+    expect(f.controller.list()[0].state).toBe('queued');
+  });
+
   it('passes a synthetic selected sidecar through the queue, keeping candidates review-only', async () => {
     const { media, source, hotclip, root, choices, invoke } = fixture();
     // Use a no-op loader in a synthetic Node fixture; no real HotClip model or network call.

@@ -7,3 +7,5 @@
 先写失败测试，分别覆盖授权、桌面参数准备、工程绑定选择、MCP 门控和撤销取消。实现后的聚焦测试、`npx tsc --noEmit`、源码构建均通过；完整 `npx vitest run --maxWorkers=2 --minWorkers=2` 结果为 415 个文件通过、3066 项通过、4 项跳过。隔离 Electron + 真实本地 MCP 的桌面探针 `node scripts/smoke-production-mcp-win.cjs` 退出 0：验证独立授权、参数准备、指定任务启动以及撤销后模拟侧车进程退出。探针使用合成录屏和假 HotClip 侧车，未调用模型。证据保存在 Git 忽略的 `data/runtime/validation/r5-mcp-1791184301086/result.json`，其中 `syntheticHighlightDispatch=true`、`syntheticRevocationCancelledRun=true`、`modelInvoked=false`、`realLoginAttempted=false`、`publicationAttempted=false`。
 
 前一轮曾以合成录屏、人工 SRT、本地 HotClip CLI 和本地模型验证内部定向执行，见 `r5-selected-real-hotclip-probe-2026-10-05.md`；那不能替代本轮 MCP 探针，也不能证明真实直播高光质量。本轮没有打包、真实账号登录、平台发布或真实录屏盲审。R5 其余智能体动作、不同平台素材合成与生产验收尚未完成。
+
+提交后复核发现一次性配置的替换边界：有效配置之后若用户提交无效配置，旧配置仍可被消费。新增回归先在旧实现下失败（10 项中 1 项失败），随后让每次准备尝试先清除旧配置；聚焦 3 文件 12 项通过，`npx tsc --noEmit` 通过。此补丁没有重复宣称前述完整回归或桌面探针是在补丁后运行。

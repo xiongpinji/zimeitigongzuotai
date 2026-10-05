@@ -352,6 +352,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, (input) => {
+    preparedAgentRun = null;
     if (!mediaRoot || !nodeExecutable || !hotClipDir || !selectionProject) {
       return { ok: false, code: 'selection_required' };
     }
