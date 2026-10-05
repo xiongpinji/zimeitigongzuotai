@@ -152,4 +152,38 @@ describe('生产 MCP 质检门控', () => {
     expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
     expect(revoked.content[0].text).not.toContain('secret-batch');
   });
+
+  it('智能体渲染工具仅消费桌面准备，撤销后隐藏结果且不返回本地路径', async () => {
+    const handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+    const server = { registerTool: (name: string, _spec: unknown,
+      handler: (args: unknown) => Promise<unknown>) => { handlers.set(name, handler); } };
+    let allowed = false;
+    const render = vi.fn(async () => ({ ok: true as const, batchId: 'batch-1', versions: [{
+      planId: 'plan-1', state: 'completed', reviewRequired: true as const, errorCode: null,
+      outputPath: 'C:\\private\\render.mp4',
+    }] }));
+    registerProductionReadTools(server as never, () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }),
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }),
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }),
+      () => render, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' });
+    const call = () => handlers.get('lingji_production_render_variants')!({}) as
+      Promise<{ isError?: boolean; content: { text: string }[] }>;
+    expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(render).not.toHaveBeenCalled();
+    allowed = true;
+    const completed = await call();
+    expect(JSON.parse(completed.content[0].text)).toMatchObject({ batchId: 'batch-1', versions: [
+      { planId: 'plan-1', state: 'completed', reviewRequired: true },
+    ] });
+    expect(completed.content[0].text).not.toContain('private');
+    render.mockImplementationOnce(async () => { allowed = false; return { ok: true as const,
+      batchId: 'secret-batch', versions: [] }; });
+    const revoked = await call();
+    expect(revoked.isError).toBe(true);
+    expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(revoked.content[0].text).not.toContain('secret-batch');
+  });
 });

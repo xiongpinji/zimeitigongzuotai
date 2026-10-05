@@ -923,6 +923,11 @@ export interface CompositionV1API {
     quality: 'speed' | 'balanced' | 'quality'; retryFailed?: boolean }):
     Promise<CompositionV1Result<{ batchId: string; versions: Array<{ planId: string; state: string;
       reviewRequired: true; errorCode: string | null }> }>>;
+  prepareAgentRender(input: { batchId: string; planIds: string[]; platform: ProductionPlatform;
+    region: string; commercialShortVideo: boolean;
+    resolution: 'source' | '720p' | '540p' | '480p';
+    quality: 'speed' | 'balanced' | 'quality'; approvedForRender: true }):
+    Promise<CompositionV1Result<{ prepared: true }>>;
   cancel(batchId: string): Promise<CompositionV1Result<{ cancelled: boolean }>>;
   analyze(batchId: string, planIds: string[]): Promise<CompositionV1Result<{ report: CompositionReviewReport }>>;
   review(batchId: string, decision: Omit<HumanReviewDecision, 'submittedAt'>):
@@ -952,6 +957,7 @@ export interface ProductionActivityAPI {
   issueRecordingImport(): Promise<ProductionActivityResult>;
   issueHighlightDetection(): Promise<ProductionActivityResult>;
   issueCompositionBuild(): Promise<ProductionActivityResult>;
+  issueRenderVariants(): Promise<ProductionActivityResult>;
   revoke(): Promise<ProductionActivityResult>;
 }
 

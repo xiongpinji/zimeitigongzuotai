@@ -79,7 +79,7 @@ import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headle
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
 import type { ProductionRecordingImport, ProductionRecordingList,
-  ProductionHighlightDetection, ProductionCompositionBuild } from './mcp/production-tools';
+  ProductionHighlightDetection, ProductionCompositionBuild, ProductionCompositionRender } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
 import { ProductionHighlightJobManager } from './production/highlight-job-manager';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
@@ -277,8 +277,15 @@ function authorizeProductionCompositionBuild() {
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
   return productionActivityStore.authorizeCompositionBuild(projectDir);
 }
+function authorizeProductionCompositionRender() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeRenderVariants(projectDir);
+}
 const buildProductionCompositions: ProductionCompositionBuild = async () =>
   preparedCompositionAgent?.build() ?? { ok: false, code: 'service_unavailable' };
+const renderProductionCompositions: ProductionCompositionRender = async () =>
+  preparedCompositionAgent?.render() ?? { ok: false, code: 'service_unavailable' };
 const detectProductionHighlights: ProductionHighlightDetection = async (taskIds) =>
   productionHighlightJobs?.start(taskIds) ?? { ok: false, code: 'service_unavailable' };
 const importProductionRecordings: ProductionRecordingImport = async (maxClips) => {
@@ -2938,7 +2945,8 @@ registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProd
   () => importProductionRecordings, authorizeProductionRecordingImport,
   () => listProductionRecordings, () => detectProductionHighlights,
   authorizeProductionHighlightDetection, () => buildProductionCompositions,
-  authorizeProductionCompositionBuild);
+  authorizeProductionCompositionBuild, () => renderProductionCompositions,
+  authorizeProductionCompositionRender);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -3014,6 +3022,16 @@ app.whenReady().then(async () => {
         type: 'question', title: '授权智能体生成混剪版本',
         message: '允许智能体在当前工程触发已准备的混剪版本生成 30 分钟？',
         detail: '授权后，请到混剪台选择已审核切片和授权素材，检查匿名摘要并单独准备。调用您配置的 AI 模型时会发送这些摘要；生成的版本仍需人工复核。不会登录账号、渲染成片或发布。可随时撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
+    confirmRenderVariants: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体渲染混剪版本',
+        message: '允许智能体在当前工程渲染您选定的混剪批次，授权 30 分钟？',
+        detail: '此授权也包含此前的录屏分析、素材检索与混剪生成。请先在混剪台检查批次和用途并单独准备一次渲染；成片仍需人工审核。不会登录账号或发布视频，可随时撤销。',
         buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
       });
       return response === 1;
@@ -3121,6 +3139,7 @@ app.whenReady().then(async () => {
         (event as { senderFrame?: unknown }).senderFrame === mainWindow.webContents.mainFrame,
       activeProjectDir: getActiveProjectPath,
       authorizeAgentBuild: (dir) => productionActivityStore!.authorizeCompositionBuild(dir),
+      authorizeAgentRender: (dir) => productionActivityStore!.authorizeRenderVariants(dir),
       renderBatch: compositionRenderBatch,
       review: productCompositionReview,
       resources: async (projectDir) => {
@@ -3277,7 +3296,8 @@ app.whenReady().then(async () => {
       authorizeProductionAssetSearch, () => importProductionRecordings,
       authorizeProductionRecordingImport, () => listProductionRecordings,
       () => detectProductionHighlights, authorizeProductionHighlightDetection,
-      () => buildProductionCompositions, authorizeProductionCompositionBuild);
+      () => buildProductionCompositions, authorizeProductionCompositionBuild,
+      () => renderProductionCompositions, authorizeProductionCompositionRender);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

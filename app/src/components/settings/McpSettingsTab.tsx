@@ -50,7 +50,7 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
     }
   }, []);
 
-  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'recordings' | 'highlights' | 'compositions' | 'revoke') => {
+  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'recordings' | 'highlights' | 'compositions' | 'render' | 'revoke') => {
     setActivityBusy(true);
     try {
       setActivity(action === 'issue'
@@ -63,6 +63,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
               ? await window.productionActivityAPI.issueHighlightDetection()
             : action === 'compositions'
               ? await window.productionActivityAPI.issueCompositionBuild()
+            : action === 'render'
+              ? await window.productionActivityAPI.issueRenderVariants()
           : await window.productionActivityAPI.revoke());
     } finally { setActivityBusy(false); }
   }, []);
@@ -145,13 +147,15 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
           <h2 className={styles.sectionTitle}>智能体分析授权</h2>
         </div>
         <p className={styles.sectionDesc}>
-          可授权预检、素材检索、录屏导入、高光检测和生成待审混剪版本。混剪请先在此授权，再到混剪台准备一次。此授权不允许登录或发布。
+          可授权预检、素材检索、录屏导入、高光检测、生成混剪版本和渲染待审成片。混剪或渲染请先在此授权，再到混剪台准备一次。此授权不允许登录或发布。
         </p>
         <div className={styles.statusRow}>
           <span className={styles.statusText}>
             {activity?.ok && activity.status.active
               ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}（${
-                activity.status.allowedActions?.includes('build_compositions')
+                activity.status.allowedActions?.includes('render_variants')
+                  ? '质检、素材检索、录屏导入、高光检测、混剪生成与渲染'
+                : activity.status.allowedActions?.includes('build_compositions')
                   ? '质检、素材检索、录屏导入、高光检测与混剪生成'
                   : activity.status.allowedActions?.includes('detect_highlights')
                   ? '质检、素材检索、录屏导入与高光检测'
@@ -175,6 +179,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
             onClick={() => updateActivity('highlights')}>授权智能体高光检测 30 分钟</Button>
           <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
             onClick={() => updateActivity('compositions')}>授权智能体混剪生成 30 分钟</Button>
+          <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
+            onClick={() => updateActivity('render')}>授权智能体渲染 30 分钟</Button>
           <Button type="button" variant="destructive" size="sm" disabled={activityBusy || !(activity?.ok && activity.status.active)}
             onClick={() => updateActivity('revoke')}>撤销</Button>
         </div>

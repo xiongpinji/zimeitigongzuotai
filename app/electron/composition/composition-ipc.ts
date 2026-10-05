@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readCompositionVersion } from './version-projects';
-import type { createCompositionRenderBatch } from './render-batch';
+import type { createCompositionRenderBatch, CompositionRenderBatchInput } from './render-batch';
 import type { createCompositionReview, HumanReviewDecision } from './review';
 import type { CreateCompositionBatchInput } from './create-batch';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
@@ -17,6 +17,7 @@ export const COMPOSITION_V1_CHANNELS = {
   resources: 'composition-v1:resources',
   create: 'composition-v1:create',
   prepareAgentBuild: 'composition-v1:prepare-agent-build',
+  prepareAgentRender: 'composition-v1:prepare-agent-render',
   recommend: 'composition-v1:recommend',
 } as const;
 
@@ -37,6 +38,7 @@ export interface CompositionIpcOptions {
     plans: Array<{ planId: string; narrativeSummary: string; centralQuestion: string; segmentCount: number }>;
     reviewFlags: Array<{ planIds: [string, string]; reason: string }>; reviewRequired: true }>;
   authorizeAgentBuild: (projectDir: string) => AgentActionGateDecision;
+  authorizeAgentRender: (projectDir: string) => AgentActionGateDecision;
   recommend: (query: string, context: CreateCompositionBatchInput['context']) => Promise<{
     status: 'ok' | 'no_eligible_assets' | 'index_unavailable';
     recommendations: Array<{ assetId: string; similarity: number; reasons: string[] }> }>;
@@ -131,19 +133,72 @@ function createInput(projectDir: string, input: unknown): CreateCompositionBatch
     selectedAssets: input.selectedAssets as CreateCompositionBatchInput['selectedAssets'] };
 }
 
+function renderInput(projectDir: string, input: unknown): CompositionRenderBatchInput | null {
+  if (!object(input) || !validId(input.batchId) || !ids(input.planIds) ||
+      !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
+      typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
+      typeof input.commercialShortVideo !== 'boolean' ||
+      !['source', '720p', '540p', '480p'].includes(input.resolution as string) ||
+      !['speed', 'balanced', 'quality'].includes(input.quality as string) ||
+      (input.retryFailed !== undefined && typeof input.retryFailed !== 'boolean')) return null;
+  return { projectDir, batchId: input.batchId, planIds: [...input.planIds],
+    exportConfig: { resolution: input.resolution as CompositionRenderBatchInput['exportConfig']['resolution'],
+      quality: input.quality as CompositionRenderBatchInput['exportConfig']['quality'] },
+    context: { platform: input.platform as CompositionRenderBatchInput['context']['platform'],
+      region: input.region, commercialShortVideo: input.commercialShortVideo },
+    retryFailed: input.retryFailed as boolean | undefined };
+}
+
 export interface PreparedCompositionAgentBridge {
   build(): Promise<{ ok: true; batchId: string; planIds: string[] } | { ok: false; code: string }>;
+  render(): Promise<{ ok: true; batchId: string; versions: Array<{ planId: string; state: string;
+    reviewRequired: true; errorCode: string | null }> } | { ok: false; code: string }>;
   clear(): void;
 }
 
 export function registerCompositionIpc(options: CompositionIpcOptions): PreparedCompositionAgentBridge {
   let prepared: CreateCompositionBatchInput | null = null;
+  let preparedRender: CompositionRenderBatchInput | null = null;
   let running = false;
+  let runningRender = false;
+  let activeRender: { projectDir: string; batchId: string } | null = null;
   let generation = 0;
-  const clear = () => { prepared = null; generation += 1; };
+  const clear = () => {
+    prepared = null; preparedRender = null; generation += 1;
+    if (activeRender) void options.renderBatch.cancel(activeRender.projectDir, activeRender.batchId)
+      .catch(() => undefined);
+  };
   const authorized = (projectDir: string) => options.authorizeAgentBuild(projectDir).allowed;
+  const renderAuthorized = (projectDir: string) => options.authorizeAgentRender(projectDir).allowed;
   const bridge: PreparedCompositionAgentBridge = {
     clear,
+    async render() {
+      if (runningRender) return { ok: false, code: 'batch_busy' };
+      const input = preparedRender;
+      preparedRender = null;
+      if (!input) return { ok: false, code: 'not_prepared' };
+      if (options.activeProjectDir() !== input.projectDir || !renderAuthorized(input.projectDir)) {
+        return { ok: false, code: 'authorization_expired' };
+      }
+      const activeGeneration = generation;
+      const beforeCommit = () => {
+        if (generation !== activeGeneration || options.activeProjectDir() !== input.projectDir ||
+            !renderAuthorized(input.projectDir)) {
+          throw Object.assign(new Error('authorization_expired'), { code: 'authorization_expired' });
+        }
+      };
+      runningRender = true;
+      activeRender = { projectDir: input.projectDir, batchId: input.batchId };
+      try {
+        const done = await options.renderBatch.run({ ...input, beforeCommit });
+        beforeCommit();
+        return { ok: true, batchId: done.batchId, versions: done.versions.map((version) => ({
+          planId: version.planId, state: version.state, reviewRequired: true as const,
+          errorCode: version.errorCode && SAFE_CODES.has(version.errorCode) ? version.errorCode : null,
+        })) };
+      } catch (error) { return { ok: false, code: code(error) }; }
+      finally { runningRender = false; activeRender = null; }
+    },
     async build() {
       if (running) return { ok: false, code: 'batch_busy' };
       const input = prepared;
@@ -189,27 +244,24 @@ export function registerCompositionIpc(options: CompositionIpcOptions): Prepared
   });
 
   handle(COMPOSITION_V1_CHANNELS.render, async (projectDir, input) => {
-    if (!object(input) || !validId(input.batchId) || !ids(input.planIds) ||
-        !['douyin', 'kuaishou', 'wechat-channels', 'xiaohongshu'].includes(input.platform as string) ||
-        typeof input.region !== 'string' || !/^[a-z]{2}$/.test(input.region) ||
-        typeof input.commercialShortVideo !== 'boolean' ||
-        !['source', '720p', '540p', '480p'].includes(input.resolution as string) ||
-        !['speed', 'balanced', 'quality'].includes(input.quality as string) ||
-        (input.retryFailed !== undefined && typeof input.retryFailed !== 'boolean')) {
-      return { ok: false, code: 'invalid_input' };
-    }
-    const result = await options.renderBatch.run({ projectDir, batchId: input.batchId,
-      planIds: input.planIds, exportConfig: {
-        resolution: input.resolution as 'source' | '720p' | '540p' | '480p',
-        quality: input.quality as 'speed' | 'balanced' | 'quality',
-      }, context: {
-        platform: input.platform as 'douyin' | 'kuaishou' | 'wechat-channels' | 'xiaohongshu',
-        region: input.region, commercialShortVideo: input.commercialShortVideo,
-      }, retryFailed: input.retryFailed as boolean | undefined });
+    const selected = renderInput(projectDir, input);
+    if (!selected) return { ok: false, code: 'invalid_input' };
+    const result = await options.renderBatch.run(selected);
     return { ok: true, batchId: result.batchId, versions: result.versions.map((version) => ({
       planId: version.planId, state: version.state, reviewRequired: true,
       errorCode: version.errorCode && SAFE_CODES.has(version.errorCode) ? version.errorCode : null,
     })) };
+  });
+
+  handle(COMPOSITION_V1_CHANNELS.prepareAgentRender, async (projectDir, input) => {
+    preparedRender = null;
+    if (runningRender) return { ok: false, code: 'batch_busy' };
+    if (!object(input) || input.approvedForRender !== true) return { ok: false, code: 'invalid_input' };
+    const selected = renderInput(projectDir, input);
+    if (!selected) return { ok: false, code: 'invalid_input' };
+    if (!renderAuthorized(projectDir)) return { ok: false, code: 'authorization_expired' };
+    preparedRender = selected;
+    return { ok: true, prepared: true };
   });
 
   handle(COMPOSITION_V1_CHANNELS.cancel, async (projectDir, input) => {

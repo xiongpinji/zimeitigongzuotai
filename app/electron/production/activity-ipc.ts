@@ -12,6 +12,7 @@ export function registerProductionActivityIpc(deps: {
   confirmRecordingImport: () => Promise<boolean>;
   confirmHighlightDetection: () => Promise<boolean>;
   confirmCompositionBuild: () => Promise<boolean>;
+  confirmRenderVariants: () => Promise<boolean>;
   onActivityChanged?: (projectDir: string) => void;
 }): void {
   function project(event: IpcMainInvokeEvent): string | null {
@@ -70,6 +71,15 @@ export function registerProductionActivityIpc(deps: {
     if (!await deps.confirmCompositionBuild()) return { ok: false, code: 'cancelled' };
     if (project(event) !== dir) return { ok: false, code: 'project_changed' };
     try { const status = deps.store.issueCompositionBuild(dir, 30); changed(dir); return { ok: true, status }; }
+    catch { return { ok: false, code: 'activity_store_unavailable' }; }
+  });
+  deps.ipc.handle('production-activity:issue-render-variants', async (event, durationMinutes: unknown) => {
+    const dir = project(event);
+    if (!dir) return { ok: false, code: 'project_unavailable' };
+    if (durationMinutes !== 30) return { ok: false, code: 'duration_invalid' };
+    if (!await deps.confirmRenderVariants()) return { ok: false, code: 'cancelled' };
+    if (project(event) !== dir) return { ok: false, code: 'project_changed' };
+    try { const status = deps.store.issueRenderVariants(dir, 30); changed(dir); return { ok: true, status }; }
     catch { return { ok: false, code: 'activity_store_unavailable' }; }
   });
   deps.ipc.handle('production-activity:revoke', (event) => {

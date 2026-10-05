@@ -58,6 +58,7 @@ describe('R4 composition workbench', () => {
       render: vi.fn(async () => ({ ok: true as const, batchId: 'batch-1',
         versions: versions.map((version) => ({ planId: version.planId, state: 'completed',
           reviewRequired: true, errorCode: null })) })),
+      prepareAgentRender: vi.fn(async () => ({ ok: true as const, prepared: true as const })),
       cancel: vi.fn(async () => ({ ok: true as const, cancelled: false })),
       analyze: vi.fn(async () => ({ ok: true as const, report })),
       review: vi.fn(async () => ({ ok: true as const, result: { planId: 'plan-1',
@@ -69,6 +70,10 @@ describe('R4 composition workbench', () => {
     await click('批量渲染');
     expect(api.render).toHaveBeenCalledWith({ batchId: 'batch-1', planIds: ['plan-1', 'plan-2', 'plan-3'],
       platform: 'douyin', region: 'cn', commercialShortVideo: true, resolution: '480p', quality: 'speed' });
+    await click('准备供智能体渲染一次');
+    expect(api.prepareAgentRender).toHaveBeenCalledWith({ batchId: 'batch-1',
+      planIds: ['plan-1', 'plan-2', 'plan-3'], platform: 'douyin', region: 'cn',
+      commercialShortVideo: true, resolution: '480p', quality: 'speed', approvedForRender: true });
     await click('分析相似度');
     expect(host?.textContent).toContain('相似度证据');
     expect(host?.textContent).toContain('不能推断平台原创认定');

@@ -108,6 +108,49 @@ afterEach(async () => {
 });
 
 describe('R4 recoverable version render batch', () => {
+  it('does not commit an Agent render when its grant is revoked during encoding', async () => {
+    const fx = fixture();
+    const records = await setupVersions(fx);
+    let authorized = true;
+    const render = vi.fn(async (args: { outputPath: string }) => {
+      await fs.writeFile(args.outputPath, 'synthetic-frame');
+      authorized = false;
+    });
+    const beforeCommit = () => {
+      if (!authorized) throw Object.assign(new Error('authorization_expired'), { code: 'authorization_expired' });
+    };
+    const service = createCompositionRenderBatch({ getDocument: async () => fx.document,
+      sourceServices: fx.sourceServices, render, nowIso: () => NOW });
+    const done = await service.run({ ...input(), beforeCommit });
+    expect(done.versions.every((version) => version.state === 'failed' &&
+      version.errorCode === 'authorization_expired')).toBe(true);
+    for (const record of records) {
+      expect((await fs.readdir(record.projectDir)).some((name) => /^render-[a-f0-9]{64}\.mp4$/.test(name)))
+        .toBe(false);
+    }
+  });
+
+  it('rolls back the output and completed state if the render grant expires at commit', async () => {
+    const fx = fixture();
+    const [record] = await setupVersions(fx);
+    let checks = 0;
+    const service = createCompositionRenderBatch({ getDocument: async () => fx.document,
+      sourceServices: fx.sourceServices,
+      render: async (args) => { await fs.writeFile(args.outputPath, 'synthetic-frame'); },
+      nowIso: () => NOW });
+    const done = await service.run({ ...input(), planIds: ['plan-1'], beforeCommit: () => {
+      checks += 1;
+      if (checks === 5) throw Object.assign(new Error('authorization_expired'),
+        { code: 'authorization_expired' });
+    } });
+    expect(checks).toBe(5);
+    expect(done.versions).toMatchObject([{ state: 'failed', errorCode: 'authorization_expired',
+      outputPath: null }]);
+    expect((await service.read({ projectDir, batchId: BATCH, planId: 'plan-1' }))?.state).toBe('failed');
+    expect((await fs.readdir(record.projectDir)).some((name) => /^render-[a-f0-9]{64}\.mp4$/.test(name)))
+      .toBe(false);
+  });
+
   it('renders three independent outputs with at most two active renders and isolates one failure', async () => {
     const fx = fixture();
     const records = await setupVersions(fx);

@@ -33,6 +33,9 @@ describe('智能体质检设置入口', () => {
         status: { active, expiresAtMs: Date.now() + 30 * 60_000,
           allowedActions: ['quality_check', 'search_authorized_assets', 'import_recordings',
             'detect_highlights', 'build_compositions'] } }; }),
+      issueRenderVariants: vi.fn(async () => { active = true; return { ok: true as const,
+        status: { active, expiresAtMs: Date.now() + 30 * 60_000,
+          allowedActions: ['quality_check', 'build_compositions', 'render_variants'] } }; }),
       revoke: vi.fn(async () => { active = false; return { ok: true as const, status: { active } }; }),
     };
     (window as unknown as { mcpAPI: unknown }).mcpAPI = {
@@ -63,6 +66,9 @@ describe('智能体质检设置入口', () => {
     await act(async () => { button('授权智能体混剪生成 30 分钟').click(); });
     expect(activityApi.issueCompositionBuild).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('混剪生成');
+    await act(async () => { button('授权智能体渲染 30 分钟').click(); });
+    expect(activityApi.issueRenderVariants).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('混剪生成与渲染');
     await act(async () => { button('撤销').click(); });
     expect(activityApi.revoke).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('当前未授权');

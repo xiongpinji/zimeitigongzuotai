@@ -43,6 +43,8 @@ export interface CompositionRenderBatchInput {
   exportConfig: ExportConfig;
   context: Omit<AssetUsageContext, 'usedAt'>;
   retryFailed?: boolean;
+  /** Owner-held Agent grant check. Re-evaluated after queue waits and before output commit. */
+  beforeCommit?: () => void;
 }
 
 export interface CompositionRenderBatchDeps {
@@ -176,6 +178,7 @@ const KNOWN_ERRORS = new Set([
   'invalid_timecode', 'asset_unavailable', 'rights_blocked', 'media_changed',
   'source_changed', 'input_changed', 'output_conflict', 'unsafe_output', 'unsafe_state',
   'corrupt_state', 'render_cancelled',
+  'authorization_expired',
 ]);
 const safeCode = (error: unknown) => {
   const code = (error as { code?: unknown })?.code;
@@ -197,6 +200,7 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
     let directory: string | null = null;
     let prior: CompositionRenderState | null = null;
     let pending: CompositionRenderState | null = null;
+    let linkedOutput: string | null = null;
     try {
       const record = await readCompositionVersion(location);
       directory = record.projectDir;
@@ -234,6 +238,7 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
         return result(planId, prior.state, null, prior.errorCode);
       }
       if (controller.signal.aborted) fail('render_cancelled');
+      input.beforeCommit?.();
       const attemptId = randomUUID();
       pending = {
         schemaVersion: 1, batchId: input.batchId, planId, state: 'queued', attemptId,
@@ -250,6 +255,7 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
         const latestSources = await verifySources();
         if (digestJson(sourceIdentity(latestSources)) !== sourceHash) fail('source_changed');
         if (controller.signal.aborted) fail('render_cancelled');
+        input.beforeCommit?.();
         pending = { ...pending, sources: latestSources, state: 'rendering', updatedAt: now() };
         await writeState(directory, pending);
         await render({ timeline: JSON.stringify(record.project.timeline), outputPath: tempFile,
@@ -257,20 +263,29 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
         if (controller.signal.aborted) fail('render_cancelled');
         const outputSha256 = await hashFile(tempFile);
         const outputFile = `render-${fingerprint}.mp4`;
-        if (await statOrNull(path.join(directory, outputFile))) fail('output_conflict');
-        await fs.link(tempFile, path.join(directory, outputFile));
+        const outputPath = path.join(directory, outputFile);
+        if (await statOrNull(outputPath)) fail('output_conflict');
+        input.beforeCommit?.();
+        await fs.link(tempFile, outputPath);
+        linkedOutput = outputPath;
+        input.beforeCommit?.();
         pending = { ...pending, state: 'completed', outputFile, outputSha256,
           errorCode: null, updatedAt: now() };
         await writeState(directory, pending);
+        input.beforeCommit?.();
+        linkedOutput = null;
         return result(planId, 'completed', path.join(directory, outputFile));
       } finally {
         try { await fs.rm(tempFile, { force: true }); }
         finally { release(); }
       }
     } catch (error) {
+      if (linkedOutput) {
+        await fs.rm(linkedOutput, { force: true }).catch(() => undefined);
+      }
       const code = controller.signal.aborted ? 'render_cancelled' : safeCode(error);
       const state = code === 'render_cancelled' ? 'cancelled' : 'failed';
-      if (directory && pending && pending.state !== 'completed') {
+      if (directory && pending && (pending.state !== 'completed' || linkedOutput)) {
         await writeState(directory, { ...pending, state, updatedAt: now(), errorCode: code })
           .catch(() => undefined);
       }

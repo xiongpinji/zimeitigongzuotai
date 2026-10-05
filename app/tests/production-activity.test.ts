@@ -136,4 +136,22 @@ describe('受信任生产活动授权', () => {
     expect(f.store.authorizeCompositionBuild(f.project)).toEqual({ allowed: false,
       reason: 'grant_missing' });
   });
+
+  it('成片渲染需要单独限时授权，生成授权不会隐式允许渲染', () => {
+    const f = fixture();
+    f.store.issueCompositionBuild(f.project, 30);
+    expect(f.store.authorizeRenderVariants(f.project)).toEqual({ allowed: false,
+      reason: 'action_not_allowed' });
+    expect(f.store.issueRenderVariants(f.project, 30).allowedActions).toContain('render_variants');
+    expect(f.reopen().authorizeRenderVariants(f.project)).toEqual({ allowed: true });
+    expect(f.store.authorizeRenderVariants(join(f.root, 'other'))).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    f.advance(30 * 60_000);
+    expect(f.store.authorizeRenderVariants(f.project)).toEqual({ allowed: false,
+      reason: 'grant_expired' });
+    f.store.issueRenderVariants(f.project, 30);
+    f.store.revoke(f.project);
+    expect(f.store.authorizeRenderVariants(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+  });
 });

@@ -4,7 +4,8 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { isAbsolute, join, resolve } from 'node:path';
 import { evaluateAgentProductionAction, type AgentActionGateDecision, type ProductionActivityGrantV1 } from './agent-action-gate';
 
-type ActivityAction = 'quality_check' | 'search_authorized_assets' | 'import_recordings' | 'detect_highlights' | 'build_compositions';
+type ActivityAction = 'quality_check' | 'search_authorized_assets' | 'import_recordings' |
+  'detect_highlights' | 'build_compositions' | 'render_variants';
 type AuditEntry = { atMs: number; projectId: string; action: ActivityAction; decision: 'allowed' | 'denied'; code?: string };
 type BoundRecording = { id: string; sourceSha256: string };
 type Snapshot = { version: 1; grants: Record<string, ProductionActivityGrantV1>; audit: AuditEntry[];
@@ -70,7 +71,7 @@ export class ProductionActivityStore {
       allowedActions: grant.allowedActions.filter((action) =>
         action === 'quality_check' || action === 'search_authorized_assets' ||
         action === 'import_recordings' || action === 'detect_highlights' ||
-        action === 'build_compositions') } : { active: false };
+        action === 'build_compositions' || action === 'render_variants') } : { active: false };
   }
 
   issueQualityCheck(projectDir: string, durationMinutes: number): ActivityStatus {
@@ -95,6 +96,12 @@ export class ProductionActivityStore {
     return this.issue(projectDir, durationMinutes,
       ['quality_check', 'search_authorized_assets', 'import_recordings',
         'detect_highlights', 'build_compositions']);
+  }
+
+  issueRenderVariants(projectDir: string, durationMinutes: number): ActivityStatus {
+    return this.issue(projectDir, durationMinutes,
+      ['quality_check', 'search_authorized_assets', 'import_recordings',
+        'detect_highlights', 'build_compositions', 'render_variants']);
   }
 
   private issue(projectDir: string, durationMinutes: number, allowedActions: ActivityAction[]): ActivityStatus {
@@ -134,6 +141,10 @@ export class ProductionActivityStore {
 
   authorizeCompositionBuild(projectDir: string): AgentActionGateDecision {
     return this.authorize(projectDir, 'build_compositions');
+  }
+
+  authorizeRenderVariants(projectDir: string): AgentActionGateDecision {
+    return this.authorize(projectDir, 'render_variants');
   }
 
   bindImportedRecordings(projectDir: string, tasks: BoundRecording[]): void {

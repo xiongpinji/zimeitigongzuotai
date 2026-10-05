@@ -30,6 +30,7 @@ describe('生产活动 IPC 主进程边界', () => {
       confirmRecordingImport: confirm,
       confirmHighlightDetection: confirm,
       confirmCompositionBuild: confirm,
+      confirmRenderVariants: confirm,
       onActivityChanged: onChanged,
     });
     const call = async (channel: string, event: unknown, input?: unknown) =>
@@ -77,6 +78,15 @@ describe('生产活动 IPC 主进程边界', () => {
       .toMatchObject({ ok: true, status: { allowedActions: [
         'quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights',
         'build_compositions',
+      ] } });
+    expect(await call('production-activity:issue-render-variants', other, 30))
+      .toEqual({ ok: false, code: 'project_unavailable' });
+    expect(await call('production-activity:issue-render-variants', owner, 60))
+      .toEqual({ ok: false, code: 'duration_invalid' });
+    expect(await call('production-activity:issue-render-variants', owner, 30))
+      .toMatchObject({ ok: true, status: { allowedActions: [
+        'quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights',
+        'build_compositions', 'render_variants',
       ] } });
     expect(await call('production-activity:revoke', other))
       .toEqual({ ok: false, code: 'project_unavailable' });

@@ -108,6 +108,15 @@ export function CompositionWorkbench({ active, projectDir, returnProjectDir,
     await refresh();
   });
 
+  const prepareAgentRender = () => action(async () => {
+    if (!api || !selected || !selected.context || selected.contextMismatch) return;
+    const result = await api.prepareAgentRender({ batchId: selected.batchId,
+      planIds: selected.versions.map((version) => version.planId),
+      ...selected.context, resolution: '480p', quality: 'speed', approvedForRender: true });
+    setMessage(result.ok ? '已为当前工程准备一次智能体渲染；生成成片后仍需人工审核。'
+      : ERROR_TEXT[result.code] ?? '准备渲染失败，请检查批次、素材与授权。');
+  });
+
   const create = () => action(async () => {
     if (!api || !approvedForModel || !selectedReceipts.length) return;
     const result = await api.create({ aspectRatio, platform, region,
@@ -262,6 +271,8 @@ export function CompositionWorkbench({ active, projectDir, returnProjectDir,
           {selected.contextMismatch && <span className={styles.warning}>版本用途不一致，请分别核对。</span>}
           <button type="button" disabled={busy || selected.versions.length < 3 || selected.contextMismatch}
             onClick={() => void render()}>批量渲染</button>
+          <button type="button" disabled={busy || selected.versions.length < 3 || selected.contextMismatch}
+            onClick={() => void prepareAgentRender()}>准备供智能体渲染一次</button>
           <button type="button" disabled={busy} onClick={() => void api?.cancel(selected.batchId).then(() => refresh())}>取消渲染</button>
           <button type="button" disabled={busy || selected.versions.length < 3}
             onClick={() => void analyze()}>分析相似度</button>
