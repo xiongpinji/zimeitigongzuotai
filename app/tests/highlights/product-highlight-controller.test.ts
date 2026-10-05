@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSingleInstanceGate } from '../../electron/single-instance-gate';
 import { bootstrapProductHighlights, type ProductHighlightRuntime } from '../../electron/highlights/product-highlight-bootstrap';
-import { ProductHighlightController } from '../../electron/highlights/product-highlight-controller';
+import { ProductHighlightController, prepareWindowsHotClipHome } from '../../electron/highlights/product-highlight-controller';
 
 const roots: string[] = [];
 const runtimes: ProductHighlightRuntime[] = [];
@@ -16,7 +16,7 @@ function fixture() {
   mkdirSync(mediaRootDir);
   const runtime = bootstrapProductHighlights(root);
   runtimes.push(runtime);
-  return { root, mediaRootDir, runtime, controller: new ProductHighlightController({ runtime, userDataPath: root }) };
+  return { root, mediaRootDir, runtime, controller: new ProductHighlightController({ runtime, userDataPath: root, modelAliasBaseDir: root }) };
 }
 
 function fakeConfig(root: string, mediaRootDir: string, script: string) {
@@ -65,6 +65,33 @@ afterEach(() => {
 });
 
 describe('product highlight controller (synthetic sidecar, no LLM call)', () => {
+  it.skipIf(process.platform !== 'win32')('gives the native ASR an ASCII junction while keeping model data in the project and reuses it', () => {
+    const { root } = fixture();
+    const physicalHome = join(root, '中文项目', 'highlights-v1', 'sidecar-home');
+    const aliasBase = join(root, 'ascii-aliases');
+    const first = prepareWindowsHotClipHome(physicalHome, aliasBase);
+    const second = prepareWindowsHotClipHome(physicalHome, aliasBase);
+    expect(second).toBe(first);
+    expect(/[^\x20-\x7e]/.test(first)).toBe(false);
+    expect(lstatSync(first).isSymbolicLink()).toBe(true);
+    expect(realpathSync.native(first)).toBe(realpathSync.native(physicalHome));
+    mkdirSync(join(first, 'hotclip', 'models'), { recursive: true });
+    writeFileSync(join(first, 'hotclip', 'models', 'tokens.txt'), 'test');
+    expect(readFileSync(join(physicalHome, 'hotclip', 'models', 'tokens.txt'), 'utf8')).toBe('test');
+  });
+
+  it.skipIf(process.platform !== 'win32')('refuses a pre-existing alias that resolves to a different directory', () => {
+    const { root } = fixture();
+    const physicalHome = join(root, '中文项目', 'sidecar-home');
+    const aliasBase = join(root, 'ascii-aliases');
+    const alias = prepareWindowsHotClipHome(physicalHome, aliasBase);
+    rmSync(alias);
+    mkdirSync(alias);
+    expect(() => prepareWindowsHotClipHome(physicalHome, aliasBase))
+      .toThrowError(expect.objectContaining({ code: 'model_path_unavailable' }));
+    expect(existsSync(physicalHome)).toBe(true);
+  });
+
   it('is retained by the owner main runtime before the first window and stopped before writer close', () => {
     const main = readFileSync(resolve(__dirname, '../../electron/main.ts'), 'utf8');
     const bootstrap = main.indexOf('productHighlights = bootstrapProductHighlights(');
@@ -99,7 +126,9 @@ describe('product highlight controller (synthetic sidecar, no LLM call)', () => 
     writeFileSync(first, 'synthetic-video-first', 'utf8');
     writeFileSync(second, 'synthetic-video-second', 'utf8');
     const script = join(root, 'fake-hotclip.cjs');
-    writeFileSync(script, `process.stdout.write(JSON.stringify([{id:'upstream-private',startSec:1,endSec:3,title:'Synthetic',hook:'Hook',score:0.8,reason:'Synthetic reason',recommended:true}]));`, 'utf8');
+    const homeReceipt = join(root, 'hotclip-home.txt');
+    writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(homeReceipt)}, process.env.${process.platform === 'win32' ? 'APPDATA' : 'XDG_CONFIG_HOME'});
+process.stdout.write(JSON.stringify([{id:'upstream-private',startSec:1,endSec:3,title:'Synthetic',hook:'Hook',score:0.8,reason:'Synthetic reason',recommended:true}]));`, 'utf8');
     const tasks = await controller.importRecordings({ mediaRootDir, videoPaths: [first, second], maxClips: 2 });
     expect(tasks).toHaveLength(2);
     expect(runtime.queue.list().map((task) => task.state)).toEqual(['queued', 'queued']);
@@ -108,6 +137,9 @@ describe('product highlight controller (synthetic sidecar, no LLM call)', () => 
     for (const task of completed) {
       expect(controller.readArtifact(task.id)).toMatchObject({ reviewRequired: true, taskId: task.id });
     }
+    const childHome = readFileSync(homeReceipt, 'utf8');
+    expect(realpathSync.native(childHome)).toBe(realpathSync.native(join(root, 'highlights-v1', 'sidecar-home')));
+    if (process.platform === 'win32') expect(/[^\x20-\x7e]/.test(childHome)).toBe(false);
     expect(readFileSync(join(root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain('SYNTHETIC-SECRET-DO-NOT-STORE');
   });
 
@@ -143,7 +175,7 @@ process.stdout.write(JSON.stringify([{id:1,startSec:1,endSec:3,title:'Synthetic'
     runtime.close();
     const next = bootstrapProductHighlights(root);
     runtimes.push(next);
-    const resumed = new ProductHighlightController({ runtime: next, userDataPath: root });
+    const resumed = new ProductHighlightController({ runtime: next, userDataPath: root, modelAliasBaseDir: root });
     await resumed.runQueued(fakeConfig(root, mediaRootDir, script));
     expect(next.queue.get(task.id)).toMatchObject({ state: 'completed',
       candidateIds: [expect.stringMatching(/^hcand_[a-f0-9]{64}$/)] });

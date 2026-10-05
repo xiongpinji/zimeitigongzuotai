@@ -1,5 +1,7 @@
 /** Explicit product operations over the owner-held highlight queue and artifact store. */
-import { lstatSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, mkdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { extname, isAbsolute, join } from 'node:path';
 import {
   importAuthorizedRecordings,
@@ -14,7 +16,7 @@ import { createAuthorizedLocalHotClipRunner } from './local-source-observer';
 import { verifyStoredSrt } from './authorized-subtitle-snapshot';
 import type { ProductHighlightRuntime } from './product-highlight-bootstrap';
 
-export type ProductHighlightControllerErrorCode = 'invalid_configuration' | 'busy' | 'stopped';
+export type ProductHighlightControllerErrorCode = 'invalid_configuration' | 'model_path_unavailable' | 'busy' | 'stopped';
 
 export class ProductHighlightControllerError extends Error {
   readonly code: ProductHighlightControllerErrorCode;
@@ -22,6 +24,7 @@ export class ProductHighlightControllerError extends Error {
   constructor(code: ProductHighlightControllerErrorCode) {
     super(code === 'invalid_configuration'
       ? 'Highlight execution configuration is invalid'
+      : code === 'model_path_unavailable' ? 'HotClip model path alias is unavailable'
       : code === 'busy' ? 'Highlight batch is already running' : 'Highlight controller is stopping');
     this.name = 'ProductHighlightControllerError';
     this.code = code;
@@ -63,6 +66,43 @@ function directory(path: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * sherpa-onnx opens model files through an ANSI native path on Windows. Its
+ * short-path fallback can fail when 8.3 names are disabled for Chinese parent
+ * directories. A persistent ASCII junction points at the isolated sidecar
+ * home, so the large models and caches remain in their configured data folder.
+ * Existing aliases are never removed or redirected.
+ */
+export function prepareWindowsHotClipHome(physicalHome: string, aliasBaseDir?: string): string {
+  if (process.platform !== 'win32') return physicalHome;
+  if (!isAbsolute(physicalHome)) throw new ProductHighlightControllerError('model_path_unavailable');
+  const aliasBase = aliasBaseDir ?? [process.env.LOCALAPPDATA, tmpdir()]
+    .find((candidate): candidate is string =>
+      typeof candidate === 'string' && isAbsolute(candidate) && !/[^\x20-\x7e]/.test(candidate));
+  if (!aliasBase || !isAbsolute(aliasBase) || /[^\x20-\x7e]/.test(aliasBase)) {
+    throw new ProductHighlightControllerError('model_path_unavailable');
+  }
+  try {
+    mkdirSync(physicalHome, { recursive: true });
+    const canonicalHome = realpathSync.native(physicalHome);
+    const digest = createHash('sha256').update(canonicalHome.toLowerCase()).digest('hex').slice(0, 24);
+    const aliases = join(aliasBase, 'LingjiHotClipHomes');
+    mkdirSync(aliases, { recursive: true });
+    const alias = join(aliases, `home-${digest}`);
+    try { symlinkSync(canonicalHome, alias, 'junction'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    if (!lstatSync(alias).isSymbolicLink() ||
+        realpathSync.native(alias).toLowerCase() !== canonicalHome.toLowerCase()) {
+      throw new ProductHighlightControllerError('model_path_unavailable');
+    }
+    return alias;
+  } catch {
+    throw new ProductHighlightControllerError('model_path_unavailable');
+  }
+}
+
 export function validateProductHighlightRunConfiguration(
   value: ProductHighlightRunConfiguration): ProductHighlightRunConfiguration {
   if (!value || typeof value !== 'object' ||
@@ -89,16 +129,18 @@ export function validateProductHighlightRunConfiguration(
 export class ProductHighlightController {
   private readonly runtime: ProductHighlightRuntime;
   private readonly sidecarHome: string;
+  private readonly modelAliasBaseDir: string | undefined;
   private readonly subtitleStoreDir: string;
   private activeScheduler: HighlightBatchScheduler | null = null;
   private importController: AbortController | null = null;
   private importPromise: Promise<HighlightBatchTaskV1[]> | null = null;
   private stopping = false;
 
-  constructor(options: { runtime: ProductHighlightRuntime; userDataPath: string }) {
+  constructor(options: { runtime: ProductHighlightRuntime; userDataPath: string; modelAliasBaseDir?: string }) {
     if (!options?.runtime || typeof options.userDataPath !== 'string' || !isAbsolute(options.userDataPath)) invalid();
     this.runtime = options.runtime;
     this.sidecarHome = join(options.userDataPath, 'highlights-v1', 'sidecar-home');
+    this.modelAliasBaseDir = options.modelAliasBaseDir;
     this.subtitleStoreDir = join(options.userDataPath, 'highlights-v1', 'subtitles');
   }
 
@@ -160,13 +202,14 @@ export class ProductHighlightController {
     if (this.stopping) throw new ProductHighlightControllerError('stopped');
     if (this.activeScheduler || this.importPromise) throw new ProductHighlightControllerError('busy');
     const config = validateProductHighlightRunConfiguration(raw);
+    const hotClipHome = prepareWindowsHotClipHome(this.sidecarHome, this.modelAliasBaseDir);
     const env: Record<string, string> = {
       HOTCLIP_LLM_BASE_URL: config.llmBaseUrl,
       HOTCLIP_LLM_MODEL: config.llmModel,
       ...(config.llmApiKey === undefined ? {} : { HOTCLIP_LLM_API_KEY: config.llmApiKey }),
       ...(process.platform === 'win32'
-        ? { APPDATA: this.sidecarHome }
-        : { XDG_CONFIG_HOME: this.sidecarHome }),
+        ? { APPDATA: hotClipHome }
+        : { XDG_CONFIG_HOME: hotClipHome }),
     };
     const runner = createAuthorizedLocalHotClipRunner({
       artifacts: this.runtime.artifacts,

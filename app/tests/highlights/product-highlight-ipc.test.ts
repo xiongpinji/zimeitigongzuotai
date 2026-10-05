@@ -30,7 +30,7 @@ function fixture() {
   writeFileSync(join(hotclip, 'src', 'cli', 'index.ts'), 'process.stdout.write("[]")');
   const runtime = bootstrapProductHighlights(root);
   runtimes.push(runtime);
-  const controller = new ProductHighlightController({ runtime, userDataPath: root });
+  const controller = new ProductHighlightController({ runtime, userDataPath: root, modelAliasBaseDir: root });
   const clipId = `hclip_${'c'.repeat(64)}`;
   const exporter = {
     exportBatch: vi.fn(async () => [{ status: 'completed', id: clipId,

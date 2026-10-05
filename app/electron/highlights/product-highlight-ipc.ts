@@ -32,6 +32,7 @@ export const HIGHLIGHT_V1_CHANNELS = {
 export type HighlightV1IpcErrorCode =
   | 'forbidden' | 'busy' | 'stopped' | 'invalid_request' | 'invalid_selection'
   | 'selection_required' | 'consent_required' | 'source_unavailable'
+  | 'model_path_unavailable'
   | 'root_mismatch' | 'authorization_expired' | 'project_changed'
   | 'recording_already_bound'
   | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error'

@@ -1,8 +1,8 @@
 /** Local-only product queue -> recovered task -> real HotClip CLI probe. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { readFileSync, mkdirSync, writeFileSync, existsSync, realpathSync, symlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { runSingleInstanceGate } from '../electron/single-instance-gate';
 import { bootstrapProductHighlights } from '../electron/highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from '../electron/highlights/product-highlight-controller';
@@ -31,10 +31,11 @@ async function main(): Promise<void> {
     join(hotclip, 'src', 'cli', 'index.ts')]) {
     assert.ok(existsSync(path), 'Local probe prerequisite is missing');
   }
-  const asrModelDir = process.env.LINGJI_ASR_MODELS_DIR;
-  if (asrMode) assert.ok(asrModelDir && isAbsolute(asrModelDir) &&
+  const asrModelDir = join(repo, 'data', 'runtime', 'validation',
+    'r3-asr-synthetic-2026-10-05', 'appdata', 'hotclip', 'models');
+  if (asrMode) assert.ok(
     existsSync(join(asrModelDir, 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17', 'tokens.txt')),
-  'ASCII model alias is unavailable');
+  'Previously downloaded local ASR model is unavailable');
   const tags = await fetch('http://127.0.0.1:11435/api/tags', {
     signal: AbortSignal.timeout(5_000),
   }).then((response) => response.json()) as { models: Array<{ name: string }> };
@@ -65,7 +66,9 @@ async function main(): Promise<void> {
     if (asrMode) {
       const settingsDir = join(runDir, 'highlights-v1', 'sidecar-home', 'hotclip');
       mkdirSync(settingsDir, { recursive: true });
-      writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ modelsDir: asrModelDir }));
+      const modelLink = join(settingsDir, 'models');
+      symlinkSync(asrModelDir, modelLink, 'junction');
+      assert.equal(realpathSync.native(modelLink), realpathSync.native(asrModelDir));
     }
     const started = Date.now();
     const config = {
