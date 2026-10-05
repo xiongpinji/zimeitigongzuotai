@@ -24,8 +24,11 @@ export type ProductionCompositionBuild = () => Promise<
   | { ok: true; batchId: string; planIds: string[] }
   | { ok: false; code: string }>;
 export type ProductionCompositionRender = () => Promise<
-  | { ok: true; batchId: string; versions: Array<{ planId: string; state: string;
-    reviewRequired: true; errorCode: string | null }> }
+  | { ok: true; batchId: string; planIds: string[]; status: 'running' }
+  | { ok: false; code: string }>;
+export type ProductionCompositionRenderStatus = (batchId: string, planIds: string[]) => Promise<
+  | { ok: true; batchId: string; jobStatus: string; errorCode: string | null;
+    versions: Array<{ planId: string; state: string; reviewRequired: true; errorCode: string | null }> }
   | { ok: false; code: string }>;
 const metadata = z.object({ title: z.string(), description: z.string(),
   tags: z.array(z.string()), coverRefs: z.array(z.string()),
@@ -54,7 +57,8 @@ export function registerProductionReadTools(server: McpServer,
   getCompositionBuild?: () => ProductionCompositionBuild | null,
   authorizeCompositionBuild?: () => AgentActionGateDecision,
   getCompositionRender?: () => ProductionCompositionRender | null,
-  authorizeCompositionRender?: () => AgentActionGateDecision): void {
+  authorizeCompositionRender?: () => AgentActionGateDecision,
+  getCompositionRenderStatus?: () => ProductionCompositionRenderStatus | null): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -173,7 +177,7 @@ export function registerProductionReadTools(server: McpServer,
 
   server.registerTool('lingji_production_render_variants', {
     title: '渲染桌面已准备的混剪版本',
-    description: '仅触发当前工程桌面端一次性准备的批次；不接收路径或模型密钥。成片仍需审核，不会登录或发布。需要单独限时渲染授权。',
+    description: '启动当前工程桌面端一次性准备的批次并立即返回版本 ID；用查看渲染状态工具轮询结果。成片仍需审核，不会登录或发布。需要单独限时渲染授权。',
     inputSchema: {},
   }, async () => {
     const first = authorizeCompositionRender?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
@@ -185,10 +189,32 @@ export function registerProductionReadTools(server: McpServer,
       const final = authorizeCompositionRender?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
       if (!final.allowed) return result({ code: final.reason }, true);
       if (!rendered.ok) return result({ code: rendered.code }, true);
-      return result({ batchId: rendered.batchId, versions: rendered.versions.map((version) => ({
-        planId: version.planId, state: version.state, reviewRequired: true,
-        errorCode: version.errorCode,
-      })) });
+      return result({ batchId: rendered.batchId, planIds: rendered.planIds, status: 'running',
+        reviewRequired: true });
+    } catch { return result({ code: 'internal_error' }, true); }
+  });
+
+  server.registerTool('lingji_production_get_render_status', {
+    title: '查看当前工程混剪渲染状态',
+    description: '按启动时返回的批次与版本 ID 读取持久渲染状态；只返回安全状态与错误码，不返回本地路径或媒体内容。需要当前工程的渲染授权。',
+    inputSchema: { batchId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/),
+      planIds: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/))
+        .min(3).max(12).refine((ids) => new Set(ids).size === ids.length) },
+  }, async ({ batchId, planIds }) => {
+    const first = authorizeCompositionRender?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+    if (!first.allowed) return result({ code: first.reason }, true);
+    const read = getCompositionRenderStatus?.();
+    if (!read) return result({ code: 'service_unavailable' }, true);
+    try {
+      const status = await read(batchId, planIds);
+      const final = authorizeCompositionRender?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+      if (!final.allowed) return result({ code: final.reason }, true);
+      if (!status.ok) return result({ code: status.code }, true);
+      return result({ batchId: status.batchId, jobStatus: status.jobStatus,
+        errorCode: status.errorCode, versions: status.versions.map((version) => ({
+          planId: version.planId, state: version.state, reviewRequired: true,
+          errorCode: version.errorCode,
+        })) });
     } catch { return result({ code: 'internal_error' }, true); }
   });
 }

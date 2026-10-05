@@ -128,7 +128,15 @@ async function writeState(directory: string, state: CompositionRenderState): Pro
     const handle = await fs.open(temporary, 'wx');
     try { await handle.writeFile(JSON.stringify(state, null, 2)); await handle.sync(); }
     finally { await handle.close(); }
-    await fs.rename(temporary, file);
+    // Windows can briefly deny replacement while a status reader has the old file open.
+    for (let attempt = 0; ; attempt += 1) {
+      try { await fs.rename(temporary, file); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= 7 || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+      }
+    }
     try {
       const directoryHandle = await fs.open(directory, 'r');
       try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
@@ -205,7 +213,7 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
       const record = await readCompositionVersion(location);
       directory = record.projectDir;
       prior = await readState(directory, input.batchId, planId);
-      if (prior?.state === 'rendering') {
+      if (prior?.state === 'rendering' || prior?.state === 'queued') {
         const unknown = { ...prior, state: 'unknown' as const, updatedAt: now(), errorCode: 'interrupted' };
         await writeState(directory, unknown);
         return result(planId, 'unknown', null, 'interrupted');
@@ -337,7 +345,7 @@ export function createCompositionRenderBatch(deps: CompositionRenderBatchDeps) {
           await hashFile(path.join(record.projectDir, state.outputFile!)) !== state.outputSha256) {
         fail('output_conflict');
       }
-      if (!state || state.state !== 'rendering') return state;
+      if (!state || (state.state !== 'queued' && state.state !== 'rendering')) return state;
       const key = `${batchKey(path.resolve(record.projectDir, '..', '..', '..'), location.batchId)}/${location.planId}`;
       if (activeVersions.has(key)) return state;
       const unknown = { ...state, state: 'unknown' as const, errorCode: 'interrupted', updatedAt: now() };

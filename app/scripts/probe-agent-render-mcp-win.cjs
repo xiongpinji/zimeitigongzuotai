@@ -51,11 +51,11 @@ function ffmpegRun(args) {
   assert.equal(result.status, 0, `Synthetic FFmpeg step failed: ${String(result.stderr).slice(-500)}`);
 }
 
-async function until(predicate, timeoutMs) {
+async function until(predicate, timeoutMs, intervalMs = 100) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
-    await pause(100);
+    await pause(intervalMs);
   }
   throw new Error('probe_condition_timeout');
 }
@@ -278,11 +278,32 @@ async function main() {
     });
     assert.deepEqual(prepared, { ok: true, prepared: true });
     phase = 'mcp-render';
+    const startedAt = Date.now();
     const invoked = await client.callTool({ name: 'lingji_production_render_variants', arguments: {} },
-      undefined, { timeout: 120_000 });
-    const rendered = mcpJson(invoked);
-    fs.writeFileSync(path.join(runDir, 'render-tool-result.json'), JSON.stringify(rendered, null, 2));
+      undefined, { timeout: 15_000 });
+    const started = mcpJson(invoked);
     assert.notEqual(invoked.isError, true);
+    assert.deepEqual(started, { batchId, planIds, status: 'running', reviewRequired: true });
+    const startLatencyMs = Date.now() - startedAt;
+    assert.ok(startLatencyMs < 15_000, 'MCP start must return within the normal tool timeout');
+    assert.ok(planIds.some((planId) => {
+      const statePath = path.join(projectPath, 'compositions', batchId, planId, 'render-state.json');
+      return !fs.existsSync(statePath) || JSON.parse(fs.readFileSync(statePath, 'utf8')).state !== 'completed';
+    }), 'MCP start must return before the whole batch finishes');
+    phase = 'mcp-poll';
+    let rendered;
+    await until(async () => {
+      const polled = await client.callTool({ name: 'lingji_production_get_render_status',
+        arguments: { batchId, planIds } }, undefined, { timeout: 15_000 });
+      rendered = mcpJson(polled);
+      assert.notEqual(polled.isError, true);
+      return rendered.jobStatus === 'failed' ||
+        (rendered.jobStatus === 'settled' &&
+          rendered.versions.every((item) => ['completed', 'failed', 'cancelled', 'unknown']
+            .includes(item.state)));
+    }, 120_000, 1_000);
+    fs.writeFileSync(path.join(runDir, 'render-tool-result.json'), JSON.stringify(rendered, null, 2));
+    assert.equal(rendered.jobStatus, 'settled');
     assert.equal(rendered.batchId, batchId);
     assert.deepEqual(rendered.versions.map((item) => item.planId), planIds);
     assert.deepEqual(rendered.versions.map((item) => item.state), ['completed', 'completed', 'completed']);
@@ -306,6 +327,7 @@ async function main() {
     const report = { probePassed: true, kind: 'synthetic_electron_mcp_render',
       sourceBuildSha256: sha256(mainPath), batchId, planIds, outputs,
       protectedFilesUnchanged: true, oneShotVerified: true,
+      mcpStartReturnedBeforeEncoding: true, statusPollingVerified: true, startLatencyMs,
       realDiscoveryMetadataUnchanged: true,
       realLoginAttempted: false, publicationAttempted: false, modelInvoked: false };
     assert.deepEqual(realDiscoveryMetadata(), discoveryBefore);

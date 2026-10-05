@@ -79,7 +79,8 @@ import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headle
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
 import type { ProductionRecordingImport, ProductionRecordingList,
-  ProductionHighlightDetection, ProductionCompositionBuild, ProductionCompositionRender } from './mcp/production-tools';
+  ProductionHighlightDetection, ProductionCompositionBuild, ProductionCompositionRender,
+  ProductionCompositionRenderStatus } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
 import { ProductionHighlightJobManager } from './production/highlight-job-manager';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
@@ -286,6 +287,8 @@ const buildProductionCompositions: ProductionCompositionBuild = async () =>
   preparedCompositionAgent?.build() ?? { ok: false, code: 'service_unavailable' };
 const renderProductionCompositions: ProductionCompositionRender = async () =>
   preparedCompositionAgent?.render() ?? { ok: false, code: 'service_unavailable' };
+const renderProductionCompositionStatus: ProductionCompositionRenderStatus = async (batchId, planIds) =>
+  preparedCompositionAgent?.renderStatus(batchId, planIds) ?? { ok: false, code: 'service_unavailable' };
 const detectProductionHighlights: ProductionHighlightDetection = async (taskIds) =>
   productionHighlightJobs?.start(taskIds) ?? { ok: false, code: 'service_unavailable' };
 const importProductionRecordings: ProductionRecordingImport = async (maxClips) => {
@@ -2946,7 +2949,7 @@ registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProd
   () => listProductionRecordings, () => detectProductionHighlights,
   authorizeProductionHighlightDetection, () => buildProductionCompositions,
   authorizeProductionCompositionBuild, () => renderProductionCompositions,
-  authorizeProductionCompositionRender);
+  authorizeProductionCompositionRender, () => renderProductionCompositionStatus);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -3297,7 +3300,8 @@ app.whenReady().then(async () => {
       authorizeProductionRecordingImport, () => listProductionRecordings,
       () => detectProductionHighlights, authorizeProductionHighlightDetection,
       () => buildProductionCompositions, authorizeProductionCompositionBuild,
-      () => renderProductionCompositions, authorizeProductionCompositionRender);
+      () => renderProductionCompositions, authorizeProductionCompositionRender,
+      () => renderProductionCompositionStatus);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

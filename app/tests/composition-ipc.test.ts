@@ -59,6 +59,41 @@ afterEach(async () => {
 });
 
 describe('R4 owner-window composition IPC', () => {
+  it('returns a render job before encoding finishes and exposes only safe polled state', async () => {
+    const fx = setup();
+    fx.setRenderAllowed(true);
+    const selection = { batchId: 'batch-1', planIds: ['plan-1', 'plan-2', 'plan-3'],
+      platform: 'douyin', region: 'cn', commercialShortVideo: false,
+      resolution: '480p', quality: 'speed', approvedForRender: true };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fx.run.mockImplementationOnce(async () => {
+      await held;
+      return { batchId: 'batch-1', versions: selection.planIds.map((planId) => ({
+        planId, state: 'completed', reviewRequired: true, outputPath: 'C:\\private\\render.mp4',
+        errorCode: null,
+      })) };
+    });
+    fx.read.mockImplementation(async (location) => ({
+      planId: location.planId, state: 'rendering', errorCode: null,
+      sources: { segments: [{ clip: { path: 'C:\\private\\source.mp4' } }] },
+    }));
+    expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentRender, selection))
+      .toEqual({ ok: true, prepared: true });
+    const pending = fx.bridge.render();
+    const started = await Promise.race([pending,
+      new Promise((resolve) => setTimeout(() => resolve('blocked'), 100))]);
+    release();
+    expect(started).toEqual({ ok: true, batchId: 'batch-1', planIds: selection.planIds,
+      status: 'running' });
+    const status = await fx.bridge.renderStatus('batch-1', selection.planIds);
+    expect(status).toMatchObject({ ok: true, batchId: 'batch-1',
+      versions: expect.arrayContaining([
+        expect.objectContaining({ planId: 'plan-1', state: 'rendering', reviewRequired: true }),
+      ]) });
+    expect(JSON.stringify(status)).not.toContain('private');
+  });
+
   it('renders only a one-shot desktop selection under the current project and render grant', async () => {
     const fx = setup();
     const selection = { batchId: 'batch-1', planIds: ['plan-1', 'plan-2', 'plan-3'],
@@ -79,15 +114,16 @@ describe('R4 owner-window composition IPC', () => {
     expect(await fx.bridge.render()).toEqual({ ok: false, code: 'not_prepared' });
     expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentRender, selection))
       .toEqual({ ok: true, prepared: true });
-    const completed = await fx.bridge.render();
-    expect(completed).toMatchObject({ ok: true, batchId: 'batch-1', versions: [
-      { planId: 'plan-1', state: 'completed', reviewRequired: true },
-    ] });
-    expect(JSON.stringify(completed)).not.toContain('private');
+    const started = await fx.bridge.render();
+    expect(started).toEqual({ ok: true, batchId: 'batch-1', planIds: selection.planIds,
+      status: 'running' });
+    expect(JSON.stringify(started)).not.toContain('private');
     expect(fx.run).toHaveBeenCalledWith(expect.objectContaining({
       projectDir, batchId: 'batch-1', planIds: selection.planIds,
       beforeCommit: expect.any(Function),
     }));
+    await vi.waitFor(async () => expect(await fx.bridge.renderStatus('batch-1', selection.planIds))
+      .toMatchObject({ ok: true, jobStatus: 'settled' }));
     expect(await fx.bridge.render()).toEqual({ ok: false, code: 'not_prepared' });
     expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentRender, selection))
       .toEqual({ ok: true, prepared: true });
@@ -96,8 +132,12 @@ describe('R4 owner-window composition IPC', () => {
       input.beforeCommit();
       return { batchId: 'batch-1', versions: [] };
     });
-    expect(await fx.bridge.render()).toEqual({ ok: false, code: 'authorization_expired' });
+    expect(await fx.bridge.render()).toMatchObject({ ok: true, status: 'running' });
+    await vi.waitFor(async () => expect(await fx.bridge.renderStatus('batch-1', selection.planIds))
+      .toEqual({ ok: false, code: 'authorization_expired' }));
     fx.setRenderAllowed(true);
+    await vi.waitFor(async () => expect(await fx.bridge.renderStatus('batch-1', selection.planIds))
+      .toMatchObject({ ok: true, jobStatus: 'failed', errorCode: 'authorization_expired' }));
     expect(await fx.call(COMPOSITION_V1_CHANNELS.prepareAgentRender, selection))
       .toEqual({ ok: true, prepared: true });
     let release!: () => void;
@@ -107,12 +147,13 @@ describe('R4 owner-window composition IPC', () => {
       input.beforeCommit();
       return { batchId: 'batch-1', versions: [] };
     });
-    const pending = fx.bridge.render();
+    const pending = await fx.bridge.render();
+    expect(pending).toMatchObject({ ok: true, status: 'running' });
     expect(await fx.bridge.render()).toEqual({ ok: false, code: 'batch_busy' });
     fx.bridge.clear();
     expect(fx.cancel).toHaveBeenCalledWith(projectDir, 'batch-1');
     release();
-    expect(await pending).toEqual({ ok: false, code: 'authorization_expired' });
+    await vi.waitFor(() => expect(fx.run).toHaveBeenCalled());
   });
 
   it('rejects every operation from another frame before calling services', async () => {

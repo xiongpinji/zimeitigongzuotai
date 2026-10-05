@@ -264,6 +264,7 @@ async function main() {
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
       ['lingji_production_build_compositions', 'lingji_production_detect_highlights',
+        'lingji_production_get_render_status',
         'lingji_production_import_recordings', 'lingji_production_list_drafts',
         'lingji_production_list_recordings',
         'lingji_production_preview_publish',

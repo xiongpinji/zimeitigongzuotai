@@ -158,30 +158,40 @@ describe('生产 MCP 质检门控', () => {
     const server = { registerTool: (name: string, _spec: unknown,
       handler: (args: unknown) => Promise<unknown>) => { handlers.set(name, handler); } };
     let allowed = false;
-    const render = vi.fn(async () => ({ ok: true as const, batchId: 'batch-1', versions: [{
-      planId: 'plan-1', state: 'completed', reviewRequired: true as const, errorCode: null,
-      outputPath: 'C:\\private\\render.mp4',
-    }] }));
+    const render = vi.fn(async () => ({ ok: true as const, batchId: 'batch-1',
+      planIds: ['plan-1', 'plan-2', 'plan-3'], status: 'running' as const }));
+    const status = vi.fn(async () => ({ ok: true as const, batchId: 'batch-1',
+      jobStatus: 'settled', errorCode: null, versions: [{
+        planId: 'plan-1', state: 'completed', reviewRequired: true as const, errorCode: null,
+        outputPath: 'C:\\private\\render.mp4',
+      }] }));
     registerProductionReadTools(server as never, () => null,
       () => ({ allowed: false, reason: 'grant_missing' }), () => null,
       () => ({ allowed: false, reason: 'grant_missing' }),
       () => null, () => ({ allowed: false, reason: 'grant_missing' }), () => null,
       () => null, () => ({ allowed: false, reason: 'grant_missing' }),
       () => null, () => ({ allowed: false, reason: 'grant_missing' }),
-      () => render, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' });
+      () => render, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' },
+      () => status);
     const call = () => handlers.get('lingji_production_render_variants')!({}) as
       Promise<{ isError?: boolean; content: { text: string }[] }>;
     expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
     expect(render).not.toHaveBeenCalled();
     allowed = true;
-    const completed = await call();
+    const started = await call();
+    expect(JSON.parse(started.content[0].text)).toEqual({ batchId: 'batch-1',
+      planIds: ['plan-1', 'plan-2', 'plan-3'], status: 'running', reviewRequired: true });
+    const poll = () => handlers.get('lingji_production_get_render_status')!({
+      batchId: 'batch-1', planIds: ['plan-1', 'plan-2', 'plan-3'],
+    }) as Promise<{ isError?: boolean; content: { text: string }[] }>;
+    const completed = await poll();
     expect(JSON.parse(completed.content[0].text)).toMatchObject({ batchId: 'batch-1', versions: [
       { planId: 'plan-1', state: 'completed', reviewRequired: true },
     ] });
     expect(completed.content[0].text).not.toContain('private');
-    render.mockImplementationOnce(async () => { allowed = false; return { ok: true as const,
-      batchId: 'secret-batch', versions: [] }; });
-    const revoked = await call();
+    status.mockImplementationOnce(async () => { allowed = false; return { ok: true as const,
+      batchId: 'secret-batch', jobStatus: 'settled', errorCode: null, versions: [] }; });
+    const revoked = await poll();
     expect(revoked.isError).toBe(true);
     expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
     expect(revoked.content[0].text).not.toContain('secret-batch');

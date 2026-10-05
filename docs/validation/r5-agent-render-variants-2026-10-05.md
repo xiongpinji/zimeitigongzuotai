@@ -11,3 +11,13 @@
 此探针的审核收据与版本计划由测试代码构造，三版各含约 1 秒合成画面；它证明真实桌面/MCP/渲染链贯通，不证明真实直播录屏的高光与叙事质量。分钟级长视频可能超过 MCP 客户端等待时间，尚未验证中途撤销的真实编码行为、跨进程结果查询或恢复，更不能替代真实录屏双人复核、四平台授权账号或最终发布结果。
 
 按照用户要求，本轮不制作安装包、不连接真实账号、不向平台发布。
+
+## 同日补测：启动即返回与持久状态查询
+
+生产 MCP 的 `lingji_production_render_variants` 现在只启动桌面已准备的一次性任务，立即返回批次和版本 ID；新增 `lingji_production_get_render_status` 按 ID 读取每版持久状态。两次工具调用都重核当前工程的限时渲染授权，状态响应仅含版本状态和安全错误码。这样较长的编码任务不再占用单次 MCP HTTP 调用；客户端仍须自行轮询，并在授权到期后重新由工程所有者授权。进程重启留下的 `queued` 或 `rendering` 状态会转为 `unknown/interrupted`，不会自动重试。
+
+首次端到端轮询出现部分版本 `render_failed`。隔离探针的临时诊断确认是 Windows 在状态读取同时短暂拒绝覆盖 `render-state.json`，报 `EPERM`；该诊断代码已移除。先加可复现的失败测试，再对状态文件原子替换增加有上限的短时重试。最终 23 个混剪/生产相关测试文件共 250 项通过，两套 TypeScript 类型检查与源码构建退出 0；`node scripts/smoke-production-mcp-win.cjs` 退出 0，旧编辑工具仍为 31 项，生产工具为 9 项，结果在忽略目录 `data/runtime/validation/r5-mcp-1791204742395/`。
+
+`node scripts/probe-agent-render-mcp-win.cjs` 连续两次退出 0，证据分别位于忽略目录 `data/runtime/validation/r5-agent-render-1791204677080/`、`data/runtime/validation/r5-agent-render-1791204970265/`。启动调用分别在 59 毫秒、82 毫秒返回，均早于全部编码完成；轮询后 3 个版本均为 `completed`，哈希各不相同且 FFmpeg 完整解码通过，一次性准备消费和原工程文件不变检查通过。两次探针共用同一源码构建，其 `app/dist-electron/main.js` SHA-256 为 `5d9a72c8b0c8c38f4c4dea0391dca7d280ec0e47e2298905727ef57f61f5cab9`。
+
+此轮只证明隔离合成短片的真实桌面/MCP/Remotion 路径。分钟级长视频、进程中断后的人工恢复流程、真实录屏审片和四平台最终状态仍未验收；没有打包、真号登录或发布。

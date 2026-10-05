@@ -108,6 +108,45 @@ afterEach(async () => {
 });
 
 describe('R4 recoverable version render batch', () => {
+  it('reconciles an abandoned queued state to unknown after process restart', async () => {
+    const fx = fixture();
+    const records = await setupVersions(fx);
+    const service = createCompositionRenderBatch({ getDocument: async () => fx.document,
+      sourceServices: fx.sourceServices,
+      render: async () => { throw new Error('encoder should not run'); }, nowIso: () => NOW });
+    await service.run(input());
+    const original = JSON.parse(await fs.readFile(path.join(records[0].projectDir, 'render-state.json'), 'utf8'));
+    await fs.writeFile(path.join(records[0].projectDir, 'render-state.json'),
+      JSON.stringify({ ...original, state: 'queued', errorCode: null }));
+    const recovered = await createCompositionRenderBatch({ getDocument: async () => fx.document,
+      sourceServices: fx.sourceServices, render: async () => undefined, nowIso: () => NOW })
+      .read({ projectDir, batchId: BATCH, planId: 'plan-1' });
+    expect(recovered).toMatchObject({ state: 'unknown', errorCode: 'interrupted' });
+  });
+
+  it('retries a transient Windows state replacement denial while status is being read', async () => {
+    const fx = fixture();
+    await setupVersions(fx);
+    const rename = fs.rename.bind(fs);
+    let denied = false;
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (source, destination) => {
+      if (!denied && path.basename(String(destination)) === 'render-state.json') {
+        denied = true;
+        throw Object.assign(new Error('synthetic open-file replacement denial'), { code: 'EPERM' });
+      }
+      return rename(source, destination);
+    });
+    try {
+      const service = createCompositionRenderBatch({ getDocument: async () => fx.document,
+        sourceServices: fx.sourceServices,
+        render: async (args) => { await fs.writeFile(args.outputPath, 'synthetic video'); },
+        nowIso: () => NOW });
+      const done = await service.run({ ...input(), planIds: ['plan-1'] });
+      expect(denied).toBe(true);
+      expect(done.versions).toMatchObject([{ state: 'completed', errorCode: null }]);
+    } finally { spy.mockRestore(); }
+  });
+
   it('does not commit an Agent render when its grant is revoked during encoding', async () => {
     const fx = fixture();
     const records = await setupVersions(fx);

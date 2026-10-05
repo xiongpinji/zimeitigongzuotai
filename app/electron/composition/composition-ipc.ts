@@ -58,6 +58,7 @@ const SAFE_CODES = new Set([
   'model_unavailable', 'invalid_model_output', 'insufficient_plans', 'duplicate_plans',
   'source_unavailable', 'duplicate_receipt', 'unsupported_voiceover',
   'authorization_expired',
+  'render_cancelled', 'interrupted',
 ]);
 
 function validId(value: unknown): value is string {
@@ -151,8 +152,12 @@ function renderInput(projectDir: string, input: unknown): CompositionRenderBatch
 
 export interface PreparedCompositionAgentBridge {
   build(): Promise<{ ok: true; batchId: string; planIds: string[] } | { ok: false; code: string }>;
-  render(): Promise<{ ok: true; batchId: string; versions: Array<{ planId: string; state: string;
-    reviewRequired: true; errorCode: string | null }> } | { ok: false; code: string }>;
+  render(): Promise<{ ok: true; batchId: string; planIds: string[]; status: 'running' } |
+    { ok: false; code: string }>;
+  renderStatus(batchId: string, planIds: string[]): Promise<{
+    ok: true; batchId: string; jobStatus: 'running' | 'settled' | 'failed' | 'unknown' | 'not_started';
+    errorCode: string | null; versions: Array<{ planId: string; state: string;
+      reviewRequired: true; errorCode: string | null }> } | { ok: false; code: string }>;
   clear(): void;
 }
 
@@ -162,6 +167,8 @@ export function registerCompositionIpc(options: CompositionIpcOptions): Prepared
   let running = false;
   let runningRender = false;
   let activeRender: { projectDir: string; batchId: string } | null = null;
+  let lastRender: { projectDir: string; batchId: string; planIds: string[];
+    status: 'running' | 'settled' | 'failed'; errorCode: string | null } | null = null;
   let generation = 0;
   const clear = () => {
     prepared = null; preparedRender = null; generation += 1;
@@ -189,15 +196,41 @@ export function registerCompositionIpc(options: CompositionIpcOptions): Prepared
       };
       runningRender = true;
       activeRender = { projectDir: input.projectDir, batchId: input.batchId };
+      const job = { projectDir: input.projectDir, batchId: input.batchId,
+        planIds: [...input.planIds], status: 'running' as 'running' | 'settled' | 'failed',
+        errorCode: null as string | null };
+      lastRender = job;
+      void Promise.resolve().then(() => options.renderBatch.run({ ...input, beforeCommit }))
+        .then(() => { beforeCommit(); job.status = 'settled'; })
+        .catch((error: unknown) => { job.status = 'failed'; job.errorCode = code(error); })
+        .finally(() => { runningRender = false; activeRender = null; });
+      return { ok: true, batchId: input.batchId, planIds: [...input.planIds], status: 'running' };
+    },
+    async renderStatus(batchId, planIds) {
+      if (!validId(batchId) || !ids(planIds)) return { ok: false, code: 'invalid_input' };
+      const projectDir = options.activeProjectDir();
+      if (!projectDir || !renderAuthorized(projectDir)) {
+        return { ok: false, code: 'authorization_expired' };
+      }
       try {
-        const done = await options.renderBatch.run({ ...input, beforeCommit });
-        beforeCommit();
-        return { ok: true, batchId: done.batchId, versions: done.versions.map((version) => ({
-          planId: version.planId, state: version.state, reviewRequired: true as const,
-          errorCode: version.errorCode && SAFE_CODES.has(version.errorCode) ? version.errorCode : null,
-        })) };
+        const states = await Promise.all(planIds.map((planId) => options.renderBatch.read({
+          projectDir, batchId, planId })));
+        if (options.activeProjectDir() !== projectDir || !renderAuthorized(projectDir)) {
+          return { ok: false, code: 'authorization_expired' };
+        }
+        const versions = states.map((state, index) => ({ planId: planIds[index],
+          state: state?.state ?? 'not_started', reviewRequired: true as const,
+          errorCode: state?.errorCode && SAFE_CODES.has(state.errorCode) ? state.errorCode : null }));
+        const latest = lastRender;
+        const job = latest?.projectDir === projectDir && latest.batchId === batchId &&
+          planIds.length === latest.planIds.length &&
+          planIds.every((id, index) => id === latest.planIds[index]) ? latest : null;
+        const jobStatus = job?.status ??
+          (states.every((state) => !state) ? 'not_started' :
+            states.every((state) => state && ['completed', 'failed', 'cancelled'].includes(state.state))
+              ? 'settled' : 'unknown');
+        return { ok: true, batchId, jobStatus, errorCode: job?.errorCode ?? null, versions };
       } catch (error) { return { ok: false, code: code(error) }; }
-      finally { runningRender = false; activeRender = null; }
     },
     async build() {
       if (running) return { ok: false, code: 'batch_busy' };

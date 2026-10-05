@@ -7,7 +7,7 @@ import { McpConfigManager, type McpAppType } from './config-manager';
 import { startMcpServer, stopMcpServer, getMcpServerStatus } from './server';
 import type { ProductionReadService, ProductionRecordingImport,
   ProductionRecordingList, ProductionHighlightDetection, ProductionCompositionBuild,
-  ProductionCompositionRender } from './production-tools';
+  ProductionCompositionRender, ProductionCompositionRenderStatus } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
 import type { ProductionAssetSearch } from '../production/asset-search';
 
@@ -30,7 +30,8 @@ export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
   getCompositionBuild?: () => ProductionCompositionBuild | null,
   authorizeCompositionBuild?: () => AgentActionGateDecision,
   getCompositionRender?: () => ProductionCompositionRender | null,
-  authorizeCompositionRender?: () => AgentActionGateDecision): void {
+  authorizeCompositionRender?: () => AgentActionGateDecision,
+  getCompositionRenderStatus?: () => ProductionCompositionRenderStatus | null): void {
   // ─── 服务管理 ───────────────────────────────────────────
   ipcMain.handle('mcp:get-status', () => {
     return getMcpServerStatus();
@@ -41,7 +42,7 @@ export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
       getAssetSearch, authorizeAssetSearch, getRecordingImport, authorizeRecordingImport,
       getRecordingList, getHighlightDetection, authorizeHighlightDetection,
       getCompositionBuild, authorizeCompositionBuild, getCompositionRender,
-      authorizeCompositionRender);
+      authorizeCompositionRender, getCompositionRenderStatus);
   });
 
   ipcMain.handle('mcp:stop', () => {
