@@ -29,7 +29,7 @@ export const HIGHLIGHT_V1_CHANNELS = {
 export type HighlightV1IpcErrorCode =
   | 'forbidden' | 'busy' | 'stopped' | 'invalid_request' | 'invalid_selection'
   | 'selection_required' | 'consent_required' | 'source_unavailable'
-  | 'root_mismatch'
+  | 'root_mismatch' | 'authorization_expired'
   | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error'
   | ReviewedClipErrorCode;
 export type HighlightV1Result<T> = ({ ok: true } & T) | { ok: false; code: HighlightV1IpcErrorCode };
@@ -66,6 +66,19 @@ export interface ProductHighlightIpcOptions {
   allowedSender(event: unknown): boolean;
   pickDirectory(title: string): Promise<DialogResult>;
   pickFiles(title: string, defaultPath?: string): Promise<DialogResult>;
+  activeProjectDir(): string | null;
+}
+export interface PreparedRecordingImportBridge {
+  importSelectedForAgent(projectDir: string, maxClips: number,
+    beforeEnqueue: () => boolean | Promise<boolean>): Promise<Array<{
+      id: string; sourceSha256: string; state: HighlightBatchTaskV1['state'] }>>;
+}
+
+class PreparedRecordingImportError extends Error {
+  constructor(readonly code: 'project_changed' | 'selection_required' | 'invalid_request') {
+    super(code);
+    this.name = 'PreparedRecordingImportError';
+  }
 }
 
 const TASK_ID_RE = /^hbatch_[a-f0-9]{64}$/;
@@ -132,14 +145,16 @@ function errorCode(error: unknown): HighlightV1IpcErrorCode {
 }
 
 /** The selected paths remain in main-process memory; renderer receives only bounded display DTOs. */
-export function registerProductHighlightIpc(options: ProductHighlightIpcOptions): void {
+export function registerProductHighlightIpc(options: ProductHighlightIpcOptions): PreparedRecordingImportBridge {
   const { ipc, controller, exporter } = options;
   let mediaRoot: string | null = null;
+  let selectionProject: string | null = null;
   let selectedRecordings: string[] = [];
   const selectedSubtitles = new Map<string, string>();
   let nodeExecutable: string | null = null;
   let hotClipDir: string | null = null;
   let choosing = false;
+  let selectionRevision = 0;
 
   function handle(channel: string, operation: (input: unknown) => Promise<unknown> | unknown): void {
     ipc.handle(channel, async (event, input) => {
@@ -159,18 +174,21 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   }
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseRoot, async () => {
+    selectionRevision += 1;
     const selected = await choose(() => options.pickDirectory('选择已授权直播录屏目录'));
     if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
     if (!selected) return { ok: false, code: 'selection_required' };
     const root = selected.filePaths.length === 1 ? selected.filePaths[0] : '';
     if (!isAbsolute(root) || !directory(root)) return { ok: false, code: 'invalid_selection' };
     mediaRoot = resolve(root);
+    selectionProject = options.activeProjectDir();
     selectedRecordings = [];
     selectedSubtitles.clear();
     return { ok: true, label: displayName(mediaRoot) };
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseRecordings, async () => {
+    selectionRevision += 1;
     if (!mediaRoot) return { ok: false, code: 'selection_required' };
     selectedRecordings = [];
     selectedSubtitles.clear();
@@ -189,6 +207,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseSubtitles, async () => {
+    selectionRevision += 1;
     if (!mediaRoot || !selectedRecordings.length) return { ok: false, code: 'selection_required' };
     selectedSubtitles.clear();
     const selected = await choose(() => options.pickFiles('选择与录屏同名的 SRT 字幕（可选）', mediaRoot!));
@@ -346,4 +365,34 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   handle(HIGHLIGHT_V1_CHANNELS.cancelExport, () => ({
     ok: true, cancelled: exporter.cancelActive(),
   }));
+
+  return {
+    async importSelectedForAgent(projectDir, maxClips, beforeEnqueue) {
+      if (typeof projectDir !== 'string' || !isAbsolute(projectDir) ||
+          !Number.isInteger(maxClips) || maxClips < 1 || maxClips > 12 ||
+          typeof beforeEnqueue !== 'function') throw new PreparedRecordingImportError('invalid_request');
+      if (!mediaRoot || !selectedRecordings.length) throw new PreparedRecordingImportError('selection_required');
+      const active = options.activeProjectDir();
+      if (!active || !selectionProject || pathKey(active) !== pathKey(projectDir) ||
+          pathKey(selectionProject) !== pathKey(projectDir)) {
+        throw new PreparedRecordingImportError('project_changed');
+      }
+      const root = mediaRoot;
+      const paths = selectedRecordings;
+      const subtitlePaths = paths.map((path) => selectedSubtitles.get(pathKey(path)) ?? null);
+      const revision = selectionRevision;
+      selectedRecordings = [];
+      selectedSubtitles.clear();
+      const tasks = await controller.importRecordings({ mediaRootDir: root,
+        videoPaths: paths, subtitlePaths, maxClips, beforeEnqueue: async () => {
+          const current = options.activeProjectDir();
+          if (selectionRevision !== revision || !current || pathKey(current) !== pathKey(projectDir)) return false;
+          const allowed = await beforeEnqueue();
+          const after = options.activeProjectDir();
+          return allowed === true && selectionRevision === revision && !!after &&
+            pathKey(after) === pathKey(projectDir);
+        } });
+      return tasks.map((task) => ({ id: task.id, sourceSha256: task.sourceSha256, state: task.state }));
+    },
+  };
 }

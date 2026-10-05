@@ -78,6 +78,7 @@ import { registerAgentIpc } from './acp/ipc';
 import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headless-provider';
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
+import type { ProductionRecordingImport } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
 import { registerProductionActivityIpc } from './production/activity-ipc';
@@ -90,7 +91,7 @@ import { registerProductPublishDraftIpc } from './publish/product-publish-drafts
 import { bootstrapProductHighlights } from './highlights/product-highlight-bootstrap';
 import { ProductHighlightController } from './highlights/product-highlight-controller';
 import { ReviewedClipExporter } from './highlights/reviewed-clip-exporter';
-import { registerProductHighlightIpc } from './highlights/product-highlight-ipc';
+import { registerProductHighlightIpc, type PreparedRecordingImportBridge } from './highlights/product-highlight-ipc';
 import { buildLiveCompositionDocument } from './composition/live-document';
 import { createCompositionRenderBatch } from './composition/render-batch';
 import { createCompositionReview } from './composition/review';
@@ -246,6 +247,7 @@ let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 let productPublishDraftService: ReturnType<typeof createProductPublishDraftService> | null = null;
 let productionActivityStore: ProductionActivityStore | null = null;
 let productionAssetSearch: ProductionAssetSearch | null = null;
+let preparedRecordingImport: PreparedRecordingImportBridge | null = null;
 function authorizeProductionQualityCheck() {
   const projectDir = getActiveProjectPath();
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
@@ -256,6 +258,36 @@ function authorizeProductionAssetSearch() {
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
   return productionActivityStore.authorizeAssetSearch(projectDir);
 }
+function authorizeProductionRecordingImport() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeRecordingImport(projectDir);
+}
+const importProductionRecordings: ProductionRecordingImport = async (maxClips) => {
+  const projectDir = getActiveProjectPath();
+  const store = productionActivityStore;
+  const bridge = preparedRecordingImport;
+  if (!projectDir || !store || !bridge) return { ok: false, code: 'service_unavailable' };
+  try {
+    const recordings = await bridge.importSelectedForAgent(projectDir, maxClips,
+      () => store.authorizeRecordingImport(projectDir).allowed);
+    const activeDir = getActiveProjectPath();
+    if (!activeDir || (process.platform === 'win32'
+      ? path.resolve(activeDir).toLowerCase() !== path.resolve(projectDir).toLowerCase()
+      : path.resolve(activeDir) !== path.resolve(projectDir))) {
+      return { ok: false, code: 'project_changed' };
+    }
+    store.bindImportedRecordings(projectDir, recordings);
+    return { ok: true, recordings };
+  } catch (error) {
+    const candidate = (error as { code?: unknown })?.code ??
+      (error instanceof Error ? error.message : null);
+    const code = ['project_changed', 'selection_required', 'invalid_request',
+      'authorization_expired', 'source_unavailable', 'busy', 'stopped'].includes(candidate as string)
+      ? candidate as string : 'internal_error';
+    return { ok: false, code };
+  }
+};
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
 let reviewedClipExporter: ReviewedClipExporter | null = null;
@@ -2864,7 +2896,8 @@ if (process.env.NODE_ENV_ELECTRON_VITE === 'development') {
 registerAgentIpc(() => mainWindow);
 registerConversationIpc(() => mainWindow);
 registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck,
-  () => productionAssetSearch, authorizeProductionAssetSearch);
+  () => productionAssetSearch, authorizeProductionAssetSearch,
+  () => importProductionRecordings, authorizeProductionRecordingImport);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -2914,6 +2947,16 @@ app.whenReady().then(async () => {
       });
       return response === 1;
     },
+    confirmRecordingImport: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体导入录屏',
+        message: '允许智能体在当前工程导入已选录屏、检索授权素材并执行发布配对预检？',
+        detail: '授权 30 分钟；录屏导入会计算文件哈希并写入高光待处理队列，不启动模型、不发布视频。可随时在设置中撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
   });
   let productCompositionReview: ReturnType<typeof createCompositionReview> | null = null;
   // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
@@ -2942,7 +2985,7 @@ app.whenReady().then(async () => {
       controller: productHighlightController,
       userDataPath: app.getPath('userData'), ffmpegPath, ffprobePath,
     });
-    registerProductHighlightIpc({
+    preparedRecordingImport = registerProductHighlightIpc({
       ipc: ipcMain,
       controller: productHighlightController,
       exporter: reviewedClipExporter,
@@ -2956,6 +2999,7 @@ app.whenReady().then(async () => {
       pickFiles: (title, defaultPath) => dialog.showOpenDialog({
         title, ...(defaultPath ? { defaultPath } : {}), properties: ['openFile', 'multiSelections'],
       }),
+      activeProjectDir: getActiveProjectPath,
     });
     const assetRoot = path.join(app.getPath('userData'), 'assets-v1');
     const assetLibrary = new LocalAssetLibrary({ rootDir: assetRoot, ffprobePath });
@@ -3149,7 +3193,8 @@ app.whenReady().then(async () => {
   try {
     await startMcpServer(19820, () => mainWindow, () => productPublishDraftService,
       authorizeProductionQualityCheck, () => productionAssetSearch,
-      authorizeProductionAssetSearch);
+      authorizeProductionAssetSearch, () => importProductionRecordings,
+      authorizeProductionRecordingImport);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

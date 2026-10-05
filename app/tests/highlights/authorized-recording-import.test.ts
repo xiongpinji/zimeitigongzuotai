@@ -193,4 +193,15 @@ describe('authorized local recording batch import', () => {
     );
     expect(queue.list()).toEqual([]);
   });
+
+  it('rechecks a trusted authorization after hashing and before the atomic queue write', async () => {
+    const { mediaRootDir, queue } = fixture();
+    const path = file(mediaRootDir, 'a.mp4', 'synthetic-video');
+    await expectImportError(() => importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [path], beforeEnqueue: async () => false }), 'authorization_expired');
+    expect(queue.list()).toEqual([]);
+    const tasks = await importAuthorizedRecordings({ queue, mediaRootDir,
+      videoPaths: [path], beforeEnqueue: async () => true });
+    expect(tasks).toHaveLength(1);
+  });
 });

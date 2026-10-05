@@ -14,7 +14,7 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   '.m4v': 'video/x-m4v',
 };
 
-export type AuthorizedRecordingImportErrorCode = 'invalid_request' | 'source_unavailable';
+export type AuthorizedRecordingImportErrorCode = 'invalid_request' | 'source_unavailable' | 'authorization_expired';
 
 export class AuthorizedRecordingImportError extends Error {
   readonly code: AuthorizedRecordingImportErrorCode;
@@ -22,7 +22,8 @@ export class AuthorizedRecordingImportError extends Error {
   constructor(code: AuthorizedRecordingImportErrorCode) {
     super(code === 'invalid_request'
       ? 'Authorized recording import request is invalid'
-      : 'Authorized recording source could not be verified');
+      : code === 'authorization_expired' ? 'Recording import authorization expired'
+        : 'Authorized recording source could not be verified');
     this.name = 'AuthorizedRecordingImportError';
     this.code = code;
   }
@@ -39,6 +40,8 @@ export interface AuthorizedRecordingImportOptions {
   subtitleStoreDir?: string;
   maxClips?: number | null;
   signal?: AbortSignal;
+  /** Trusted main-process recheck after hashing, immediately before queue mutation. */
+  beforeEnqueue?: () => boolean | Promise<boolean>;
 }
 
 /**
@@ -140,6 +143,13 @@ export async function importAuthorizedRecordings(
       observedSourceSha256: sourceSha256,
       options: { maxClips: options.maxClips ?? null },
     });
+  }
+  if (signal.aborted) throw new AuthorizedRecordingImportError('source_unavailable');
+  if (options.beforeEnqueue) {
+    let allowed = false;
+    try { allowed = await options.beforeEnqueue() === true; }
+    catch { /* A failed authorization store read must fail closed. */ }
+    if (!allowed) throw new AuthorizedRecordingImportError('authorization_expired');
   }
   if (signal.aborted) throw new AuthorizedRecordingImportError('source_unavailable');
   return options.queue.enqueueBatch(inputs);

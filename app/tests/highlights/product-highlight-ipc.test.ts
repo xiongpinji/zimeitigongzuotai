@@ -50,20 +50,23 @@ function fixture() {
       handlers.set(channel, handler);
     },
   };
-  registerProductHighlightIpc({
+  let activeProject = join(root, 'project-a');
+  const bridge = registerProductHighlightIpc({
     ipc,
     controller,
     exporter: exporter as unknown as ReviewedClipExporter,
     allowedSender: (event) => event === 'owner',
     pickDirectory: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
     pickFiles: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
+    activeProjectDir: () => activeProject,
   });
   const invoke = (channel: string, input?: unknown, sender: unknown = 'owner') => {
     const handler = handlers.get(channel);
     if (!handler) throw new Error(`Missing test channel ${channel}`);
     return handler(sender, input);
   };
-  return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller, exporter, clipId };
+  return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller, exporter, clipId,
+    bridge, setActiveProject: (value: string) => { activeProject = value; } };
 }
 
 beforeEach(async () => {
@@ -116,6 +119,37 @@ describe('owner-only highlight IPC', () => {
     expect(listed).toMatchObject({ ok: true, tasks: [{ name: 'session.mp4', state: 'queued' }] });
     expect(JSON.stringify(listed)).not.toContain(source);
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.import)).toEqual({ ok: false, code: 'selection_required' });
+  });
+
+  it('agent import consumes only files selected for the active project and rechecks authorization before queue write', async () => {
+    const f = fixture();
+    const projectA = join(f.root, 'project-a');
+    const projectB = join(f.root, 'project-b');
+    f.choices.push([f.media], [f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    f.setActiveProject(projectB);
+    await expect(f.bridge.importSelectedForAgent(projectA, 2, () => true))
+      .rejects.toMatchObject({ code: 'project_changed' });
+    f.setActiveProject(projectA);
+    await expect(f.bridge.importSelectedForAgent(projectA, 2, () => false))
+      .rejects.toMatchObject({ code: 'authorization_expired' });
+    expect(f.controller.list()).toEqual([]);
+    f.choices.push([f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    await expect(f.bridge.importSelectedForAgent(projectA, 2, () => {
+      f.setActiveProject(projectB);
+      return true;
+    })).rejects.toMatchObject({ code: 'authorization_expired' });
+    expect(f.controller.list()).toEqual([]);
+    f.setActiveProject(projectA);
+    f.choices.push([f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await f.bridge.importSelectedForAgent(projectA, 2, () => true);
+    expect(imported).toMatchObject([{ id: expect.stringMatching(/^hbatch_/), state: 'queued' }]);
+    expect(JSON.stringify(imported)).not.toContain(f.source);
+    await expect(f.bridge.importSelectedForAgent(projectA, 2, () => true))
+      .rejects.toMatchObject({ code: 'selection_required' });
   });
 
   it('pairs explicitly selected same-name SRT files without exposing paths to the renderer', async () => {

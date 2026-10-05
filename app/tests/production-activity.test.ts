@@ -63,4 +63,24 @@ describe('受信任生产活动授权', () => {
     expect(f.store.authorizeAssetSearch(f.project)).toEqual({ allowed: false,
       reason: 'grant_missing' });
   });
+
+  it('录屏导入授权独立于质检，绑定的任务只对选定工程可见并可重启恢复', () => {
+    const f = fixture();
+    const taskId = `hbatch_${'a'.repeat(64)}`;
+    const sourceSha256 = 'b'.repeat(64);
+    f.store.issueAnalysis(f.project, 30);
+    expect(f.store.authorizeRecordingImport(f.project)).toEqual({ allowed: false,
+      reason: 'action_not_allowed' });
+    expect(f.store.issueRecordingImport(f.project, 30)).toMatchObject({ active: true,
+      allowedActions: ['quality_check', 'search_authorized_assets', 'import_recordings'] });
+    expect(f.store.authorizeRecordingImport(f.project)).toEqual({ allowed: true });
+    f.store.bindImportedRecordings(f.project, [{ id: taskId, sourceSha256 }]);
+    expect(f.reopen().boundRecordings(f.project)).toEqual([{ id: taskId, sourceSha256 }]);
+    expect(f.store.boundRecordings(join(f.root, 'other'))).toEqual([]);
+    expect(readFileSync(join(f.root, 'state', 'activities.json'), 'utf8')).not.toContain(f.project);
+    f.store.revoke(f.project);
+    expect(f.store.authorizeRecordingImport(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    expect(f.store.boundRecordings(f.project)).toEqual([{ id: taskId, sourceSha256 }]);
+  });
 });

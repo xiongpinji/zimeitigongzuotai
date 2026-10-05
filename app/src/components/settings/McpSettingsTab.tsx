@@ -50,13 +50,15 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
     }
   }, []);
 
-  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'revoke') => {
+  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'recordings' | 'revoke') => {
     setActivityBusy(true);
     try {
       setActivity(action === 'issue'
         ? await window.productionActivityAPI.issueQualityCheck()
         : action === 'analysis'
           ? await window.productionActivityAPI.issueAnalysis()
+          : action === 'recordings'
+            ? await window.productionActivityAPI.issueRecordingImport()
           : await window.productionActivityAPI.revoke());
     } finally { setActivityBusy(false); }
   }, []);
@@ -139,14 +141,16 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
           <h2 className={styles.sectionTitle}>智能体分析授权</h2>
         </div>
         <p className={styles.sectionDesc}>
-          可单独授权预检，或授权预检加已授权素材检索。此授权不允许登录或发布。
+          可授权预检、素材检索，或导入当前工程通过文件选择器选中的录屏。此授权不允许登录或发布。
         </p>
         <div className={styles.statusRow}>
           <span className={styles.statusText}>
             {activity?.ok && activity.status.active
               ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}（${
-                activity.status.allowedActions?.includes('search_authorized_assets')
-                  ? '质检与素材检索' : '仅质检'}）`
+                activity.status.allowedActions?.includes('import_recordings')
+                  ? '质检、素材检索与录屏导入'
+                  : activity.status.allowedActions?.includes('search_authorized_assets')
+                    ? '质检与素材检索' : '仅质检'}）`
               : activity && !activity.ok && activity.code === 'project_unavailable'
                 ? '请先打开工程'
                 : activity && !activity.ok && activity.code !== 'cancelled'
@@ -157,6 +161,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
             onClick={() => updateActivity('issue')}>授权 30 分钟</Button>
           <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
             onClick={() => updateActivity('analysis')}>授权素材检索与质检 30 分钟</Button>
+          <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
+            onClick={() => updateActivity('recordings')}>授权录屏导入与分析 30 分钟</Button>
           <Button type="button" variant="destructive" size="sm" disabled={activityBusy || !(activity?.ok && activity.status.active)}
             onClick={() => updateActivity('revoke')}>撤销</Button>
         </div>

@@ -53,4 +53,28 @@ describe('生产 MCP 质检门控', () => {
     expect(revoked.content[0].text).not.toContain('secret-id');
     expect(search).toHaveBeenCalledTimes(1);
   });
+
+  it('录屏导入工具只接收数量参数，授权撤销后拒绝并隐藏队列结果', async () => {
+    const handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+    const server = { registerTool: (name: string, _spec: unknown,
+      handler: (args: unknown) => Promise<unknown>) => { handlers.set(name, handler); } };
+    let allowed = false;
+    const importer = vi.fn(async () => {
+      allowed = false;
+      return { ok: true as const, recordings: [{ id: 'private-task', sourceSha256: 'a'.repeat(64), state: 'queued' }] };
+    });
+    registerProductionReadTools(server as never, () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }),
+      () => importer, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' });
+    const call = () => handlers.get('lingji_production_import_recordings')!({ maxClips: 2 }) as
+      Promise<{ isError?: boolean; content: { text: string }[] }>;
+    expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(importer).not.toHaveBeenCalled();
+    allowed = true;
+    const revoked = await call();
+    expect(revoked.isError).toBe(true);
+    expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(revoked.content[0].text).not.toContain('private-task');
+  });
 });

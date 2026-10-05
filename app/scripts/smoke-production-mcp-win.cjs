@@ -1,5 +1,5 @@
 // Real local MCP protocol + source-build desktop probe with synthetic project data.
-// Verifies the legacy surface and the separate authenticated read-only production surface.
+// Verifies the legacy surface and a separately authenticated, activity-gated production surface.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -263,7 +263,8 @@ async function main() {
     phase = 'production-tools';
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
-      ['lingji_production_list_drafts', 'lingji_production_preview_publish',
+      ['lingji_production_import_recordings', 'lingji_production_list_drafts',
+        'lingji_production_preview_publish',
         'lingji_production_search_authorized_assets']);
     phase = 'production-list';
     const listedDrafts = parseResult(await productionClient.callTool({
@@ -289,6 +290,13 @@ async function main() {
     assert.equal(searchBefore.isError, true);
     assert.deepEqual(JSON.parse(searchBefore.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
+    const importInput = { maxClips: 2 };
+    const importBefore = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.equal(importBefore.isError, true);
+    assert.deepEqual(JSON.parse(importBefore.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
     phase = 'production-activity-issue';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
       { ok: true, status: { active: false } });
@@ -304,6 +312,11 @@ async function main() {
     }, undefined, { timeout: 15_000 });
     assert.equal(searchQualityOnly.isError, true);
     assert.deepEqual(JSON.parse(searchQualityOnly.content.find((item) => item.type === 'text').text),
+      { code: 'action_not_allowed' });
+    const importQualityOnly = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(importQualityOnly.content.find((item) => item.type === 'text').text),
       { code: 'action_not_allowed' });
     phase = 'production-activity-allowed';
     const allowedPreview = await productionClient.callTool({
@@ -326,6 +339,45 @@ async function main() {
       name: 'lingji_production_search_authorized_assets', arguments: searchInput,
     }, undefined, { timeout: 15_000 }));
     assert.deepEqual(emptySearch, { status: 'no_eligible_assets', assets: [] });
+    const importAnalysisOnly = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(importAnalysisOnly.content.find((item) => item.type === 'text').text),
+      { code: 'action_not_allowed' });
+    phase = 'production-import-issue';
+    const importGrant = await page.evaluate(() => window.productionActivityAPI.issueRecordingImport());
+    assert.equal(importGrant.ok, true);
+    assert.deepEqual(importGrant.status.allowedActions,
+      ['quality_check', 'search_authorized_assets', 'import_recordings']);
+    const missingSelection = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(missingSelection.content.find((item) => item.type === 'text').text),
+      { code: 'selection_required' });
+    const mediaDir = path.join(runDir, 'synthetic-recordings');
+    const recordingFile = path.join(mediaDir, 'synthetic-session.mp4');
+    fs.mkdirSync(mediaDir, { recursive: true });
+    fs.writeFileSync(recordingFile, 'synthetic authorized recording bytes');
+    await electronApp.evaluate(({ dialog }, selection) => {
+      const files = [selection.mediaDir, selection.recordingFile];
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [files.shift()] });
+    }, { mediaDir, recordingFile });
+    phase = 'production-import-selection';
+    assert.equal((await page.evaluate(() => window.highlightV1API.chooseRoot())).ok, true);
+    assert.equal((await page.evaluate(() => window.highlightV1API.chooseRecordings())).ok, true);
+    phase = 'production-import-allowed';
+    const imported = parseResult(await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 }));
+    assert.equal(imported.recordings.length, 1);
+    assert.match(imported.recordings[0].id, /^hbatch_[a-f0-9]{64}$/);
+    assert.equal(imported.recordings[0].state, 'queued');
+    assert.equal(JSON.stringify(imported).includes(recordingFile), false);
+    const importedAgain = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(importedAgain.content.find((item) => item.type === 'text').text),
+      { code: 'selection_required' });
     phase = 'production-activity-revoke';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.revoke()),
       { ok: true, status: { active: false } });
@@ -344,9 +396,16 @@ async function main() {
     assert.equal(searchRevoked.isError, true);
     assert.deepEqual(JSON.parse(searchRevoked.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
+    const importRevoked = await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(importRevoked.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
     const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
     assert.equal(activities.includes(projectPath), false);
     assert.ok(activities.includes('quality_check'));
+    assert.ok(activities.includes(imported.recordings[0].id));
+    assert.equal(activities.includes(recordingFile), false);
     assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: path.join(runDir, 'project-opened.png') });
     const productionIdFields = ['recordingIds', 'highlightId', 'compositionPlanId', 'videoVariantId', 'activityGrantId', 'accountIds'];
@@ -361,6 +420,7 @@ async function main() {
       createProject: true, openProject: true, activeProject: true, editorIpcRoundTrip: true,
       authenticatedProductionRead: true, productionToolNames: productionTools.tools.map((tool) => tool.name),
       simulatedNativeConfirmation: true, activityIssuePreviewRevoke: true,
+      syntheticRecordingImport: true,
       projectState: state, editorState, taskList: tasks, pageErrors,
       productionAcceptanceTested: false, realLoginAttempted: false,
       publicationAttempted: false, modelInvoked: false, mediaEncoded: false,

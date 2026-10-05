@@ -9,6 +9,7 @@ export function registerProductionActivityIpc(deps: {
   allowedSender: (event: IpcMainInvokeEvent) => boolean;
   confirmIssue: () => Promise<boolean>;
   confirmAnalysis: () => Promise<boolean>;
+  confirmRecordingImport: () => Promise<boolean>;
 }): void {
   function project(event: IpcMainInvokeEvent): string | null {
     return deps.allowedSender(event) ? deps.activeProjectDir() : null;
@@ -36,6 +37,15 @@ export function registerProductionActivityIpc(deps: {
     if (!await deps.confirmAnalysis()) return { ok: false, code: 'cancelled' };
     if (project(event) !== dir) return { ok: false, code: 'project_changed' };
     try { return { ok: true, status: deps.store.issueAnalysis(dir, 30) }; }
+    catch { return { ok: false, code: 'activity_store_unavailable' }; }
+  });
+  deps.ipc.handle('production-activity:issue-recording-import', async (event, durationMinutes: unknown) => {
+    const dir = project(event);
+    if (!dir) return { ok: false, code: 'project_unavailable' };
+    if (durationMinutes !== 30) return { ok: false, code: 'duration_invalid' };
+    if (!await deps.confirmRecordingImport()) return { ok: false, code: 'cancelled' };
+    if (project(event) !== dir) return { ok: false, code: 'project_changed' };
+    try { return { ok: true, status: deps.store.issueRecordingImport(dir, 30) }; }
     catch { return { ok: false, code: 'activity_store_unavailable' }; }
   });
   deps.ipc.handle('production-activity:revoke', (event) => {

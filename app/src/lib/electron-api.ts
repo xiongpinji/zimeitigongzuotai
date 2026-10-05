@@ -942,6 +942,7 @@ export interface ProductionActivityAPI {
   status(): Promise<ProductionActivityResult>;
   issueQualityCheck(): Promise<ProductionActivityResult>;
   issueAnalysis(): Promise<ProductionActivityResult>;
+  issueRecordingImport(): Promise<ProductionActivityResult>;
   revoke(): Promise<ProductionActivityResult>;
 }
 
