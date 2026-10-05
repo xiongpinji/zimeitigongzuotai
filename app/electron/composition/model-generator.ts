@@ -6,10 +6,10 @@ import type { CompositionProposalBrief } from './plan-proposals';
 
 const SYSTEM = `你是短视频剪辑策划。只返回一个严格 JSON 对象，形如 {"plans":[...]}, 不要 Markdown。
 生成恰好三份不同中心问题、不同证据组织方式的独立叙事候选，不可只换标题、封面、BGM 或随机改顺序。
-每份 plan 仅包含 narrativeSummary、voiceoverKind="original-audio"、aspectRatio、editorial、segments。
+每份 plan 顶层只能有 narrativeSummary、voiceoverKind="original-audio"、aspectRatio、editorial、segments 这五个字段。plan 顶层绝不能有 visualLayer。
 editorial 必须有 targetAudience、centralQuestion、openingClaim、endingMessage。
 每个 segment 必须有 description、source:{kind:"highlight",sourceId,inMs,outMs}、editorial:{narrativeRole,visualIntent,audioIntent}。
-可选 visualLayer 必须为 {assetId,sourceInMs,startAtMs,durationMs,purpose}，只能引用输入 assets 中的 id。
+可选 visualLayer 只能放在某个 segment 内，且必须是单个对象 {assetId,sourceInMs,startAtMs,durationMs,purpose}，绝不能在 plan 顶层，也不能是数组；只能引用输入 assets 中的 id。
 只可引用输入提供的高光 ID 和绝对毫秒时间码；不得虚构素材、商品事实、人物承诺或权利信息。
 候选不是原创判定或发布许可，后续仍需人工审阅。`;
 
