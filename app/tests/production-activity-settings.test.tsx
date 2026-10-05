@@ -26,6 +26,9 @@ describe('智能体质检设置入口', () => {
       issueRecordingImport: vi.fn(async () => { active = true; return { ok: true as const,
         status: { active, expiresAtMs: Date.now() + 30 * 60_000,
           allowedActions: ['quality_check', 'search_authorized_assets', 'import_recordings'] } }; }),
+      issueHighlightDetection: vi.fn(async () => { active = true; return { ok: true as const,
+        status: { active, expiresAtMs: Date.now() + 30 * 60_000,
+          allowedActions: ['quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights'] } }; }),
       revoke: vi.fn(async () => { active = false; return { ok: true as const, status: { active } }; }),
     };
     (window as unknown as { mcpAPI: unknown }).mcpAPI = {
@@ -50,6 +53,9 @@ describe('智能体质检设置入口', () => {
     await act(async () => { button('授权录屏导入与分析 30 分钟').click(); });
     expect(activityApi.issueRecordingImport).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('录屏导入');
+    await act(async () => { button('授权智能体高光检测 30 分钟').click(); });
+    expect(activityApi.issueHighlightDetection).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('高光检测');
     await act(async () => { button('撤销').click(); });
     expect(activityApi.revoke).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('当前未授权');

@@ -102,4 +102,30 @@ describe('生产 MCP 质检门控', () => {
     expect(revoked.isError).toBe(true);
     expect(revoked.content[0].text).not.toContain('private-task');
   });
+
+  it('智能体高光执行只接受绑定任务 ID，未授权与执行中撤销都拒绝', async () => {
+    const handlers = new Map<string, (args: unknown) => Promise<unknown>>();
+    const server = { registerTool: (name: string, _spec: unknown,
+      handler: (args: unknown) => Promise<unknown>) => { handlers.set(name, handler); } };
+    let allowed = false;
+    const taskId = `hbatch_${'a'.repeat(64)}`;
+    const start = vi.fn(async () => {
+      allowed = false;
+      return { ok: true as const, startedIds: [taskId] };
+    });
+    registerProductionReadTools(server as never, () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }),
+      () => null, () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => start, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' });
+    const call = () => handlers.get('lingji_production_detect_highlights')!({ taskIds: [taskId] }) as
+      Promise<{ isError?: boolean; content: { text: string }[] }>;
+    expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(start).not.toHaveBeenCalled();
+    allowed = true;
+    const revoked = await call();
+    expect(revoked.isError).toBe(true);
+    expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(revoked.content[0].text).not.toContain(taskId);
+  });
 });

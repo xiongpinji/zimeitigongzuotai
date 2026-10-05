@@ -63,7 +63,8 @@ function directory(path: string): boolean {
   } catch { return false; }
 }
 
-function validateRunConfiguration(value: ProductHighlightRunConfiguration): ProductHighlightRunConfiguration {
+export function validateProductHighlightRunConfiguration(
+  value: ProductHighlightRunConfiguration): ProductHighlightRunConfiguration {
   if (!value || typeof value !== 'object' ||
       typeof value.mediaRootDir !== 'string' || !isAbsolute(value.mediaRootDir) || !directory(value.mediaRootDir) ||
       typeof value.executable !== 'string' || !isAbsolute(value.executable) || !regularFile(value.executable) ||
@@ -158,7 +159,7 @@ export class ProductHighlightController {
     taskIds: readonly string[] | null): Promise<HighlightBatchTaskV1[]> {
     if (this.stopping) throw new ProductHighlightControllerError('stopped');
     if (this.activeScheduler || this.importPromise) throw new ProductHighlightControllerError('busy');
-    const config = validateRunConfiguration(raw);
+    const config = validateProductHighlightRunConfiguration(raw);
     const env: Record<string, string> = {
       HOTCLIP_LLM_BASE_URL: config.llmBaseUrl,
       HOTCLIP_LLM_MODEL: config.llmModel,

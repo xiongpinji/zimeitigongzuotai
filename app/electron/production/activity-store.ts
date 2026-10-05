@@ -4,7 +4,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { isAbsolute, join, resolve } from 'node:path';
 import { evaluateAgentProductionAction, type AgentActionGateDecision, type ProductionActivityGrantV1 } from './agent-action-gate';
 
-type ActivityAction = 'quality_check' | 'search_authorized_assets' | 'import_recordings';
+type ActivityAction = 'quality_check' | 'search_authorized_assets' | 'import_recordings' | 'detect_highlights';
 type AuditEntry = { atMs: number; projectId: string; action: ActivityAction; decision: 'allowed' | 'denied'; code?: string };
 type BoundRecording = { id: string; sourceSha256: string };
 type Snapshot = { version: 1; grants: Record<string, ProductionActivityGrantV1>; audit: AuditEntry[];
@@ -69,7 +69,7 @@ export class ProductionActivityStore {
     return decision.allowed ? { active: true, expiresAtMs: grant.expiresAtMs,
       allowedActions: grant.allowedActions.filter((action) =>
         action === 'quality_check' || action === 'search_authorized_assets' ||
-        action === 'import_recordings') } : { active: false };
+        action === 'import_recordings' || action === 'detect_highlights') } : { active: false };
   }
 
   issueQualityCheck(projectDir: string, durationMinutes: number): ActivityStatus {
@@ -83,6 +83,11 @@ export class ProductionActivityStore {
   issueRecordingImport(projectDir: string, durationMinutes: number): ActivityStatus {
     return this.issue(projectDir, durationMinutes,
       ['quality_check', 'search_authorized_assets', 'import_recordings']);
+  }
+
+  issueHighlightDetection(projectDir: string, durationMinutes: number): ActivityStatus {
+    return this.issue(projectDir, durationMinutes,
+      ['quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights']);
   }
 
   private issue(projectDir: string, durationMinutes: number, allowedActions: ActivityAction[]): ActivityStatus {
@@ -114,6 +119,10 @@ export class ProductionActivityStore {
 
   authorizeRecordingImport(projectDir: string): AgentActionGateDecision {
     return this.authorize(projectDir, 'import_recordings');
+  }
+
+  authorizeHighlightDetection(projectDir: string): AgentActionGateDecision {
+    return this.authorize(projectDir, 'detect_highlights');
   }
 
   bindImportedRecordings(projectDir: string, tasks: BoundRecording[]): void {

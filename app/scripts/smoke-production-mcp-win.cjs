@@ -263,7 +263,8 @@ async function main() {
     phase = 'production-tools';
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
-      ['lingji_production_import_recordings', 'lingji_production_list_drafts',
+      ['lingji_production_detect_highlights',
+        'lingji_production_import_recordings', 'lingji_production_list_drafts',
         'lingji_production_list_recordings',
         'lingji_production_preview_publish',
         'lingji_production_search_authorized_assets']);
@@ -302,6 +303,12 @@ async function main() {
       name: 'lingji_production_list_recordings', arguments: {},
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(listBefore.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const detectInput = { taskIds: [`hbatch_${'a'.repeat(64)}`] };
+    const detectBefore = await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: detectInput,
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(detectBefore.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     phase = 'production-activity-issue';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
@@ -393,9 +400,105 @@ async function main() {
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(importedAgain.content.find((item) => item.type === 'text').text),
       { code: 'selection_required' });
+    phase = 'production-highlight-grant';
+    const detectImportOnly = await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: { taskIds: [imported.recordings[0].id] },
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(detectImportOnly.content.find((item) => item.type === 'text').text),
+      { code: 'action_not_allowed' });
+    const detectionGrant = await page.evaluate(() => window.productionActivityAPI.issueHighlightDetection());
+    assert.equal(detectionGrant.ok, true);
+    assert.equal(detectionGrant.status.allowedActions.includes('detect_highlights'), true);
+    const detectUnprepared = await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: { taskIds: [imported.recordings[0].id] },
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(detectUnprepared.content.find((item) => item.type === 'text').text),
+      { code: 'selection_required' });
+    const fakeHotClip = path.join(runDir, 'fake-hotclip');
+    fs.mkdirSync(path.join(fakeHotClip, 'src', 'cli'), { recursive: true });
+    fs.mkdirSync(path.join(fakeHotClip, 'node_modules'), { recursive: true });
+    const localTsx = path.join(repoRoot, 'data', 'tools', 'hotclip', 'node_modules', 'tsx');
+    assert.equal(fs.existsSync(path.join(localTsx, 'package.json')), true,
+      'The ignored local HotClip tsx runtime is required for synthetic dispatch');
+    fs.symlinkSync(localTsx, path.join(fakeHotClip, 'node_modules', 'tsx'), 'junction');
+    fs.writeFileSync(path.join(fakeHotClip, 'src', 'cli', 'index.ts'),
+      'process.stdout.write("[]")');
+    await electronApp.evaluate(({ dialog }, selected) => {
+      const files = [selected.node, selected.hotclip];
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [files.shift()] });
+    }, { node: process.execPath, hotclip: fakeHotClip });
+    assert.equal((await page.evaluate(() => window.highlightV1API.chooseNode())).ok, true);
+    assert.equal((await page.evaluate(() => window.highlightV1API.chooseHotClip())).ok, true);
+    phase = 'production-highlight-prepared';
+    const prepared = await page.evaluate(() => window.highlightV1API.prepareAgentRun({
+      llmBaseUrl: 'http://127.0.0.1:11435/v1', llmModel: 'synthetic-offline',
+      llmApiKey: 'PRIVATE-PROBE-KEY', timeoutMs: 10_000,
+      concurrency: 1, maxAttempts: 1, allowModelDownload: true,
+    }));
+    assert.deepEqual(prepared, { ok: true, ready: true });
+    assert.equal(JSON.stringify(prepared).includes('PRIVATE-PROBE-KEY'), false);
+    phase = 'production-highlight-dispatch';
+    const detectionStarted = parseResult(await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: { taskIds: [imported.recordings[0].id] },
+    }, undefined, { timeout: 15_000 }));
+    assert.deepEqual(detectionStarted, { startedIds: [imported.recordings[0].id] });
+    let detectedStatus;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      detectedStatus = parseResult(await productionClient.callTool({
+        name: 'lingji_production_list_recordings', arguments: {},
+      }, undefined, { timeout: 15_000 }));
+      if (detectedStatus.recordings[0]?.state !== 'queued' &&
+          detectedStatus.recordings[0]?.state !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.equal(detectedStatus.recordings[0].state, 'completed');
+    assert.equal(detectedStatus.recordings[0].candidateCount, 0);
+    phase = 'production-highlight-revoke-running';
+    const secondFile = path.join(mediaDir, 'synthetic-session-2.mp4');
+    fs.writeFileSync(secondFile, 'second synthetic authorized recording bytes');
+    await electronApp.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected.file] });
+    }, { file: secondFile });
+    assert.equal((await page.evaluate(() => window.highlightV1API.chooseRecordings())).ok, true);
+    const secondImport = parseResult(await productionClient.callTool({
+      name: 'lingji_production_import_recordings', arguments: importInput,
+    }, undefined, { timeout: 15_000 }));
+    assert.equal(secondImport.recordings.length, 1);
+    const pidFile = path.join(runDir, 'hanging-sidecar.pid');
+    fs.writeFileSync(path.join(fakeHotClip, 'src', 'cli', 'index.ts'),
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`);
+    assert.deepEqual(await page.evaluate(() => window.highlightV1API.prepareAgentRun({
+      llmBaseUrl: 'http://127.0.0.1:11435/v1', llmModel: 'synthetic-offline',
+      timeoutMs: 30_000, concurrency: 1, maxAttempts: 1, allowModelDownload: true,
+    })), { ok: true, ready: true });
+    const secondStarted = parseResult(await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: { taskIds: [secondImport.recordings[0].id] },
+    }, undefined, { timeout: 15_000 }));
+    assert.deepEqual(secondStarted, { startedIds: [secondImport.recordings[0].id] });
+    for (let attempt = 0; attempt < 40 && !fs.existsSync(pidFile); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.equal(fs.existsSync(pidFile), true, 'Synthetic sidecar did not start');
+    const sidecarPid = Number(fs.readFileSync(pidFile, 'utf8'));
     phase = 'production-activity-revoke';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.revoke()),
       { ok: true, status: { active: false } });
+    let cancelled = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const status = await page.evaluate(() => window.highlightV1API.list());
+      cancelled = status.ok && status.tasks.some((task) =>
+        task.id === secondImport.recordings[0].id && task.state === 'cancelled');
+      if (cancelled) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.equal(cancelled, true, 'Revoked Agent run remained active');
+    let sidecarGone = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try { process.kill(sidecarPid, 0); }
+      catch (error) { if (error.code === 'ESRCH') { sidecarGone = true; break; } }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.equal(sidecarGone, true, 'Revoked synthetic sidecar remained alive');
     const revokedPreview = await productionClient.callTool({
       name: 'lingji_production_preview_publish', arguments: { assignments: [{
         accountId: 'missing-account', batchId: 'batch-1', planId: 'plan-1',
@@ -421,11 +524,17 @@ async function main() {
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(listRevoked.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
+    const detectRevoked = await productionClient.callTool({
+      name: 'lingji_production_detect_highlights', arguments: { taskIds: [imported.recordings[0].id] },
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(detectRevoked.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
     const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
     assert.equal(activities.includes(projectPath), false);
     assert.ok(activities.includes('quality_check'));
     assert.ok(activities.includes(imported.recordings[0].id));
     assert.equal(activities.includes(recordingFile), false);
+    assert.equal(activities.includes('PRIVATE-PROBE-KEY'), false);
     assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: path.join(runDir, 'project-opened.png') });
     const productionIdFields = ['recordingIds', 'highlightId', 'compositionPlanId', 'videoVariantId', 'activityGrantId', 'accountIds'];
@@ -441,6 +550,9 @@ async function main() {
       authenticatedProductionRead: true, productionToolNames: productionTools.tools.map((tool) => tool.name),
       simulatedNativeConfirmation: true, activityIssuePreviewRevoke: true,
       syntheticRecordingImport: true,
+      preparedHighlightDetection: true,
+      syntheticHighlightDispatch: true,
+      syntheticRevocationCancelledRun: true,
       projectState: state, editorState, taskList: tasks, pageErrors,
       productionAcceptanceTested: false, realLoginAttempted: false,
       publicationAttempted: false, modelInvoked: false, mediaEncoded: false,

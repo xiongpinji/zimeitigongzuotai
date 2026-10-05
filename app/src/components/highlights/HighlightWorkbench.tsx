@@ -12,6 +12,8 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_selection: '所选文件不符合要求，请重新选择。',
   selection_required: '请先完成对应的文件选择。',
   consent_required: '运行前请确认本地模型下载许可。',
+  authorization_expired: '请先在设置中授权智能体高光检测。',
+  project_changed: '当前工程已变化，请重新选择和准备参数。',
   source_unavailable: '录屏源文件已变化或无法读取，请重新选择。',
   root_mismatch: '排队任务包含其他目录的录屏。请先选择原目录，或取消这些任务。',
   review_required: '请先人工审核并确认所选片段。',
@@ -148,6 +150,24 @@ export function HighlightWorkbench({ active, onImportClip }: {
       await refresh();
     } catch { setMessage('运行失败，请检查本地运行环境。'); }
     finally { setRunInProgress(false); setAllowModelDownload(false); }
+  }
+
+  async function prepareAgentRun() {
+    if (!api) return;
+    setActionBusy(true);
+    setMessage('');
+    try {
+      const result = await api.prepareAgentRun({
+        llmBaseUrl: llmBaseUrl.trim(), llmModel: llmModel.trim(),
+        ...(llmApiKey ? { llmApiKey } : {}),
+        timeoutMs: timeoutMinutes * 60_000, concurrency, maxAttempts,
+        allowModelDownload,
+      });
+      setMessage(result.ok
+        ? '已为当前工程准备一次智能体高光分析；只会处理当前工程已绑定的指定任务。'
+        : ERROR_TEXT[result.code] || '准备高光参数失败。');
+    } catch { setMessage('准备高光参数失败。'); }
+    finally { setActionBusy(false); }
   }
 
   async function taskAction(operation: () => Promise<HighlightV1Result<unknown>>) {
@@ -330,6 +350,9 @@ export function HighlightWorkbench({ active, onImportClip }: {
             允许本次运行按需下载本地模型</label>
           <button type="button" data-testid="run-highlights" className={styles.primary} disabled={!canRun}
             onClick={() => void run()}>运行排队任务</button>
+          <button type="button" disabled={!canRun || actionBusy}
+            onClick={() => void prepareAgentRun()}>准备智能体高光参数</button>
+          <p>智能体运行前，还需在设置中授权高光检测 30 分钟；模型配置仅用于当前会话。</p>
         </section>
 
         <section className={styles.card}>

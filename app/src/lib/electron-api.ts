@@ -857,6 +857,7 @@ export interface HighlightV1API {
   cancel(id: string): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
   retry(id: string, maxAttempts: number): Promise<HighlightV1Result<{ task: HighlightV1TaskDto }>>;
   run(input: HighlightV1RunInput): Promise<HighlightV1Result<{ tasks: HighlightV1TaskDto[] }>>;
+  prepareAgentRun(input: HighlightV1RunInput): Promise<HighlightV1Result<{ ready: true }>>;
   exportReviewed(input: { reviewConfirmed: boolean; selections: ReviewedClipSelection[]; concurrency: 1 | 2 }):
     Promise<HighlightV1Result<{ results: Array<Omit<Extract<ReviewedClipExportResult, { status: 'completed' }>, 'outputPath'> |
       Extract<ReviewedClipExportResult, { status: 'failed' | 'cancelled' }>> }>>;
@@ -943,6 +944,7 @@ export interface ProductionActivityAPI {
   issueQualityCheck(): Promise<ProductionActivityResult>;
   issueAnalysis(): Promise<ProductionActivityResult>;
   issueRecordingImport(): Promise<ProductionActivityResult>;
+  issueHighlightDetection(): Promise<ProductionActivityResult>;
   revoke(): Promise<ProductionActivityResult>;
 }
 

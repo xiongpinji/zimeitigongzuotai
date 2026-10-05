@@ -17,6 +17,7 @@ describe('生产活动 IPC 主进程边界', () => {
     let active = join(root, 'project-a');
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
     const confirm = vi.fn(async () => false);
+    const onChanged = vi.fn();
     registerProductionActivityIpc({
       ipc: { handle: (channel: string, callback: (event: unknown, input?: unknown) => unknown) => {
         handlers.set(channel, callback);
@@ -27,6 +28,8 @@ describe('生产活动 IPC 主进程边界', () => {
       confirmIssue: confirm,
       confirmAnalysis: confirm,
       confirmRecordingImport: confirm,
+      confirmHighlightDetection: confirm,
+      onActivityChanged: onChanged,
     });
     const call = async (channel: string, event: unknown, input?: unknown) =>
       handlers.get(channel)!(event, input);
@@ -57,9 +60,18 @@ describe('生产活动 IPC 主进程边界', () => {
       .toMatchObject({ ok: true, status: { allowedActions: [
         'quality_check', 'search_authorized_assets', 'import_recordings',
       ] } });
+    expect(await call('production-activity:issue-highlight-detection', other, 30))
+      .toEqual({ ok: false, code: 'project_unavailable' });
+    expect(await call('production-activity:issue-highlight-detection', owner, 60))
+      .toEqual({ ok: false, code: 'duration_invalid' });
+    expect(await call('production-activity:issue-highlight-detection', owner, 30))
+      .toMatchObject({ ok: true, status: { allowedActions: [
+        'quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights',
+      ] } });
     expect(await call('production-activity:revoke', other))
       .toEqual({ ok: false, code: 'project_unavailable' });
     expect(await call('production-activity:revoke', owner))
       .toEqual({ ok: true, status: { active: false } });
+    expect(onChanged).toHaveBeenCalledWith(active);
   });
 });

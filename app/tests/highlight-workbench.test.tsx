@@ -54,6 +54,7 @@ describe('highlight workbench', () => {
         tasks = [{ ...task, state: 'completed' as const, candidateCount: 1 }];
         return { ok: true as const, tasks };
       }),
+      prepareAgentRun: vi.fn(async () => ({ ok: true as const, ready: true as const })),
       read: vi.fn(async () => ({ ok: true as const, artifact: {
         taskId: task.id, attempt: 1, candidateIds: ['c'], highlightIds: ['h'],
         reviewRequired: true as const,
@@ -96,6 +97,9 @@ describe('highlight workbench', () => {
     const consent = host?.querySelector('[aria-label="允许本次运行下载本地模型"]') as HTMLInputElement;
     await act(async () => { consent.click(); });
     expect((host?.querySelector('[data-testid="run-highlights"]') as HTMLButtonElement).disabled).toBe(false);
+    await click('准备智能体高光参数');
+    expect(api.prepareAgentRun).toHaveBeenCalledOnce();
+    expect(host?.textContent).toContain('已为当前工程准备一次智能体高光分析');
     await click('运行排队任务');
     expect(api.run).toHaveBeenCalledOnce();
     await click('查看候选');

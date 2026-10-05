@@ -17,7 +17,8 @@ import { getOrCreateSonarToken } from '../sonar/token';
 import { handleSonarHttp, isSonarPath } from '../sonar/routes';
 import { authorizeProductionMcpRequest } from './production-auth';
 import { registerProductionReadTools, type ProductionReadService,
-  type ProductionRecordingImport, type ProductionRecordingList } from './production-tools';
+  type ProductionRecordingImport, type ProductionRecordingList,
+  type ProductionHighlightDetection } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
 import type { ProductionAssetSearch } from '../production/asset-search';
 
@@ -32,6 +33,8 @@ let authorizeAssetSearchFn: (() => AgentActionGateDecision) | null = null;
 let getRecordingImportFn: (() => ProductionRecordingImport | null) | null = null;
 let authorizeRecordingImportFn: (() => AgentActionGateDecision) | null = null;
 let getRecordingListFn: (() => ProductionRecordingList | null) | null = null;
+let getHighlightDetectionFn: (() => ProductionHighlightDetection | null) | null = null;
+let authorizeHighlightDetectionFn: (() => AgentActionGateDecision) | null = null;
 let productionToken = '';
 const PRODUCTION_TOKEN_FILE = join(homedir(), '.lingji', 'production-mcp-token');
 
@@ -65,7 +68,9 @@ function createSessionServer(production: boolean): McpServer {
     () => authorizeAssetSearchFn?.() ?? { allowed: false, reason: 'grant_missing' },
     () => getRecordingImportFn?.() ?? null,
     () => authorizeRecordingImportFn?.() ?? { allowed: false, reason: 'grant_missing' },
-    () => getRecordingListFn?.() ?? null);
+    () => getRecordingListFn?.() ?? null,
+    () => getHighlightDetectionFn?.() ?? null,
+    () => authorizeHighlightDetectionFn?.() ?? { allowed: false, reason: 'grant_missing' });
   else registerTools(server, getMainWindowFn!);
   return server;
 }
@@ -125,6 +130,8 @@ export async function startMcpServer(
   getRecordingImport?: () => ProductionRecordingImport | null,
   authorizeRecordingImport?: () => AgentActionGateDecision,
   getRecordingList?: () => ProductionRecordingList | null,
+  getHighlightDetection?: () => ProductionHighlightDetection | null,
+  authorizeHighlightDetection?: () => AgentActionGateDecision,
 ): Promise<void> {
   // 防止重复启动
   if (httpServer) {
@@ -141,6 +148,8 @@ export async function startMcpServer(
   getRecordingImportFn = getRecordingImport ?? null;
   authorizeRecordingImportFn = authorizeRecordingImport ?? null;
   getRecordingListFn = getRecordingList ?? null;
+  getHighlightDetectionFn = getHighlightDetection ?? null;
+  authorizeHighlightDetectionFn = authorizeHighlightDetection ?? null;
 
   // 声呐桥：待创作箱 store + 共享 token（loopback + token 鉴权）
   sonarStore = createSonarInboxStore();
@@ -297,6 +306,8 @@ export async function stopMcpServer(): Promise<void> {
   getRecordingImportFn = null;
   authorizeRecordingImportFn = null;
   getRecordingListFn = null;
+  getHighlightDetectionFn = null;
+  authorizeHighlightDetectionFn = null;
 }
 
 /**

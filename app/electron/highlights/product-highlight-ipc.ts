@@ -4,7 +4,9 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { HighlightArtifactBundle } from './highlight-batch-artifacts';
 import { HIGHLIGHT_BATCH_FAILURE_CODES, HighlightBatchQueueError, type HighlightBatchTaskV1 } from './highlight-batch-queue';
 import { AuthorizedRecordingImportError } from './authorized-recording-import';
-import { ProductHighlightController, ProductHighlightControllerError } from './product-highlight-controller';
+import { ProductHighlightController, ProductHighlightControllerError,
+  validateProductHighlightRunConfiguration,
+  type ProductHighlightRunConfiguration } from './product-highlight-controller';
 import type { ReviewedClipExporter } from './reviewed-clip-exporter';
 import { ReviewedClipExportError, type ReviewedClipErrorCode } from './reviewed-clip-receipts';
 
@@ -20,6 +22,7 @@ export const HIGHLIGHT_V1_CHANNELS = {
   cancel: 'highlight-v1:cancel',
   retry: 'highlight-v1:retry',
   run: 'highlight-v1:run',
+  prepareAgentRun: 'highlight-v1:prepare-agent-run',
   exportReviewed: 'highlight-v1:export-reviewed',
   listReviewed: 'highlight-v1:list-reviewed',
   verifiedOutput: 'highlight-v1:verified-output',
@@ -29,7 +32,7 @@ export const HIGHLIGHT_V1_CHANNELS = {
 export type HighlightV1IpcErrorCode =
   | 'forbidden' | 'busy' | 'stopped' | 'invalid_request' | 'invalid_selection'
   | 'selection_required' | 'consent_required' | 'source_unavailable'
-  | 'root_mismatch' | 'authorization_expired'
+  | 'root_mismatch' | 'authorization_expired' | 'project_changed'
   | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error'
   | ReviewedClipErrorCode;
 export type HighlightV1Result<T> = ({ ok: true } & T) | { ok: false; code: HighlightV1IpcErrorCode };
@@ -67,15 +70,20 @@ export interface ProductHighlightIpcOptions {
   pickDirectory(title: string): Promise<DialogResult>;
   pickFiles(title: string, defaultPath?: string): Promise<DialogResult>;
   activeProjectDir(): string | null;
+  authorizeAgentRun(): boolean;
 }
 export interface PreparedRecordingImportBridge {
   importSelectedForAgent(projectDir: string, maxClips: number,
     beforeEnqueue: () => boolean | Promise<boolean>): Promise<Array<{
       id: string; sourceSha256: string; state: HighlightBatchTaskV1['state'] }>>;
+  runSelectedForAgent(projectDir: string, taskIds: readonly string[],
+    beforeStart: () => boolean): Promise<HighlightBatchTaskV1[]>;
+  clearPreparedAgentRun(): void;
 }
 
 class PreparedRecordingImportError extends Error {
-  constructor(readonly code: 'project_changed' | 'selection_required' | 'invalid_request') {
+  constructor(readonly code: 'project_changed' | 'selection_required' | 'invalid_request' |
+    'authorization_expired' | 'root_mismatch') {
     super(code);
     this.name = 'PreparedRecordingImportError';
   }
@@ -155,6 +163,8 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   let hotClipDir: string | null = null;
   let choosing = false;
   let selectionRevision = 0;
+  let preparedAgentRun: { projectDir: string; revision: number;
+    config: ProductHighlightRunConfiguration } | null = null;
 
   function handle(channel: string, operation: (input: unknown) => Promise<unknown> | unknown): void {
     ipc.handle(channel, async (event, input) => {
@@ -175,6 +185,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseRoot, async () => {
     selectionRevision += 1;
+    preparedAgentRun = null;
     const selected = await choose(() => options.pickDirectory('选择已授权直播录屏目录'));
     if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
     if (!selected) return { ok: false, code: 'selection_required' };
@@ -189,6 +200,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseRecordings, async () => {
     selectionRevision += 1;
+    preparedAgentRun = null;
     if (!mediaRoot) return { ok: false, code: 'selection_required' };
     selectedRecordings = [];
     selectedSubtitles.clear();
@@ -208,6 +220,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseSubtitles, async () => {
     selectionRevision += 1;
+    preparedAgentRun = null;
     if (!mediaRoot || !selectedRecordings.length) return { ok: false, code: 'selection_required' };
     selectedSubtitles.clear();
     const selected = await choose(() => options.pickFiles('选择与录屏同名的 SRT 字幕（可选）', mediaRoot!));
@@ -237,6 +250,8 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseNode, async () => {
+    selectionRevision += 1;
+    preparedAgentRun = null;
     const selected = await choose(() => options.pickFiles('选择 Node.js 可执行文件'));
     if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
     if (!selected) return { ok: false, code: 'selection_required' };
@@ -251,6 +266,8 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.chooseHotClip, async () => {
+    selectionRevision += 1;
+    preparedAgentRun = null;
     const selected = await choose(() => options.pickDirectory('选择另行安装的 HotClip 目录'));
     if (selected && 'busy' in selected) return { ok: false, code: 'busy' };
     if (!selected) return { ok: false, code: 'selection_required' };
@@ -310,6 +327,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.run, async (input) => {
+    preparedAgentRun = null;
     if (!object(input)) return { ok: false, code: 'invalid_request' };
     if (input.allowModelDownload !== true) return { ok: false, code: 'consent_required' };
     if (!mediaRoot || !nodeExecutable || !hotClipDir) return { ok: false, code: 'selection_required' };
@@ -331,6 +349,29 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
       allowModelDownload: true,
     });
     return { ok: true, tasks: tasks.map(dto) };
+  });
+
+  handle(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, (input) => {
+    if (!mediaRoot || !nodeExecutable || !hotClipDir || !selectionProject) {
+      return { ok: false, code: 'selection_required' };
+    }
+    const active = options.activeProjectDir();
+    if (!active || pathKey(active) !== pathKey(selectionProject)) {
+      return { ok: false, code: 'project_changed' };
+    }
+    if (!object(input)) return { ok: false, code: 'invalid_request' };
+    if (input.allowModelDownload !== true) return { ok: false, code: 'consent_required' };
+    if (!options.authorizeAgentRun()) return { ok: false, code: 'authorization_expired' };
+    const config = validateProductHighlightRunConfiguration({
+      mediaRootDir: mediaRoot, executable: nodeExecutable,
+      argsPrefix: ['--import', 'tsx', 'src/cli/index.ts'], cwd: hotClipDir,
+      timeoutMs: input.timeoutMs as number, concurrency: input.concurrency as number,
+      maxAttempts: input.maxAttempts as number, llmBaseUrl: input.llmBaseUrl as string,
+      llmModel: input.llmModel as string, llmApiKey: input.llmApiKey as string | undefined,
+      allowModelDownload: true,
+    });
+    preparedAgentRun = { projectDir: active, revision: selectionRevision, config };
+    return { ok: true, ready: true };
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.exportReviewed, async (input) => {
@@ -394,5 +435,34 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
         } });
       return tasks.map((task) => ({ id: task.id, sourceSha256: task.sourceSha256, state: task.state }));
     },
+    runSelectedForAgent(projectDir, taskIds, beforeStart) {
+      const prepared = preparedAgentRun;
+      if (!prepared) throw new PreparedRecordingImportError('selection_required');
+      const active = options.activeProjectDir();
+      if (!active || pathKey(active) !== pathKey(projectDir) ||
+          pathKey(prepared.projectDir) !== pathKey(projectDir)) {
+        throw new PreparedRecordingImportError('project_changed');
+      }
+      if (selectionRevision !== prepared.revision) throw new PreparedRecordingImportError('selection_required');
+      if (!Array.isArray(taskIds) || taskIds.length < 1 || taskIds.length > 12 ||
+          new Set(taskIds).size !== taskIds.length ||
+          taskIds.some((id) => typeof id !== 'string' || !TASK_ID_RE.test(id))) {
+        throw new PreparedRecordingImportError('invalid_request');
+      }
+      const tasks = new Map(controller.list().map((task) => [task.id, task]));
+      if (taskIds.some((id) => tasks.get(id)?.state !== 'queued')) {
+        throw new PreparedRecordingImportError('invalid_request');
+      }
+      if (taskIds.some((id) => !within(prepared.config.mediaRootDir, tasks.get(id)!.recording.sourceRef))) {
+        throw new PreparedRecordingImportError('root_mismatch');
+      }
+      let allowed = false;
+      try { allowed = beforeStart() === true && options.authorizeAgentRun() === true; }
+      catch { /* Grant or audit store failure must fail closed. */ }
+      if (!allowed) throw new PreparedRecordingImportError('authorization_expired');
+      preparedAgentRun = null;
+      return controller.runSelected(prepared.config, taskIds);
+    },
+    clearPreparedAgentRun() { preparedAgentRun = null; },
   };
 }

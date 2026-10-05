@@ -78,8 +78,10 @@ import { registerAgentIpc } from './acp/ipc';
 import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headless-provider';
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
-import type { ProductionRecordingImport, ProductionRecordingList } from './mcp/production-tools';
+import type { ProductionRecordingImport, ProductionRecordingList,
+  ProductionHighlightDetection } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
+import { ProductionHighlightJobManager } from './production/highlight-job-manager';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
 import { registerProductionActivityIpc } from './production/activity-ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
@@ -248,6 +250,7 @@ let productPublishDraftService: ReturnType<typeof createProductPublishDraftServi
 let productionActivityStore: ProductionActivityStore | null = null;
 let productionAssetSearch: ProductionAssetSearch | null = null;
 let preparedRecordingImport: PreparedRecordingImportBridge | null = null;
+let productionHighlightJobs: ProductionHighlightJobManager | null = null;
 function authorizeProductionQualityCheck() {
   const projectDir = getActiveProjectPath();
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
@@ -263,6 +266,13 @@ function authorizeProductionRecordingImport() {
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
   return productionActivityStore.authorizeRecordingImport(projectDir);
 }
+function authorizeProductionHighlightDetection() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeHighlightDetection(projectDir);
+}
+const detectProductionHighlights: ProductionHighlightDetection = async (taskIds) =>
+  productionHighlightJobs?.start(taskIds) ?? { ok: false, code: 'service_unavailable' };
 const importProductionRecordings: ProductionRecordingImport = async (maxClips) => {
   const projectDir = getActiveProjectPath();
   const store = productionActivityStore;
@@ -2917,7 +2927,8 @@ registerConversationIpc(() => mainWindow);
 registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck,
   () => productionAssetSearch, authorizeProductionAssetSearch,
   () => importProductionRecordings, authorizeProductionRecordingImport,
-  () => listProductionRecordings);
+  () => listProductionRecordings, () => detectProductionHighlights,
+  authorizeProductionHighlightDetection);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -2977,6 +2988,17 @@ app.whenReady().then(async () => {
       });
       return response === 1;
     },
+    confirmHighlightDetection: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体高光检测',
+        message: '允许智能体在当前工程调用您配置的高光模型分析已导入录屏 30 分钟？',
+        detail: '运行会读取录屏和字幕；HotClip 可能下载本地模型，配置云端 AI 服务时会传输转写内容。候选仍需审核；不会登录账号或发布视频。可随时撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
+    onActivityChanged: (dir) => productionHighlightJobs?.onActivityChanged(dir),
   });
   let productCompositionReview: ReturnType<typeof createCompositionReview> | null = null;
   // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
@@ -3020,6 +3042,15 @@ app.whenReady().then(async () => {
         title, ...(defaultPath ? { defaultPath } : {}), properties: ['openFile', 'multiSelections'],
       }),
       activeProjectDir: getActiveProjectPath,
+      authorizeAgentRun: () => {
+        const dir = getActiveProjectPath();
+        return !!dir && !!productionActivityStore &&
+          productionActivityStore.authorizeHighlightDetection(dir).allowed;
+      },
+    });
+    productionHighlightJobs = new ProductionHighlightJobManager({
+      store: productionActivityStore, controller: productHighlightController,
+      bridge: preparedRecordingImport, activeProjectDir: getActiveProjectPath,
     });
     const assetRoot = path.join(app.getPath('userData'), 'assets-v1');
     const assetLibrary = new LocalAssetLibrary({ rootDir: assetRoot, ffprobePath });
@@ -3214,7 +3245,8 @@ app.whenReady().then(async () => {
     await startMcpServer(19820, () => mainWindow, () => productPublishDraftService,
       authorizeProductionQualityCheck, () => productionAssetSearch,
       authorizeProductionAssetSearch, () => importProductionRecordings,
-      authorizeProductionRecordingImport, () => listProductionRecordings);
+      authorizeProductionRecordingImport, () => listProductionRecordings,
+      () => detectProductionHighlights, authorizeProductionHighlightDetection);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }
@@ -3222,6 +3254,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', (event) => {
   isAppQuitting = true;
+  productionHighlightJobs?.stop();
   if (highlightShutdownStarted) {
     event.preventDefault();
     return;

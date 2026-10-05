@@ -51,6 +51,7 @@ function fixture() {
     },
   };
   let activeProject = join(root, 'project-a');
+  let agentRunAllowed = false;
   const bridge = registerProductHighlightIpc({
     ipc,
     controller,
@@ -59,6 +60,7 @@ function fixture() {
     pickDirectory: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
     pickFiles: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
     activeProjectDir: () => activeProject,
+    authorizeAgentRun: () => agentRunAllowed,
   });
   const invoke = (channel: string, input?: unknown, sender: unknown = 'owner') => {
     const handler = handlers.get(channel);
@@ -66,7 +68,8 @@ function fixture() {
     return handler(sender, input);
   };
   return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller, exporter, clipId,
-    bridge, setActiveProject: (value: string) => { activeProject = value; } };
+    bridge, setActiveProject: (value: string) => { activeProject = value; },
+    setAgentRunAllowed: (value: boolean) => { agentRunAllowed = value; } };
 }
 
 beforeEach(async () => {
@@ -205,6 +208,48 @@ describe('owner-only highlight IPC', () => {
     await invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.run, request)).toEqual({ ok: false, code: 'root_mismatch' });
     expect((await invoke(HIGHLIGHT_V1_CHANNELS.list) as { tasks: { state: string }[] }).tasks[0].state).toBe('queued');
+  });
+
+  it('prepares model settings only from the owner and runs only selected current-project IDs once', async () => {
+    const f = fixture();
+    const another = join(f.media, 'other.mp4');
+    writeFileSync(another, 'synthetic second recording');
+    f.choices.push([f.media], [f.source, another], [process.execPath], [f.hotclip]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 2 }) as
+      { tasks: { id: string }[] };
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseNode);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseHotClip);
+    const config = { llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic-model',
+      llmApiKey: 'PRIVATE-MODEL-KEY', concurrency: 1, maxAttempts: 1,
+      timeoutMs: 10_000, allowModelDownload: true };
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, config, 'foreign'))
+      .toEqual({ ok: false, code: 'forbidden' });
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, config))
+      .toEqual({ ok: false, code: 'authorization_expired' });
+    f.setAgentRunAllowed(true);
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun,
+      { ...config, allowModelDownload: false })).toEqual({ ok: false, code: 'consent_required' });
+    const prepared = await f.invoke(HIGHLIGHT_V1_CHANNELS.prepareAgentRun, config);
+    expect(prepared).toMatchObject({ ok: true });
+    expect(JSON.stringify(prepared)).not.toContain(config.llmApiKey);
+    f.setActiveProject(join(f.root, 'project-b'));
+    await expect(Promise.resolve().then(() => f.bridge.runSelectedForAgent(
+      join(f.root, 'project-a'), [imported.tasks[0].id], () => true)))
+      .rejects.toMatchObject({ code: 'project_changed' });
+    f.setActiveProject(join(f.root, 'project-a'));
+    await expect(Promise.resolve().then(() => f.bridge.runSelectedForAgent(
+      join(f.root, 'project-a'), [imported.tasks[0].id], () => false)))
+      .rejects.toMatchObject({ code: 'authorization_expired' });
+    const completed = await f.bridge.runSelectedForAgent(join(f.root, 'project-a'),
+      [imported.tasks[0].id], () => true);
+    expect(completed).toMatchObject([{ id: imported.tasks[0].id, state: 'completed' }]);
+    expect(f.controller.list().find((task) => task.id === imported.tasks[1].id)).toMatchObject({ state: 'queued' });
+    await expect(Promise.resolve().then(() => f.bridge.runSelectedForAgent(
+      join(f.root, 'project-a'), [imported.tasks[1].id], () => true)))
+      .rejects.toMatchObject({ code: 'selection_required' });
+    expect(readFileSync(join(f.root, 'highlights-v1', 'queue.json'), 'utf8')).not.toContain(config.llmApiKey);
   });
 
   it('passes a synthetic selected sidecar through the queue, keeping candidates review-only', async () => {

@@ -17,6 +17,9 @@ export type ProductionRecordingList = () =>
   | { ok: true; recordings: Array<{ id: string; sourceSha256: string; state: string;
     candidateCount: number; highlightCount: number; lastErrorCode: string | null }> }
   | { ok: false; code: string };
+export type ProductionHighlightDetection = (taskIds: string[]) => Promise<
+  | { ok: true; startedIds: string[] }
+  | { ok: false; code: string }>;
 const metadata = z.object({ title: z.string(), description: z.string(),
   tags: z.array(z.string()), coverRefs: z.array(z.string()),
   scheduleAt: z.number().finite().nonnegative().nullable() }).strict();
@@ -38,7 +41,9 @@ export function registerProductionReadTools(server: McpServer,
   authorizeAssetSearch: () => AgentActionGateDecision,
   getRecordingImport?: () => ProductionRecordingImport | null,
   authorizeRecordingImport?: () => AgentActionGateDecision,
-  getRecordingList?: () => ProductionRecordingList | null): void {
+  getRecordingList?: () => ProductionRecordingList | null,
+  getHighlightDetection?: () => ProductionHighlightDetection | null,
+  authorizeHighlightDetection?: () => AgentActionGateDecision): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -117,6 +122,23 @@ export function registerProductionReadTools(server: McpServer,
       const final = authorizeRecordingImport?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
       if (!final.allowed) return result({ code: final.reason }, true);
       return listed.ok ? result({ recordings: listed.recordings }) : result({ code: listed.code }, true);
+    } catch { return result({ code: 'internal_error' }, true); }
+  });
+
+  server.registerTool('lingji_production_detect_highlights', {
+    title: '分析当前工程已绑定录屏的高光候选',
+    description: '仅启动当前工程已绑定的指定任务，使用用户在桌面准备的一次性模型参数；不接收路径或模型密钥，不自动审核、剪辑或发布。需要单独限时授权。',
+    inputSchema: { taskIds: z.array(z.string().regex(/^hbatch_[a-f0-9]{64}$/)).min(1).max(12) },
+  }, async ({ taskIds }) => {
+    const first = authorizeHighlightDetection?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+    if (!first.allowed) return result({ code: first.reason }, true);
+    const start = getHighlightDetection?.();
+    if (!start) return result({ code: 'service_unavailable' }, true);
+    try {
+      const started = await start(taskIds);
+      const final = authorizeHighlightDetection?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+      if (!final.allowed) return result({ code: final.reason }, true);
+      return started.ok ? result({ startedIds: started.startedIds }) : result({ code: started.code }, true);
     } catch { return result({ code: 'internal_error' }, true); }
   });
 }

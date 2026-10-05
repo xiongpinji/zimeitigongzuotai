@@ -83,4 +83,27 @@ describe('受信任生产活动授权', () => {
       reason: 'grant_missing' });
     expect(f.store.boundRecordings(f.project)).toEqual([{ id: taskId, sourceSha256 }]);
   });
+
+  it('真实模型高光动作必须单独授权，限当前工程与 30 分钟且不开放发布', () => {
+    const f = fixture();
+    f.store.issueRecordingImport(f.project, 30);
+    expect(f.store.authorizeHighlightDetection(f.project)).toEqual({ allowed: false,
+      reason: 'action_not_allowed' });
+    expect(f.store.issueHighlightDetection(f.project, 30)).toMatchObject({ active: true,
+      allowedActions: ['quality_check', 'search_authorized_assets', 'import_recordings', 'detect_highlights'] });
+    expect(f.reopen().authorizeHighlightDetection(f.project)).toEqual({ allowed: true });
+    expect(f.store.authorizeHighlightDetection(join(f.root, 'other'))).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    const saved = readFileSync(join(f.root, 'state', 'activities.json'), 'utf8');
+    expect(saved).not.toContain(f.project);
+    expect(saved).toContain('"autoPublish":false');
+    expect(saved).toContain('"maxQueuedJobs":0');
+    f.advance(30 * 60_000);
+    expect(f.store.authorizeHighlightDetection(f.project)).toEqual({ allowed: false,
+      reason: 'grant_expired' });
+    f.store.issueHighlightDetection(f.project, 30);
+    f.store.revoke(f.project);
+    expect(f.store.authorizeHighlightDetection(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+  });
 });

@@ -6,7 +6,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { McpConfigManager, type McpAppType } from './config-manager';
 import { startMcpServer, stopMcpServer, getMcpServerStatus } from './server';
 import type { ProductionReadService, ProductionRecordingImport,
-  ProductionRecordingList } from './production-tools';
+  ProductionRecordingList, ProductionHighlightDetection } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
 import type { ProductionAssetSearch } from '../production/asset-search';
 
@@ -23,7 +23,9 @@ export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
   authorizeAssetSearch?: () => AgentActionGateDecision,
   getRecordingImport?: () => ProductionRecordingImport | null,
   authorizeRecordingImport?: () => AgentActionGateDecision,
-  getRecordingList?: () => ProductionRecordingList | null): void {
+  getRecordingList?: () => ProductionRecordingList | null,
+  getHighlightDetection?: () => ProductionHighlightDetection | null,
+  authorizeHighlightDetection?: () => AgentActionGateDecision): void {
   // ─── 服务管理 ───────────────────────────────────────────
   ipcMain.handle('mcp:get-status', () => {
     return getMcpServerStatus();
@@ -32,7 +34,7 @@ export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
   ipcMain.handle('mcp:start', (_event, port: number) => {
     return startMcpServer(port, getMainWindow, getProductionReadService, authorizeQualityCheck,
       getAssetSearch, authorizeAssetSearch, getRecordingImport, authorizeRecordingImport,
-      getRecordingList);
+      getRecordingList, getHighlightDetection, authorizeHighlightDetection);
   });
 
   ipcMain.handle('mcp:stop', () => {

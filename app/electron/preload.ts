@@ -857,6 +857,7 @@ contextBridge.exposeInMainWorld('highlightV1API', {
   cancel: (id) => ipcRenderer.invoke('highlight-v1:cancel', { id }),
   retry: (id, maxAttempts) => ipcRenderer.invoke('highlight-v1:retry', { id, maxAttempts }),
   run: (input) => ipcRenderer.invoke('highlight-v1:run', input),
+  prepareAgentRun: (input) => ipcRenderer.invoke('highlight-v1:prepare-agent-run', input),
   exportReviewed: (input) => ipcRenderer.invoke('highlight-v1:export-reviewed', input),
   listReviewed: () => ipcRenderer.invoke('highlight-v1:list-reviewed'),
   verifiedOutput: (id) => ipcRenderer.invoke('highlight-v1:verified-output', { id }),
@@ -887,6 +888,7 @@ contextBridge.exposeInMainWorld('productionActivityAPI', {
   issueQualityCheck: () => ipcRenderer.invoke('production-activity:issue-quality-check', 30),
   issueAnalysis: () => ipcRenderer.invoke('production-activity:issue-analysis', 30),
   issueRecordingImport: () => ipcRenderer.invoke('production-activity:issue-recording-import', 30),
+  issueHighlightDetection: () => ipcRenderer.invoke('production-activity:issue-highlight-detection', 30),
   revoke: () => ipcRenderer.invoke('production-activity:revoke'),
 } satisfies ProductionActivityAPI);
 

@@ -1,0 +1,9 @@
+# R5 智能体定向高光检测：离线产品验收（2026-10-05）
+
+本轮把 `detect_highlights` 接入正式生产 MCP 和桌面高光台。用户在当前工程的设置中，经原生确认单独发放 30 分钟授权；在高光台选择录屏根目录、Node 与 HotClip，并填写模型地址、模型名、可选密钥、运行限制及模型下载同意后，准备一次性运行参数。MCP 只接受 1–12 个任务 ID，不接受录屏路径、模型参数或密钥。主进程在领取前核对当前工程、私有导入绑定、源 SHA-256、待处理状态、所选根目录和授权。运行参数只保留在主进程内存中，领取后即消费；选择变动、手动运行或授权撤销会清除它。
+
+定向执行沿用已有高光队列、源文件复核、侧车取消和产物收据。授权过期或当前工程切换时，后台守卫取消本次选择中仍在排队或运行的任务；原生撤销通知会立即触发同一检查。MCP 返回的是“已接受启动”的 ID，不代表分析完成或候选已审核。候选仍需人工复核；这条能力不会自动导出视频、登录账号或发布。
+
+先写失败测试，分别覆盖授权、桌面参数准备、工程绑定选择、MCP 门控和撤销取消。实现后的聚焦测试、`npx tsc --noEmit`、源码构建均通过；完整 `npx vitest run --maxWorkers=2 --minWorkers=2` 结果为 415 个文件通过、3066 项通过、4 项跳过。隔离 Electron + 真实本地 MCP 的桌面探针 `node scripts/smoke-production-mcp-win.cjs` 退出 0：验证独立授权、参数准备、指定任务启动以及撤销后模拟侧车进程退出。探针使用合成录屏和假 HotClip 侧车，未调用模型。证据保存在 Git 忽略的 `data/runtime/validation/r5-mcp-1791184301086/result.json`，其中 `syntheticHighlightDispatch=true`、`syntheticRevocationCancelledRun=true`、`modelInvoked=false`、`realLoginAttempted=false`、`publicationAttempted=false`。
+
+前一轮曾以合成录屏、人工 SRT、本地 HotClip CLI 和本地模型验证内部定向执行，见 `r5-selected-real-hotclip-probe-2026-10-05.md`；那不能替代本轮 MCP 探针，也不能证明真实直播高光质量。本轮没有打包、真实账号登录、平台发布或真实录屏盲审。R5 其余智能体动作、不同平台素材合成与生产验收尚未完成。
