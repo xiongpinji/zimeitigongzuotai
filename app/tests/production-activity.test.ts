@@ -1,0 +1,47 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { ProductionActivityStore } from '../electron/production/activity-store';
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'production-activity-')); roots.push(root);
+  let now = 1000;
+  const project = join(root, 'project');
+  const store = new ProductionActivityStore(join(root, 'state'), () => now);
+  return { root, project, store, advance: (ms: number) => { now += ms; },
+    reopen: () => new ProductionActivityStore(join(root, 'state'), () => now) };
+}
+
+describe('受信任生产活动授权', () => {
+  it('默认拒绝；用户确认后仅在当前工程和有效期内允许质检，重启可恢复并撤销', () => {
+    const f = fixture();
+    expect(f.store.authorizeQualityCheck(f.project)).toEqual({ allowed: false, reason: 'grant_missing' });
+    const issued = f.store.issueQualityCheck(f.project, 30);
+    expect(issued).toMatchObject({ active: true, allowedActions: ['quality_check'] });
+    expect(f.reopen().authorizeQualityCheck(f.project)).toEqual({ allowed: true });
+    expect(f.store.authorizeQualityCheck(join(f.root, 'other'))).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    const saved = readFileSync(join(f.root, 'state', 'activities.json'), 'utf8');
+    expect(saved).not.toContain(f.project);
+    expect(saved).toContain('quality_check');
+    expect(saved).not.toContain('autoPublish":true');
+    f.store.revoke(f.project);
+    expect(f.reopen().authorizeQualityCheck(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+  });
+
+  it('到期和损坏都拒绝；无效时长不得写入授权', () => {
+    const f = fixture();
+    expect(() => f.store.issueQualityCheck(f.project, 120)).toThrow();
+    expect(f.store.status(f.project).active).toBe(false);
+    f.store.issueQualityCheck(f.project, 15);
+    f.advance(15 * 60_000);
+    expect(f.store.authorizeQualityCheck(f.project)).toEqual({ allowed: false,
+      reason: 'grant_expired' });
+    writeFileSync(join(f.root, 'state', 'activities.json'), '{bad json');
+    expect(() => f.store.authorizeQualityCheck(f.project)).toThrow();
+  });
+});

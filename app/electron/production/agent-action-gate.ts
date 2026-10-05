@@ -7,8 +7,8 @@
  * - 本模块只回答一个问题：在某个「预授权活动」快照下，Agent 请求的某类生产动作
  *   当前是否被允许。它不执行动作、不写文件、不读系统时间、不访问网络、不读取
  *   账号会话 / Cookie / 素材 / 队列存储。
- * - `grant`（活动快照）只能由未来受信任的 Electron main 从本地存储装载并注入；
- *   绝不能来自 Agent 工具参数或 renderer 自报。本轮不实现 grant 发行、持久化或 UI。
+ * - `grant`（活动快照）只能由受信任的 Electron main 从本地存储装载并注入；
+ *   绝不能来自 Agent 工具参数或 renderer 自报。当前仅质检动作接入发行与撤销。
  * - 本门控通过不代表账号登录有效、素材已授权、质检合格或远端发布成功；
  *   这些必须由后续各阶段独立检查。`queue_publish` 只针对普通视频：
  *   `commerceRequest` 非 null 一律拒绝。
@@ -45,7 +45,7 @@
  * 配额，不得把本函数的通过结果直接当作已入队凭证。
  *
  * 拒绝结果只含稳定机器码，不含 Cookie / 路径 / 账号 / 原始输入；调用方不得把原始
- * 请求或异常文本写进日志。本模块未接 MCP / IPC / Agent runtime / 发布队列。
+ * 请求或异常文本写进日志。本纯函数不直接接 MCP / IPC / Agent runtime / 发布队列。
  */
 
 import {
@@ -89,7 +89,7 @@ export function isAgentProductionAction(value: unknown): value is AgentProductio
 // ——————————————————————————————— 注入契约 ———————————————————————————————
 
 /**
- * 预授权活动快照（由未来受信任 Electron main 存储 / 装载后注入；不得由 Agent 自报）。
+ * 预授权活动快照（由受信任 Electron main 存储 / 装载后注入；不得由 Agent 自报）。
  * 字段为最小集合：项目、有效期、允许动作、允许账号、允许平台、自动发布开关、排队上限。
  */
 export interface ProductionActivityGrantV1 {

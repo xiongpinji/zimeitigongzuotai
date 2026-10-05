@@ -78,6 +78,8 @@ import { registerAgentIpc } from './acp/ipc';
 import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headless-provider';
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
+import { ProductionActivityStore } from './production/activity-store';
+import { registerProductionActivityIpc } from './production/activity-ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
 import { bootstrapAccountsV2 } from './publish/accounts-v2-bootstrap';
@@ -241,6 +243,12 @@ const videoImportService = getVideoImportService();
 let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 let productPublishDraftService: ReturnType<typeof createProductPublishDraftService> | null = null;
+let productionActivityStore: ProductionActivityStore | null = null;
+function authorizeProductionQualityCheck() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeQualityCheck(projectDir);
+}
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
 let reviewedClipExporter: ReviewedClipExporter | null = null;
@@ -2848,7 +2856,7 @@ if (process.env.NODE_ENV_ELECTRON_VITE === 'development') {
 
 registerAgentIpc(() => mainWindow);
 registerConversationIpc(() => mainWindow);
-registerMcpIpc(() => mainWindow, () => productPublishDraftService);
+registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -2871,6 +2879,24 @@ registerSecondInstanceFocus(() => {
 
 app.whenReady().then(async () => {
   refreshAppConfig();
+  productionActivityStore = new ProductionActivityStore(path.join(app.getPath('userData'), 'production-v1'));
+  registerProductionActivityIpc({
+    ipc: ipcMain,
+    store: productionActivityStore,
+    activeProjectDir: getActiveProjectPath,
+    allowedSender: (event) => !!mainWindow && !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame,
+    confirmIssue: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体质检',
+        message: '允许智能体在当前工程中预检发布配对 30 分钟？',
+        detail: '只读取安全审核信息；不能登录账号、创建发布任务或提交平台。可随时在设置中撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
+  });
   let productCompositionReview: ReturnType<typeof createCompositionReview> | null = null;
   // Owner 在首个窗口前打开唯一持久队列；平台提交器尚未接线，构造不会调度任务。
   // 队列不可读或所有权断言失败时停止启动，避免以无保护写者继续运行。
@@ -3102,7 +3128,8 @@ app.whenReady().then(async () => {
   });
   // 启动 MCP Server
   try {
-    await startMcpServer(19820, () => mainWindow, () => productPublishDraftService);
+    await startMcpServer(19820, () => mainWindow, () => productPublishDraftService,
+      authorizeProductionQualityCheck);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

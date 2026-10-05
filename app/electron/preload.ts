@@ -9,6 +9,7 @@ import type {
   AssetLibraryAPI,
   CompositionV1API,
   ProductPublishDraftAPI,
+  ProductionActivityAPI,
   FileEntry,
   GenerateAICardForSegmentArgs,
   MenuContext,
@@ -879,6 +880,12 @@ contextBridge.exposeInMainWorld('publishV2DraftAPI', {
   listDrafts: () => ipcRenderer.invoke('publish-v2:list-drafts'),
   cancelDraft: (taskId) => ipcRenderer.invoke('publish-v2:cancel-draft', { taskId }),
 } satisfies ProductPublishDraftAPI);
+
+contextBridge.exposeInMainWorld('productionActivityAPI', {
+  status: () => ipcRenderer.invoke('production-activity:status'),
+  issueQualityCheck: () => ipcRenderer.invoke('production-activity:issue-quality-check', 30),
+  revoke: () => ipcRenderer.invoke('production-activity:revoke'),
+} satisfies ProductionActivityAPI);
 
 contextBridge.exposeInMainWorld('assetLibraryAPI', {
   choose: () => ipcRenderer.invoke('asset-library:choose'),

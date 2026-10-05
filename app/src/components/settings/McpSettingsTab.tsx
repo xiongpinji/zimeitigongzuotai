@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Server, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../../ui';
 import styles from './McpSettingsTab.module.css';
+import type { ProductionActivityResult } from '../../lib/electron-api';
 
 /** 支持注册的 AI 工具列表 */
 const AI_TOOLS = [
@@ -17,7 +18,7 @@ interface ServiceStatus {
   url: string;
 }
 
-export function McpSettingsTab() {
+export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [registrations, setRegistrations] = useState<Record<AppId, boolean>>({
     claude_code: false,
@@ -25,6 +26,8 @@ export function McpSettingsTab() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [busyApp, setBusyApp] = useState<AppId | null>(null);
+  const [activity, setActivity] = useState<ProductionActivityResult | null>(null);
+  const [activityBusy, setActivityBusy] = useState(false);
 
   /** 刷新服务状态和所有工具的注册状态 */
   const refresh = useCallback(async () => {
@@ -41,14 +44,25 @@ export function McpSettingsTab() {
         next[t.app] = regs[i];
       });
       setRegistrations(next);
+      if (window.productionActivityAPI) setActivity(await window.productionActivityAPI.status());
     } finally {
       setRefreshing(false);
     }
   }, []);
 
+  const updateActivity = useCallback(async (action: 'issue' | 'revoke') => {
+    setActivityBusy(true);
+    try {
+      setActivity(action === 'issue'
+        ? await window.productionActivityAPI.issueQualityCheck()
+        : await window.productionActivityAPI.revoke());
+    } finally { setActivityBusy(false); }
+  }, []);
+
   useEffect(() => {
+    setActivity(null);
     refresh();
-  }, [refresh]);
+  }, [refresh, projectDir]);
 
   /** 注册 / 移除某个 AI 工具 */
   const toggleRegistration = useCallback(
@@ -112,6 +126,33 @@ export function McpSettingsTab() {
           >
             刷新
           </Button.Ghost>
+        </div>
+      </div>
+
+      <hr className={styles.divider} />
+
+      <div>
+        <div className={styles.sectionHeader}>
+          <CheckCircle size={20} className={styles.sectionIcon} />
+          <h2 className={styles.sectionTitle}>智能体质检授权</h2>
+        </div>
+        <p className={styles.sectionDesc}>
+          授权后，智能体可在当前工程预检账号与已审核视频的配对。此授权不允许登录或发布。
+        </p>
+        <div className={styles.statusRow}>
+          <span className={styles.statusText}>
+            {activity?.ok && activity.status.active
+              ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}`
+              : activity && !activity.ok && activity.code === 'project_unavailable'
+                ? '请先打开工程'
+                : activity && !activity.ok && activity.code !== 'cancelled'
+                  ? '授权状态暂不可用'
+                  : '当前未授权'}
+          </span>
+          <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
+            onClick={() => updateActivity('issue')}>授权 30 分钟</Button>
+          <Button type="button" variant="destructive" size="sm" disabled={activityBusy || !(activity?.ok && activity.status.active)}
+            onClick={() => updateActivity('revoke')}>撤销</Button>
         </div>
       </div>
 

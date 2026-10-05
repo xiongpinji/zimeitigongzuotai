@@ -279,7 +279,43 @@ async function main() {
     }, undefined, { timeout: 15_000 });
     assert.equal(previewError.isError, true);
     assert.deepEqual(JSON.parse(previewError.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    phase = 'production-activity-issue';
+    assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
+      { ok: true, status: { active: false } });
+    // Only in this disposable process: model the user's affirmative native-dialog response.
+    // The production IPC still performs its own sender, project and duration checks.
+    await electronApp.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+    const issued = await page.evaluate(() => window.productionActivityAPI.issueQualityCheck());
+    assert.equal(issued.ok, true);
+    assert.equal(issued.status.active, true);
+    assert.deepEqual(issued.status.allowedActions, ['quality_check']);
+    phase = 'production-activity-allowed';
+    const allowedPreview = await productionClient.callTool({
+      name: 'lingji_production_preview_publish', arguments: { assignments: [{
+        accountId: 'missing-account', batchId: 'batch-1', planId: 'plan-1',
+        metadata: { title: '合成测试', description: '', tags: [], coverRefs: [], scheduleAt: null },
+        commerceRequest: null,
+      }] },
+    }, undefined, { timeout: 15_000 });
+    assert.equal(allowedPreview.isError, true);
+    assert.deepEqual(JSON.parse(allowedPreview.content.find((item) => item.type === 'text').text),
       { code: 'account_missing' });
+    phase = 'production-activity-revoke';
+    assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.revoke()),
+      { ok: true, status: { active: false } });
+    const revokedPreview = await productionClient.callTool({
+      name: 'lingji_production_preview_publish', arguments: { assignments: [{
+        accountId: 'missing-account', batchId: 'batch-1', planId: 'plan-1',
+        metadata: { title: '合成测试', description: '', tags: [], coverRefs: [], scheduleAt: null },
+        commerceRequest: null,
+      }] },
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(revokedPreview.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
+    assert.equal(activities.includes(projectPath), false);
+    assert.ok(activities.includes('quality_check'));
     assert.deepEqual(pageErrors, []);
     await page.screenshot({ path: path.join(runDir, 'project-opened.png') });
     const productionIdFields = ['recordingIds', 'highlightId', 'compositionPlanId', 'videoVariantId', 'activityGrantId', 'accountIds'];
@@ -293,6 +329,7 @@ async function main() {
       productionIdFieldsInSchemas: productionIdFields.filter((field) => tools.some((tool) => JSON.stringify(tool.inputSchema).includes(`"${field}"`))),
       createProject: true, openProject: true, activeProject: true, editorIpcRoundTrip: true,
       authenticatedProductionRead: true, productionToolNames: productionTools.tools.map((tool) => tool.name),
+      simulatedNativeConfirmation: true, activityIssuePreviewRevoke: true,
       projectState: state, editorState, taskList: tasks, pageErrors,
       productionAcceptanceTested: false, realLoginAttempted: false,
       publicationAttempted: false, modelInvoked: false, mediaEncoded: false,

@@ -1263,7 +1263,8 @@ export default function App() {
                   onImportProject={handleOpenImportProject}
                 />
               ) : page === 'settings' ? (
-                <Settings onBack={() => setPage(previousPage)} initialTab={settingsInitialTab} />
+                <Settings onBack={() => setPage(previousPage)} initialTab={settingsInitialTab}
+                  projectDir={currentProjectDir} />
               ) : page === 'auto-run' ? (
                 <AutoRunController setPage={setPage} />
               ) : (

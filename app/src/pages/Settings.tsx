@@ -41,11 +41,12 @@ const TABS: { id: SettingsTab; label: string; icon: typeof Bot }[] = [
 
 interface SettingsProps {
   onBack: () => void;
+  projectDir?: string | null;
   /** 初始定位的 tab（如从对话头部 agent 标记进入时定位 'agent'）。 */
   initialTab?: SettingsTab;
 }
 
-export function Settings({ onBack, initialTab }: SettingsProps) {
+export function Settings({ onBack, initialTab, projectDir }: SettingsProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'ai-config');
   const tabLeaveGuardRef = useRef<SettingsLeaveGuard | null>(null);
 
@@ -129,7 +130,7 @@ export function Settings({ onBack, initialTab }: SettingsProps) {
           <AgentSettingsTab />
         </TabsContent>
         <TabsContent value="mcp" className={styles.contentPanel}>
-          <McpSettingsTab />
+          <McpSettingsTab projectDir={projectDir} />
         </TabsContent>
         <TabsContent value="prompts" className={styles.contentPanelWide}>
           <PromptsConfigTab />

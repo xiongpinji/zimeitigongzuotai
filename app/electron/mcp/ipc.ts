@@ -6,6 +6,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { McpConfigManager, type McpAppType } from './config-manager';
 import { startMcpServer, stopMcpServer, getMcpServerStatus } from './server';
 import type { ProductionReadService } from './production-tools';
+import type { AgentActionGateDecision } from '../production/agent-action-gate';
 
 const configManager = new McpConfigManager();
 
@@ -14,14 +15,15 @@ const configManager = new McpConfigManager();
  * @param getMainWindow 获取主窗口实例的回调
  */
 export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
-  getProductionReadService?: () => ProductionReadService | null): void {
+  getProductionReadService?: () => ProductionReadService | null,
+  authorizeQualityCheck?: () => AgentActionGateDecision): void {
   // ─── 服务管理 ───────────────────────────────────────────
   ipcMain.handle('mcp:get-status', () => {
     return getMcpServerStatus();
   });
 
   ipcMain.handle('mcp:start', (_event, port: number) => {
-    return startMcpServer(port, getMainWindow, getProductionReadService);
+    return startMcpServer(port, getMainWindow, getProductionReadService, authorizeQualityCheck);
   });
 
   ipcMain.handle('mcp:stop', () => {

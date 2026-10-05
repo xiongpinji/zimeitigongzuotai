@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ProductPublishDraftError, type createProductPublishDraftService } from
   '../publish/product-publish-drafts';
+import type { AgentActionGateDecision } from '../production/agent-action-gate';
 
 export type ProductionReadService = Pick<ReturnType<typeof createProductPublishDraftService>,
   'listDrafts' | 'preview'>;
@@ -20,7 +21,8 @@ function errorResult(error: unknown) {
 }
 
 export function registerProductionReadTools(server: McpServer,
-  getService: () => ProductionReadService | null): void {
+  getService: () => ProductionReadService | null,
+  authorizeQualityCheck: () => AgentActionGateDecision): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -38,7 +40,11 @@ export function registerProductionReadTools(server: McpServer,
   }, async ({ assignments }) => {
     const service = getService();
     if (!service) return result({ code: 'service_unavailable' }, true);
-    try { return result(await service.preview(assignments)); }
+    try {
+      const decision = authorizeQualityCheck();
+      if (!decision.allowed) return result({ code: decision.reason }, true);
+      return result(await service.preview(assignments));
+    }
     catch (error) { return errorResult(error); }
   });
 }

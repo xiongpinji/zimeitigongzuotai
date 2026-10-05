@@ -17,12 +17,14 @@ import { getOrCreateSonarToken } from '../sonar/token';
 import { handleSonarHttp, isSonarPath } from '../sonar/routes';
 import { authorizeProductionMcpRequest } from './production-auth';
 import { registerProductionReadTools, type ProductionReadService } from './production-tools';
+import type { AgentActionGateDecision } from '../production/agent-action-gate';
 
 // ─── 模块状态 ─────────────────────────────────────────────
 let httpServer: Server | null = null;
 let currentPort = 19820;
 let getMainWindowFn: (() => BrowserWindow | null) | null = null;
 let getProductionReadServiceFn: (() => ProductionReadService | null) | null = null;
+let authorizeQualityCheckFn: (() => AgentActionGateDecision) | null = null;
 let productionToken = '';
 const PRODUCTION_TOKEN_FILE = join(homedir(), '.lingji', 'production-mcp-token');
 
@@ -50,7 +52,8 @@ function createSessionServer(production: boolean): McpServer {
     { name: 'lingji-editor', version: '1.0.0' },
     { capabilities: { logging: {} } },
   );
-  if (production) registerProductionReadTools(server, () => getProductionReadServiceFn?.() ?? null);
+  if (production) registerProductionReadTools(server, () => getProductionReadServiceFn?.() ?? null,
+    () => authorizeQualityCheckFn?.() ?? { allowed: false, reason: 'grant_missing' });
   else registerTools(server, getMainWindowFn!);
   return server;
 }
@@ -104,6 +107,7 @@ export async function startMcpServer(
   port = 19820,
   getMainWindow: () => BrowserWindow | null,
   getProductionReadService?: () => ProductionReadService | null,
+  authorizeQualityCheck?: () => AgentActionGateDecision,
 ): Promise<void> {
   // 防止重复启动
   if (httpServer) {
@@ -114,6 +118,7 @@ export async function startMcpServer(
   currentPort = port;
   getMainWindowFn = getMainWindow;
   getProductionReadServiceFn = getProductionReadService ?? null;
+  authorizeQualityCheckFn = authorizeQualityCheck ?? null;
 
   // 声呐桥：待创作箱 store + 共享 token（loopback + token 鉴权）
   sonarStore = createSonarInboxStore();
@@ -264,6 +269,7 @@ export async function stopMcpServer(): Promise<void> {
   console.log('[MCP] Server 已停止');
   productionToken = '';
   getProductionReadServiceFn = null;
+  authorizeQualityCheckFn = null;
 }
 
 /**

@@ -934,6 +934,15 @@ export interface ProductPublishDraftAPI {
   cancelDraft(taskId: string): Promise<ProductPublishDraftResult<{ cancelled: boolean }>>;
 }
 
+export type ProductionActivityResult =
+  | { ok: true; status: { active: boolean; expiresAtMs?: number; allowedActions?: string[] } }
+  | { ok: false; code: string };
+export interface ProductionActivityAPI {
+  status(): Promise<ProductionActivityResult>;
+  issueQualityCheck(): Promise<ProductionActivityResult>;
+  revoke(): Promise<ProductionActivityResult>;
+}
+
 declare global {
   interface Window {
     accountV2API: AccountV2API;
@@ -941,6 +950,7 @@ declare global {
     assetLibraryAPI: AssetLibraryAPI;
     compositionV1API: CompositionV1API;
     publishV2DraftAPI: ProductPublishDraftAPI;
+    productionActivityAPI: ProductionActivityAPI;
   }
 }
 
