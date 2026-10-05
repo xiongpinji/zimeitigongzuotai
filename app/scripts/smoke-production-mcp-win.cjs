@@ -264,6 +264,7 @@ async function main() {
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
       ['lingji_production_import_recordings', 'lingji_production_list_drafts',
+        'lingji_production_list_recordings',
         'lingji_production_preview_publish',
         'lingji_production_search_authorized_assets']);
     phase = 'production-list';
@@ -296,6 +297,11 @@ async function main() {
     }, undefined, { timeout: 15_000 });
     assert.equal(importBefore.isError, true);
     assert.deepEqual(JSON.parse(importBefore.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const listBefore = await productionClient.callTool({
+      name: 'lingji_production_list_recordings', arguments: {},
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(listBefore.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     phase = 'production-activity-issue';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
@@ -373,6 +379,15 @@ async function main() {
     assert.match(imported.recordings[0].id, /^hbatch_[a-f0-9]{64}$/);
     assert.equal(imported.recordings[0].state, 'queued');
     assert.equal(JSON.stringify(imported).includes(recordingFile), false);
+    phase = 'production-recording-status';
+    const recordingStatus = parseResult(await productionClient.callTool({
+      name: 'lingji_production_list_recordings', arguments: {},
+    }, undefined, { timeout: 15_000 }));
+    assert.deepEqual(recordingStatus, { recordings: [{
+      id: imported.recordings[0].id, sourceSha256: imported.recordings[0].sourceSha256,
+      state: 'queued', candidateCount: 0, highlightCount: 0, lastErrorCode: null,
+    }] });
+    assert.equal(JSON.stringify(recordingStatus).includes(recordingFile), false);
     const importedAgain = await productionClient.callTool({
       name: 'lingji_production_import_recordings', arguments: importInput,
     }, undefined, { timeout: 15_000 });
@@ -400,6 +415,11 @@ async function main() {
       name: 'lingji_production_import_recordings', arguments: importInput,
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(importRevoked.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const listRevoked = await productionClient.callTool({
+      name: 'lingji_production_list_recordings', arguments: {},
+    }, undefined, { timeout: 15_000 });
+    assert.deepEqual(JSON.parse(listRevoked.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
     assert.equal(activities.includes(projectPath), false);

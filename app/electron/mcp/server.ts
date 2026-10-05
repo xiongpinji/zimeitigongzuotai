@@ -17,7 +17,7 @@ import { getOrCreateSonarToken } from '../sonar/token';
 import { handleSonarHttp, isSonarPath } from '../sonar/routes';
 import { authorizeProductionMcpRequest } from './production-auth';
 import { registerProductionReadTools, type ProductionReadService,
-  type ProductionRecordingImport } from './production-tools';
+  type ProductionRecordingImport, type ProductionRecordingList } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
 import type { ProductionAssetSearch } from '../production/asset-search';
 
@@ -31,6 +31,7 @@ let getAssetSearchFn: (() => ProductionAssetSearch | null) | null = null;
 let authorizeAssetSearchFn: (() => AgentActionGateDecision) | null = null;
 let getRecordingImportFn: (() => ProductionRecordingImport | null) | null = null;
 let authorizeRecordingImportFn: (() => AgentActionGateDecision) | null = null;
+let getRecordingListFn: (() => ProductionRecordingList | null) | null = null;
 let productionToken = '';
 const PRODUCTION_TOKEN_FILE = join(homedir(), '.lingji', 'production-mcp-token');
 
@@ -63,7 +64,8 @@ function createSessionServer(production: boolean): McpServer {
     () => getAssetSearchFn?.() ?? null,
     () => authorizeAssetSearchFn?.() ?? { allowed: false, reason: 'grant_missing' },
     () => getRecordingImportFn?.() ?? null,
-    () => authorizeRecordingImportFn?.() ?? { allowed: false, reason: 'grant_missing' });
+    () => authorizeRecordingImportFn?.() ?? { allowed: false, reason: 'grant_missing' },
+    () => getRecordingListFn?.() ?? null);
   else registerTools(server, getMainWindowFn!);
   return server;
 }
@@ -122,6 +124,7 @@ export async function startMcpServer(
   authorizeAssetSearch?: () => AgentActionGateDecision,
   getRecordingImport?: () => ProductionRecordingImport | null,
   authorizeRecordingImport?: () => AgentActionGateDecision,
+  getRecordingList?: () => ProductionRecordingList | null,
 ): Promise<void> {
   // 防止重复启动
   if (httpServer) {
@@ -137,6 +140,7 @@ export async function startMcpServer(
   authorizeAssetSearchFn = authorizeAssetSearch ?? null;
   getRecordingImportFn = getRecordingImport ?? null;
   authorizeRecordingImportFn = authorizeRecordingImport ?? null;
+  getRecordingListFn = getRecordingList ?? null;
 
   // 声呐桥：待创作箱 store + 共享 token（loopback + token 鉴权）
   sonarStore = createSonarInboxStore();
@@ -292,6 +296,7 @@ export async function stopMcpServer(): Promise<void> {
   authorizeAssetSearchFn = null;
   getRecordingImportFn = null;
   authorizeRecordingImportFn = null;
+  getRecordingListFn = null;
 }
 
 /**

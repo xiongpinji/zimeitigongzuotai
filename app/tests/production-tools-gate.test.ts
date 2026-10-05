@@ -77,4 +77,29 @@ describe('生产 MCP 质检门控', () => {
     expect(JSON.parse(revoked.content[0].text)).toEqual({ code: 'grant_missing' });
     expect(revoked.content[0].text).not.toContain('private-task');
   });
+
+  it('只读录屏状态需当前工程授权，撤销期间不输出任务信息', async () => {
+    const handlers = new Map<string, () => Promise<unknown>>();
+    const server = { registerTool: (name: string, _spec: unknown,
+      handler: () => Promise<unknown>) => { handlers.set(name, handler); } };
+    let allowed = false;
+    const privateStatus = { id: 'private-task', sourceSha256: 'a'.repeat(64), state: 'queued',
+      candidateCount: 0, highlightCount: 0, lastErrorCode: null };
+    const list = vi.fn(() => ({ ok: true as const, recordings: [privateStatus] }));
+    registerProductionReadTools(server as never, () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }), () => null,
+      () => ({ allowed: false, reason: 'grant_missing' }),
+      () => null, () => allowed ? { allowed: true } : { allowed: false, reason: 'grant_missing' },
+      () => list);
+    const call = () => handlers.get('lingji_production_list_recordings')!() as
+      Promise<{ isError?: boolean; content: { text: string }[] }>;
+    expect(JSON.parse((await call()).content[0].text)).toEqual({ code: 'grant_missing' });
+    expect(list).not.toHaveBeenCalled();
+    allowed = true;
+    list.mockImplementationOnce(() => { allowed = false; return { ok: true,
+      recordings: [privateStatus] }; });
+    const revoked = await call();
+    expect(revoked.isError).toBe(true);
+    expect(revoked.content[0].text).not.toContain('private-task');
+  });
 });

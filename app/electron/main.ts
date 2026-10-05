@@ -78,7 +78,7 @@ import { registerAgentIpc } from './acp/ipc';
 import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headless-provider';
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
-import type { ProductionRecordingImport } from './mcp/production-tools';
+import type { ProductionRecordingImport, ProductionRecordingList } from './mcp/production-tools';
 import { ProductionActivityStore } from './production/activity-store';
 import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
 import { registerProductionActivityIpc } from './production/activity-ipc';
@@ -287,6 +287,25 @@ const importProductionRecordings: ProductionRecordingImport = async (maxClips) =
       ? candidate as string : 'internal_error';
     return { ok: false, code };
   }
+};
+const listProductionRecordings: ProductionRecordingList = () => {
+  const projectDir = getActiveProjectPath();
+  const store = productionActivityStore;
+  const controller = productHighlightController;
+  if (!projectDir || !store || !controller) return { ok: false, code: 'service_unavailable' };
+  try {
+    const decision = store.authorizeRecordingImport(projectDir);
+    if (!decision.allowed) return { ok: false, code: decision.reason };
+    const tasks = new Map(controller.list().map((task) => [task.id, task]));
+    const recordings = store.boundRecordings(projectDir).map(({ id, sourceSha256 }) => {
+      const task = tasks.get(id);
+      if (!task || task.recording.sourceSha256 !== sourceSha256) throw new Error('binding_mismatch');
+      return { id, sourceSha256, state: task.state,
+        candidateCount: task.candidateIds.length, highlightCount: task.highlightIds.length,
+        lastErrorCode: task.lastErrorCode };
+    });
+    return { ok: true, recordings };
+  } catch { return { ok: false, code: 'recording_status_unavailable' }; }
 };
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
@@ -2897,7 +2916,8 @@ registerAgentIpc(() => mainWindow);
 registerConversationIpc(() => mainWindow);
 registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck,
   () => productionAssetSearch, authorizeProductionAssetSearch,
-  () => importProductionRecordings, authorizeProductionRecordingImport);
+  () => importProductionRecordings, authorizeProductionRecordingImport,
+  () => listProductionRecordings);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -3194,7 +3214,7 @@ app.whenReady().then(async () => {
     await startMcpServer(19820, () => mainWindow, () => productPublishDraftService,
       authorizeProductionQualityCheck, () => productionAssetSearch,
       authorizeProductionAssetSearch, () => importProductionRecordings,
-      authorizeProductionRecordingImport);
+      authorizeProductionRecordingImport, () => listProductionRecordings);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

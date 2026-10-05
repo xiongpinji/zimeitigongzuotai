@@ -13,6 +13,10 @@ export type ProductionReadService = Pick<ReturnType<typeof createProductPublishD
 export type ProductionRecordingImport = (maxClips: number) => Promise<
   | { ok: true; recordings: Array<{ id: string; sourceSha256: string; state: string }> }
   | { ok: false; code: string }>;
+export type ProductionRecordingList = () =>
+  | { ok: true; recordings: Array<{ id: string; sourceSha256: string; state: string;
+    candidateCount: number; highlightCount: number; lastErrorCode: string | null }> }
+  | { ok: false; code: string };
 const metadata = z.object({ title: z.string(), description: z.string(),
   tags: z.array(z.string()), coverRefs: z.array(z.string()),
   scheduleAt: z.number().finite().nonnegative().nullable() }).strict();
@@ -33,7 +37,8 @@ export function registerProductionReadTools(server: McpServer,
   getAssetSearch: () => ProductionAssetSearch | null,
   authorizeAssetSearch: () => AgentActionGateDecision,
   getRecordingImport?: () => ProductionRecordingImport | null,
-  authorizeRecordingImport?: () => AgentActionGateDecision): void {
+  authorizeRecordingImport?: () => AgentActionGateDecision,
+  getRecordingList?: () => ProductionRecordingList | null): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -96,6 +101,22 @@ export function registerProductionReadTools(server: McpServer,
       const final = authorizeRecordingImport?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
       if (!final.allowed) return result({ code: final.reason }, true);
       return imported.ok ? result({ recordings: imported.recordings }) : result({ code: imported.code }, true);
+    } catch { return result({ code: 'internal_error' }, true); }
+  });
+
+  server.registerTool('lingji_production_list_recordings', {
+    title: '查看当前工程已导入录屏任务',
+    description: '只返回当前工程已绑定任务的安全状态和候选数量；不返回录屏路径或候选内容，不启动模型或发布。需要限时录屏导入授权。',
+  }, async () => {
+    const first = authorizeRecordingImport?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+    if (!first.allowed) return result({ code: first.reason }, true);
+    const list = getRecordingList?.();
+    if (!list) return result({ code: 'service_unavailable' }, true);
+    try {
+      const listed = list();
+      const final = authorizeRecordingImport?.() ?? { allowed: false as const, reason: 'grant_missing' as const };
+      if (!final.allowed) return result({ code: final.reason }, true);
+      return listed.ok ? result({ recordings: listed.recordings }) : result({ code: listed.code }, true);
     } catch { return result({ code: 'internal_error' }, true); }
   });
 }
