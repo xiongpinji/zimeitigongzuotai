@@ -33,3 +33,7 @@ HotClip 的 `--max-clips` 在当前 CLI 源码被限制在 1–12；它处理一
 - 2026-09-25 复审修复后，在本工作树用 Windows Node 22.23.3 + 项目原版 Vitest 2.1.9 实跑：`node.exe ./node_modules/vitest/vitest.mjs run tests/highlights/hotclip-sidecar.test.ts` 退出码 0，**47/47 通过**（全量复跑两次一致）；`node.exe ./node_modules/typescript/bin/tsc --noEmit` 退出码 0。测试进程实际运行在 Windows，因此新增的「`spawn` 返回前同步取消」集成用例真实走过 Windows `taskkill /PID <pid> /T /F` 终止路径，并断言子进程 PID 消失；POSIX 负 PID 组信号杀树路径本轮未在 Linux 复跑，仍是未验证边界。
 - 环境变量实测（Windows Node 22.23.3）：子进程 env 不含 `PATH` 时，子进程实际看到父进程完整 PATH；显式 `PATH: ''` 时子进程 PATH 为空；`SystemRoot` 由系统注入；`LINGJI_TEST_SECRET_MARKER` 不转发。故 `inheritBaseEnv: false` 的文档语义限定为「不转发本应用基础 allowlist 与敏感变量」。
 - 仍未验证：真实 HotClip 长录屏任务下的超时/取消/资源占用、`--max-clips` 之外的上游协议变化、自动语音识别与高光质量、正式分发前的 AGPL 法务审查。本适配器属合成进程级证据，不等于 P0-3 整体验收；上表「超时、取消、资源占用」一行仍未验收。
+
+## 2026-10-05 真实本地进程增量证据
+
+[本地模型试验](hotclip-local-model-2026-10-05.md)已用 120 秒合成录屏和 SRT 跑过真实 HotClip CLI、本机 Ollama 和本项目 sidecar：`qwen3:4b` 因 300 秒模型响应时限失败；`qwen3:4b-instruct` 在修复上游数字候选 ID 的协议差异后，约 54 秒返回 3 条候选。真实 CLI 的取消、超时和无残留进程也在这段合成输入上验证。此增量记录更新上文截至 2026-09-25 的「真实进程尚未测」状态；长时真实直播录屏、自动 ASR、质量盲审、批量产品 SRT 接线、分发许可与平台结果仍未验收，P0-3 整体闸门保持打开。

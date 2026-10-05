@@ -269,6 +269,11 @@ describe('parseHotClipCandidates', () => {
     ]);
   });
 
+  it('normalizes the fixed HotClip CLI numeric candidate ID to a stable string', () => {
+    const parsed = parseHotClipCandidates(JSON.stringify([{ ...VALID_CANDIDATE, id: 7 }]));
+    expect(parsed[0]?.id).toBe('7');
+  });
+
   it('treats empty or whitespace-only stdout as zero candidates', () => {
     expect(parseHotClipCandidates('')).toEqual([]);
     expect(parseHotClipCandidates('\n  \r\n')).toEqual([]);
@@ -296,7 +301,9 @@ describe('parseHotClipCandidates', () => {
   const badCandidateCases: Array<[string, Record<string, unknown>]> = [
     ['missing object', null as unknown as Record<string, unknown>],
     ['blank id', { ...VALID_CANDIDATE, id: '  ' }],
-    ['non-string id', { ...VALID_CANDIDATE, id: 7 }],
+    ['negative numeric id', { ...VALID_CANDIDATE, id: -1 }],
+    ['fractional numeric id', { ...VALID_CANDIDATE, id: 1.5 }],
+    ['unsafe numeric id', { ...VALID_CANDIDATE, id: Number.MAX_SAFE_INTEGER + 1 }],
     ['string startSec', { ...VALID_CANDIDATE, startSec: '12.5' }],
     ['NaN-ish score', { ...VALID_CANDIDATE, score: null }],
     ['negative startSec', { ...VALID_CANDIDATE, startSec: -0.5 }],

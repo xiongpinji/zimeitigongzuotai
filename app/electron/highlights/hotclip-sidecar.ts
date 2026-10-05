@@ -125,6 +125,7 @@ export class HotClipSidecarError extends Error {
  * （startMs = Math.round(sec * 1000)），时间语义可追溯。
  */
 export interface HotClipHighlightCandidate {
+  /** Upstream numeric or legacy string ID normalized for stable task identity. */
   id: string;
   startSec: number;
   endSec: number;
@@ -368,7 +369,10 @@ function toCandidate(raw: unknown, index: number): HotClipHighlightCandidate {
     invalidOutput(`HotClip candidate[${index}] must be an object`);
   }
   const record = raw as Record<string, unknown>;
-  const id = requireString(record.id, `candidate[${index}].id`);
+  const rawId = record.id;
+  const id = typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId >= 0
+    ? String(rawId)
+    : requireString(rawId, `candidate[${index}].id`);
   if (id.trim() === '') {
     invalidOutput(`HotClip candidate[${index}].id must be non-empty`);
   }
