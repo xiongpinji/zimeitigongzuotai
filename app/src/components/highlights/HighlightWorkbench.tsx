@@ -14,6 +14,7 @@ const ERROR_TEXT: Record<string, string> = {
   consent_required: '运行前请确认本地模型下载许可。',
   authorization_expired: '请先在设置中授权智能体高光检测。',
   project_changed: '当前工程已变化，请重新选择和准备参数。',
+  recording_already_bound: '该录屏任务已归属其他工程，请回到原工程处理。',
   source_unavailable: '录屏源文件已变化或无法读取，请重新选择。',
   root_mismatch: '排队任务包含其他目录的录屏。请先选择原目录，或取消这些任务。',
   review_required: '请先人工审核并确认所选片段。',

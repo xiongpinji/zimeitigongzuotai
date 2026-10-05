@@ -28,6 +28,7 @@ function fixture() {
   const deps: LiveCompositionDocumentDeps = {
     controller: { list: () => [task], readArtifact: () => artifact },
     library: { list: () => [] }, nowIso: () => NOW,
+    boundRecordings: () => [{ id: task.id, sourceSha256: task.sourceSha256 }],
   };
   return { deps, task, artifact };
 }
@@ -60,8 +61,14 @@ describe('R4 live production document from owner stores', () => {
 
   it('refuses conflicting source IDs and missing or mismatched artifacts', async () => {
     const { deps, task, artifact } = fixture();
-    deps.controller.list = () => [task, { ...task, recording: {
-      ...task.recording, sourceSha256: 'd'.repeat(64) } }];
+    const duplicate = { ...task, id: `hbatch_${'d'.repeat(64)}`,
+      recording: { ...task.recording, sourceSha256: 'd'.repeat(64) },
+      sourceSha256: 'd'.repeat(64) };
+    deps.boundRecordings = () => [
+      { id: task.id, sourceSha256: task.sourceSha256 },
+      { id: duplicate.id, sourceSha256: duplicate.sourceSha256 },
+    ];
+    deps.controller.list = () => [task, duplicate];
     await expect(buildLiveCompositionDocument(projectDir, deps))
       .rejects.toMatchObject({ code: 'conflicting_source' });
     deps.controller.list = () => [task];
@@ -69,6 +76,26 @@ describe('R4 live production document from owner stores', () => {
     await expect(buildLiveCompositionDocument(projectDir, deps))
       .rejects.toMatchObject({ code: 'invalid_catalog' });
     deps.controller.readArtifact = () => ({ ...artifact, attempt: 2 });
+    await expect(buildLiveCompositionDocument(projectDir, deps))
+      .rejects.toMatchObject({ code: 'invalid_catalog' });
+  });
+
+  it('excludes completed highlighter tasks from another project and rejects a mismatched binding', async () => {
+    const { deps, task, artifact } = fixture();
+    const foreign = { ...task, id: `hbatch_${'d'.repeat(64)}`,
+      recording: { ...task.recording, id: '00000000-0000-4000-8000-000000000002',
+        sourceSha256: 'e'.repeat(64) }, sourceSha256: 'e'.repeat(64) };
+    deps.controller.list = () => [task, foreign];
+    deps.controller.readArtifact = (id) => id === task.id ? artifact : {
+      ...artifact, taskId: foreign.id,
+      highlights: artifact.highlights.map((highlight) => ({
+        ...highlight, id: `hlcv1-${'f'.repeat(64)}`, recordingId: foreign.recording.id })),
+      highlightIds: [`hlcv1-${'f'.repeat(64)}`],
+    };
+    const own = await buildLiveCompositionDocument(projectDir, deps);
+    expect(own.recordings).toEqual([task.recording]);
+    expect(own.highlights).toEqual(artifact.highlights);
+    deps.boundRecordings = () => [{ id: task.id, sourceSha256: foreign.sourceSha256 }];
     await expect(buildLiveCompositionDocument(projectDir, deps))
       .rejects.toMatchObject({ code: 'invalid_catalog' });
   });

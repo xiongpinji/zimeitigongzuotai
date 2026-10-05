@@ -293,6 +293,7 @@ const importProductionRecordings: ProductionRecordingImport = async (maxClips) =
     const candidate = (error as { code?: unknown })?.code ??
       (error instanceof Error ? error.message : null);
     const code = ['project_changed', 'selection_required', 'invalid_request',
+      'recording_already_bound',
       'authorization_expired', 'source_unavailable', 'busy', 'stopped'].includes(candidate as string)
       ? candidate as string : 'internal_error';
     return { ok: false, code };
@@ -3042,6 +3043,8 @@ app.whenReady().then(async () => {
         title, ...(defaultPath ? { defaultPath } : {}), properties: ['openFile', 'multiSelections'],
       }),
       activeProjectDir: getActiveProjectPath,
+      bindImportedTasks: (dir, tasks) => productionActivityStore!.bindOwnerImportedRecordings(dir, tasks),
+      boundRecordings: (dir) => productionActivityStore!.boundRecordings(dir),
       authorizeAgentRun: () => {
         const dir = getActiveProjectPath();
         return !!dir && !!productionActivityStore &&
@@ -3079,6 +3082,7 @@ app.whenReady().then(async () => {
     };
     const compositionDocument = (projectDir: string) => buildLiveCompositionDocument(projectDir, {
       controller: productHighlightController!, library: assetLibrary,
+      boundRecordings: (dir) => productionActivityStore!.boundRecordings(dir),
     });
     const compositionRenderBatch = createCompositionRenderBatch({
       getDocument: compositionDocument,
@@ -3100,7 +3104,8 @@ app.whenReady().then(async () => {
         const document = await compositionDocument(projectDir);
         const topics = new Map(document.highlights.map((highlight) => [highlight.id, highlight.topic ?? '']));
         return {
-          receipts: reviewedClipExporter!.list().map((receipt) => ({
+          receipts: reviewedClipExporter!.list().filter((receipt) =>
+            topics.has(receipt.highlightId)).map((receipt) => ({
             id: receipt.id, highlightId: receipt.highlightId,
             startMs: receipt.startMs, endMs: receipt.endMs,
             topic: topics.get(receipt.highlightId) ?? '',

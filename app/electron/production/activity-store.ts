@@ -126,14 +126,28 @@ export class ProductionActivityStore {
   }
 
   bindImportedRecordings(projectDir: string, tasks: BoundRecording[]): void {
-    if (!Array.isArray(tasks) || tasks.length < 1 || tasks.length > 100 ||
-        tasks.some((task) => !task || !TASK.test(task.id) || !SHA.test(task.sourceSha256))) {
-      throw new Error('invalid_recording_binding');
-    }
     const decision = this.authorizeRecordingImport(projectDir);
     if (!decision.allowed) throw new Error('authorization_expired');
+    this.bindOwnerImportedRecordings(projectDir, tasks);
+  }
+
+  /** Trusted owner-window import may bind local tasks without granting Agent access. */
+  bindOwnerImportedRecordings(projectDir: string, tasks: BoundRecording[]): void {
+    if (!Array.isArray(tasks) || tasks.length < 1 || tasks.length > 100 ||
+        tasks.some((task) => !task || !TASK.test(task.id) || !SHA.test(task.sourceSha256)) ||
+        new Set(tasks.map((task) => task.id)).size !== tasks.length) {
+      throw new Error('invalid_recording_binding');
+    }
     const snapshot = this.read();
     const id = projectId(projectDir);
+    for (const [otherProjectId, bindings] of Object.entries(snapshot.recordingBindings)) {
+      for (const task of tasks) {
+        const existingSha = bindings[task.id];
+        if (existingSha && (otherProjectId !== id || existingSha !== task.sourceSha256)) {
+          throw new Error('recording_already_bound');
+        }
+      }
+    }
     const bound = snapshot.recordingBindings[id] ?? {};
     for (const task of tasks) bound[task.id] = task.sourceSha256;
     snapshot.recordingBindings[id] = bound;

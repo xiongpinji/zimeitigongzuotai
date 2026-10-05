@@ -46,7 +46,9 @@ function probe(extra) {
   fs.writeFileSync(tmpFile, payload);
   fs.renameSync(tmpFile, instr.probeFile);
 }
-probe();
+// Grandchild mode writes once after spawn; replacing the same probe twice can race
+// a Windows reader and make this fake child exit before the adapter timeout.
+if (instr.mode !== 'grandchild') probe();
 const mode = instr.mode;
 // 一律用 process.exitCode + 自然退出：process.exit() 可能截断管道上未刷新的写入。
 if (mode === 'valid' || mode === 'bad-times' || mode === 'malformed-json' || mode === 'non-array') {

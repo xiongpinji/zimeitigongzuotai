@@ -45,6 +45,10 @@ function fixture() {
   };
   const handlers = new Map<string, (_event: unknown, input?: unknown) => unknown>();
   const choices: string[][] = [];
+  const bindings = new Map<string, Array<{ id: string; sourceSha256: string }>>();
+  const bindImportedTasks = vi.fn((projectDir: string, tasks: Array<{ id: string; sourceSha256: string }>) => {
+    bindings.set(projectDir, [...(bindings.get(projectDir) ?? []), ...tasks]);
+  });
   const ipc = {
     handle: (channel: string, handler: (_event: unknown, input?: unknown) => unknown) => {
       handlers.set(channel, handler);
@@ -61,6 +65,8 @@ function fixture() {
     pickFiles: async () => ({ canceled: false, filePaths: choices.shift() ?? [] }),
     activeProjectDir: () => activeProject,
     authorizeAgentRun: () => agentRunAllowed,
+    bindImportedTasks,
+    boundRecordings: (projectDir) => bindings.get(projectDir) ?? [],
   });
   const invoke = (channel: string, input?: unknown, sender: unknown = 'owner') => {
     const handler = handlers.get(channel);
@@ -68,7 +74,7 @@ function fixture() {
     return handler(sender, input);
   };
   return { root, media, hotclip, source, outsider, choices, handlers, invoke, controller, exporter, clipId,
-    bridge, setActiveProject: (value: string) => { activeProject = value; },
+    bridge, bindImportedTasks, setActiveProject: (value: string) => { activeProject = value; },
     setAgentRunAllowed: (value: boolean) => { agentRunAllowed = value; } };
 }
 
@@ -122,6 +128,67 @@ describe('owner-only highlight IPC', () => {
     expect(listed).toMatchObject({ ok: true, tasks: [{ name: 'session.mp4', state: 'queued' }] });
     expect(JSON.stringify(listed)).not.toContain(source);
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.import)).toEqual({ ok: false, code: 'selection_required' });
+  });
+
+  it('manual import binds tasks only to the project that selected the recording root', async () => {
+    const f = fixture();
+    f.choices.push([f.media], [f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    f.setActiveProject(join(f.root, 'project-b'));
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }))
+      .toEqual({ ok: false, code: 'project_changed' });
+    expect(f.controller.list()).toEqual([]);
+    f.setActiveProject(join(f.root, 'project-a'));
+    const imported = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { ok: true; tasks: Array<{ id: string; sourceSha256: string }> };
+    expect(imported.ok).toBe(true);
+    expect(f.bindImportedTasks).toHaveBeenCalledWith(join(f.root, 'project-a'),
+      [{ id: imported.tasks[0].id, sourceSha256: imported.tasks[0].sourceSha256 }]);
+  });
+
+  it('reports an existing project binding without exposing the other project path', async () => {
+    const f = fixture();
+    f.choices.push([f.media], [f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    f.bindImportedTasks.mockImplementation(() => { throw new Error('recording_already_bound'); });
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }))
+      .toEqual({ ok: false, code: 'recording_already_bound' });
+  });
+
+  it('does not list, read or run another project\'s queued highlighter task', async () => {
+    const f = fixture();
+    const second = join(f.media, 'session-b.mp4');
+    writeFileSync(second, 'another project recording');
+    f.choices.push([f.media], [f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const own = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { tasks: Array<{ id: string }> };
+    f.setActiveProject(join(f.root, 'project-b'));
+    f.choices.push([f.media], [second]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const foreign = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { tasks: Array<{ id: string }> };
+    f.setActiveProject(join(f.root, 'project-a'));
+    const listed = await f.invoke(HIGHLIGHT_V1_CHANNELS.list) as { tasks: Array<{ id: string }> };
+    expect(listed.tasks.map((task) => task.id)).toEqual([own.tasks[0].id]);
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.read, { id: foreign.tasks[0].id }))
+      .toEqual({ ok: false, code: 'task_not_found' });
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.cancel, { id: foreign.tasks[0].id }))
+      .toEqual({ ok: false, code: 'task_not_found' });
+    f.choices.push([f.media], [process.execPath], [f.hotclip]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseNode);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseHotClip);
+    const run = await f.invoke(HIGHLIGHT_V1_CHANNELS.run, {
+      llmBaseUrl: 'http://127.0.0.1:11434/v1', llmModel: 'synthetic-model',
+      concurrency: 1, maxAttempts: 1, timeoutMs: 10_000, allowModelDownload: true,
+    }) as { ok: true; tasks: Array<{ id: string }> };
+    expect(run.tasks.map((task) => task.id)).toEqual([own.tasks[0].id]);
+    expect(f.controller.list().find((task) => task.id === foreign.tasks[0].id)?.state).toBe('queued');
   });
 
   it('agent import consumes only files selected for the active project and rechecks authorization before queue write', async () => {
@@ -299,7 +366,7 @@ describe('owner-only highlight IPC', () => {
   });
 
   it('requires owner, selected root and explicit review before exporting; never returns source paths', async () => {
-    const { root, media, choices, invoke, exporter, clipId } = fixture();
+    const { root, media, source, choices, invoke, exporter, clipId } = fixture();
     const selection = { taskId: `hbatch_${'a'.repeat(64)}`, highlightId: `hlcv1-${'b'.repeat(64)}`,
       startMs: 1100, endMs: 2900 };
     const request = { reviewConfirmed: true, selections: [selection], concurrency: 1,
@@ -313,17 +380,49 @@ describe('owner-only highlight IPC', () => {
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, { ...request, reviewConfirmed: false }))
       .toEqual({ ok: false, code: 'review_required' });
     expect(exporter.exportBatch).not.toHaveBeenCalled();
+    choices.push([source]);
+    await invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { tasks: Array<{ id: string }> };
+    selection.taskId = imported.tasks[0].id;
+    exporter.list.mockReturnValue([{ id: clipId, taskId: selection.taskId }] as never);
+    exporter.verifiedOutput.mockResolvedValue({ path: join(root, 'highlights-v1', 'reviewed-clips', `${clipId}.mp4`),
+      receipt: { id: clipId, taskId: selection.taskId, outputDurationMs: 1800 } });
     const result = await invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, request);
     expect(result).toMatchObject({ ok: true, results: [{ status: 'completed', id: clipId }] });
     expect(exporter.exportBatch).toHaveBeenCalledWith({ mediaRootDir: media,
       reviewConfirmed: true, selections: [selection], concurrency: 1 });
     expect(JSON.stringify(result)).not.toContain(root);
-    expect(await invoke(HIGHLIGHT_V1_CHANNELS.listReviewed)).toEqual({ ok: true, clips: [], busy: false });
+    expect(await invoke(HIGHLIGHT_V1_CHANNELS.listReviewed))
+      .toMatchObject({ ok: true, clips: [{ id: clipId, taskId: selection.taskId }], busy: false });
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: clipId }, 'foreign'))
       .toEqual({ ok: false, code: 'forbidden' });
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: 'malicious' }))
       .toEqual({ ok: false, code: 'invalid_request' });
     expect(await invoke(HIGHLIGHT_V1_CHANNELS.verifiedOutput, { id: clipId }))
       .toMatchObject({ ok: true, path: expect.stringContaining(`${clipId}.mp4`), durationMs: 1800 });
+  });
+
+  it('cannot cancel or receive another project\'s in-flight reviewed export', async () => {
+    const f = fixture();
+    f.choices.push([f.media], [f.source]);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRoot);
+    await f.invoke(HIGHLIGHT_V1_CHANNELS.chooseRecordings);
+    const imported = await f.invoke(HIGHLIGHT_V1_CHANNELS.import, { maxClips: 1 }) as
+      { tasks: Array<{ id: string }> };
+    let finish!: (value: unknown) => void;
+    f.exporter.exportBatch.mockImplementation(() => new Promise((resolve) => { finish = resolve; }) as never);
+    const pending = f.invoke(HIGHLIGHT_V1_CHANNELS.exportReviewed, {
+      reviewConfirmed: true, concurrency: 1,
+      selections: [{ taskId: imported.tasks[0].id, highlightId: `hlcv1-${'b'.repeat(64)}`,
+        startMs: 1000, endMs: 2000 }],
+    }) as Promise<unknown>;
+    await Promise.resolve();
+    f.setActiveProject(join(f.root, 'project-b'));
+    expect(await f.invoke(HIGHLIGHT_V1_CHANNELS.cancelExport))
+      .toEqual({ ok: false, code: 'forbidden' });
+    expect(f.exporter.cancelActive).not.toHaveBeenCalled();
+    finish([]);
+    expect(await pending).toEqual({ ok: false, code: 'project_changed' });
   });
 });

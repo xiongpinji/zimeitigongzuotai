@@ -84,6 +84,18 @@ describe('受信任生产活动授权', () => {
     expect(f.store.boundRecordings(f.project)).toEqual([{ id: taskId, sourceSha256 }]);
   });
 
+  it('桌面手动导入无需智能体授权仍绑定工程，并拒绝把同一任务绑定到其他工程', () => {
+    const f = fixture();
+    const task = { id: `hbatch_${'a'.repeat(64)}`, sourceSha256: 'b'.repeat(64) };
+    f.store.bindOwnerImportedRecordings(f.project, [task]);
+    expect(f.reopen().boundRecordings(f.project)).toEqual([task]);
+    expect(f.store.boundRecordings(join(f.root, 'other'))).toEqual([]);
+    expect(() => f.store.bindOwnerImportedRecordings(f.project, [task,
+      { ...task, sourceSha256: 'c'.repeat(64) }])).toThrow('invalid_recording_binding');
+    expect(() => f.store.bindOwnerImportedRecordings(join(f.root, 'other'), [task]))
+      .toThrow('recording_already_bound');
+  });
+
   it('真实模型高光动作必须单独授权，限当前工程与 30 分钟且不开放发布', () => {
     const f = fixture();
     f.store.issueRecordingImport(f.project, 30);

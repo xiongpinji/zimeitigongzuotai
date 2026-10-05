@@ -10,6 +10,7 @@ import type { LocalAssetLibrary } from '../assets/local-asset-library';
 export interface LiveCompositionDocumentDeps {
   controller: Pick<ProductHighlightController, 'list' | 'readArtifact'>;
   library: Pick<LocalAssetLibrary, 'list'>;
+  boundRecordings: (projectDir: string) => Array<{ id: string; sourceSha256: string }>;
   nowIso?: () => string;
 }
 
@@ -54,8 +55,15 @@ export async function buildLiveCompositionDocument(projectDir: string,
   const recordings = new Map<string, RecordingV1>();
   const highlights = new Map<string, HighlightV1>();
   try {
+    const bound = new Map(deps.boundRecordings(root)
+      .map((entry) => [entry.id, entry.sourceSha256]));
     for (const task of deps.controller.list()) {
       if (task.state !== 'completed') continue;
+      const boundSha = bound.get(task.id);
+      if (!boundSha) continue;
+      if (boundSha !== task.sourceSha256 || boundSha !== task.recording.sourceSha256) {
+        throw new LiveCompositionDocumentError('invalid_catalog');
+      }
       addUnique(recordings, task.recording);
       const artifact = deps.controller.readArtifact(task.id);
       if (!artifact || artifact.taskId !== task.id || artifact.attempt !== task.attempt ||

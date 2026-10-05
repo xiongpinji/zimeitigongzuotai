@@ -33,6 +33,7 @@ export type HighlightV1IpcErrorCode =
   | 'forbidden' | 'busy' | 'stopped' | 'invalid_request' | 'invalid_selection'
   | 'selection_required' | 'consent_required' | 'source_unavailable'
   | 'root_mismatch' | 'authorization_expired' | 'project_changed'
+  | 'recording_already_bound'
   | 'task_not_found' | 'invalid_transition' | 'attempt_limit_reached' | 'internal_error'
   | ReviewedClipErrorCode;
 export type HighlightV1Result<T> = ({ ok: true } & T) | { ok: false; code: HighlightV1IpcErrorCode };
@@ -71,6 +72,8 @@ export interface ProductHighlightIpcOptions {
   pickFiles(title: string, defaultPath?: string): Promise<DialogResult>;
   activeProjectDir(): string | null;
   authorizeAgentRun(): boolean;
+  bindImportedTasks(projectDir: string, tasks: Array<{ id: string; sourceSha256: string }>): void;
+  boundRecordings(projectDir: string): Array<{ id: string; sourceSha256: string }>;
 }
 export interface PreparedRecordingImportBridge {
   importSelectedForAgent(projectDir: string, maxClips: number,
@@ -144,6 +147,10 @@ function errorCode(error: unknown): HighlightV1IpcErrorCode {
     return error.code === 'invalid_configuration' ? 'invalid_request' : error.code;
   }
   if (error instanceof AuthorizedRecordingImportError) return error.code;
+  if (error instanceof PreparedRecordingImportError) return error.code;
+  if (error instanceof Error && error.message === 'recording_already_bound') {
+    return 'recording_already_bound';
+  }
   if (error instanceof HighlightBatchQueueError) {
     if (error.code === 'task_not_found' || error.code === 'invalid_transition' ||
         error.code === 'attempt_limit_reached') return error.code;
@@ -165,6 +172,19 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
   let selectionRevision = 0;
   let preparedAgentRun: { projectDir: string; revision: number;
     config: ProductHighlightRunConfiguration } | null = null;
+  let activeExportProject: string | null = null;
+
+  function ownedTasks(): HighlightBatchTaskV1[] {
+    const projectDir = options.activeProjectDir();
+    if (!projectDir) throw new PreparedRecordingImportError('project_changed');
+    const bound = new Map(options.boundRecordings(projectDir)
+      .map((entry) => [entry.id, entry.sourceSha256]));
+    return controller.list().filter((task) => bound.get(task.id) === task.sourceSha256);
+  }
+
+  function ownsTask(id: string): boolean {
+    return ownedTasks().some((task) => task.id === id);
+  }
 
   function handle(channel: string, operation: (input: unknown) => Promise<unknown> | unknown): void {
     ipc.handle(channel, async (event, input) => {
@@ -283,6 +303,10 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
 
   handle(HIGHLIGHT_V1_CHANNELS.import, async (input) => {
     if (!mediaRoot || !selectedRecordings.length) return { ok: false, code: 'selection_required' };
+    const projectDir = options.activeProjectDir();
+    if (!projectDir || !selectionProject || pathKey(projectDir) !== pathKey(selectionProject)) {
+      return { ok: false, code: 'project_changed' };
+    }
     if (!object(input) ||
         !(input.maxClips === null || input.maxClips === undefined ||
           (Number.isInteger(input.maxClips) && (input.maxClips as number) >= 1 && (input.maxClips as number) <= 12))) {
@@ -290,23 +314,37 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     }
     const paths = selectedRecordings;
     const subtitlePaths = paths.map((path) => selectedSubtitles.get(pathKey(path)) ?? null);
+    const revision = selectionRevision;
     selectedRecordings = [];
     selectedSubtitles.clear();
     const tasks = await controller.importRecordings({
       mediaRootDir: mediaRoot, videoPaths: paths, subtitlePaths,
       maxClips: (input.maxClips as number | null | undefined) ?? null,
+      beforeEnqueue: () => {
+        const current = options.activeProjectDir();
+        return selectionRevision === revision && !!current &&
+          pathKey(current) === pathKey(projectDir);
+      },
     });
+    const current = options.activeProjectDir();
+    if (!current || pathKey(current) !== pathKey(projectDir)) {
+      throw new PreparedRecordingImportError('project_changed');
+    }
+    options.bindImportedTasks(projectDir, tasks.map((task) => ({
+      id: task.id, sourceSha256: task.sourceSha256,
+    })));
     return { ok: true, tasks: tasks.map(dto) };
   });
 
   handle(HIGHLIGHT_V1_CHANNELS.list, () => ({
-    ok: true, busy: controller.hasActiveWork, tasks: controller.list().map(dto),
+    ok: true, busy: controller.hasActiveWork, tasks: ownedTasks().map(dto),
   }));
 
   handle(HIGHLIGHT_V1_CHANNELS.read, (input) => {
     if (!object(input) || typeof input.id !== 'string' || !TASK_ID_RE.test(input.id)) {
       return { ok: false, code: 'invalid_request' };
     }
+    if (!ownsTask(input.id)) return { ok: false, code: 'task_not_found' };
     const artifact: HighlightArtifactBundle | null = controller.readArtifact(input.id);
     if (!artifact) return { ok: false, code: 'task_not_found' };
     return { ok: true, artifact };
@@ -316,6 +354,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     if (!object(input) || typeof input.id !== 'string' || !TASK_ID_RE.test(input.id)) {
       return { ok: false, code: 'invalid_request' };
     }
+    if (!ownsTask(input.id)) return { ok: false, code: 'task_not_found' };
     return { ok: true, task: dto(controller.cancel(input.id)) };
   });
 
@@ -323,6 +362,7 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     if (!object(input) || typeof input.id !== 'string' || !TASK_ID_RE.test(input.id) ||
         !Number.isInteger(input.maxAttempts) || (input.maxAttempts as number) < 1 ||
         (input.maxAttempts as number) > 5) return { ok: false, code: 'invalid_request' };
+    if (!ownsTask(input.id)) return { ok: false, code: 'task_not_found' };
     return { ok: true, task: dto(controller.retry(input.id, input.maxAttempts as number)) };
   });
 
@@ -331,11 +371,16 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     if (!object(input)) return { ok: false, code: 'invalid_request' };
     if (input.allowModelDownload !== true) return { ok: false, code: 'consent_required' };
     if (!mediaRoot || !nodeExecutable || !hotClipDir) return { ok: false, code: 'selection_required' };
-    const queued = controller.list().filter((task) => task.state === 'queued');
+    const active = options.activeProjectDir();
+    if (!active || !selectionProject || pathKey(active) !== pathKey(selectionProject)) {
+      return { ok: false, code: 'project_changed' };
+    }
+    const queued = ownedTasks().filter((task) => task.state === 'queued');
+    if (!queued.length) return { ok: false, code: 'selection_required' };
     if (queued.some((task) => !within(mediaRoot!, task.recording.sourceRef))) {
       return { ok: false, code: 'root_mismatch' };
     }
-    const tasks = await controller.runQueued({
+    const tasks = await controller.runSelected({
       mediaRootDir: mediaRoot,
       executable: nodeExecutable,
       argsPrefix: ['--import', 'tsx', 'src/cli/index.ts'],
@@ -347,7 +392,11 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
       llmModel: input.llmModel as string,
       llmApiKey: input.llmApiKey as string | undefined,
       allowModelDownload: true,
-    });
+    }, queued.map((task) => task.id));
+    const current = options.activeProjectDir();
+    if (!current || pathKey(current) !== pathKey(active)) {
+      return { ok: false, code: 'project_changed' };
+    }
     return { ok: true, tasks: tasks.map(dto) };
   });
 
@@ -379,34 +428,61 @@ export function registerProductHighlightIpc(options: ProductHighlightIpcOptions)
     if (!mediaRoot) return { ok: false, code: 'selection_required' };
     if (!object(input)) return { ok: false, code: 'invalid_request' };
     if (input.reviewConfirmed !== true) return { ok: false, code: 'review_required' };
-    const results = await exporter.exportBatch({
-      mediaRootDir: mediaRoot,
-      reviewConfirmed: true,
-      selections: input.selections,
-      concurrency: input.concurrency,
-    });
-    return { ok: true, results: results.map((result) => result.status === 'completed'
-      ? { status: result.status, id: result.id, taskId: result.taskId,
-        highlightId: result.highlightId, outputSha256: result.outputSha256,
-        outputDurationMs: result.outputDurationMs, reused: result.reused }
-      : result) };
+    const projectDir = options.activeProjectDir();
+    if (!projectDir || !selectionProject || pathKey(projectDir) !== pathKey(selectionProject)) {
+      return { ok: false, code: 'project_changed' };
+    }
+    if (activeExportProject) return { ok: false, code: 'busy' };
+    if (!Array.isArray(input.selections) || input.selections.some((selection) =>
+      !object(selection) || typeof selection.taskId !== 'string' ||
+      !ownsTask(selection.taskId))) return { ok: false, code: 'task_not_found' };
+    activeExportProject = projectDir;
+    try {
+      const results = await exporter.exportBatch({
+        mediaRootDir: mediaRoot,
+        reviewConfirmed: true,
+        selections: input.selections,
+        concurrency: input.concurrency,
+      });
+      const current = options.activeProjectDir();
+      if (!current || pathKey(current) !== pathKey(projectDir)) {
+        return { ok: false, code: 'project_changed' };
+      }
+      return { ok: true, results: results.map((result) => result.status === 'completed'
+        ? { status: result.status, id: result.id, taskId: result.taskId,
+          highlightId: result.highlightId, outputSha256: result.outputSha256,
+          outputDurationMs: result.outputDurationMs, reused: result.reused }
+        : result) };
+    } finally { activeExportProject = null; }
   });
 
-  handle(HIGHLIGHT_V1_CHANNELS.listReviewed, () => ({
-    ok: true, clips: exporter.list(), busy: exporter.hasActiveWork,
-  }));
+  handle(HIGHLIGHT_V1_CHANNELS.listReviewed, () => {
+    const current = options.activeProjectDir();
+    return { ok: true, clips: exporter.list().filter((clip) => ownsTask(clip.taskId)),
+      busy: exporter.hasActiveWork && !!current && !!activeExportProject &&
+        pathKey(current) === pathKey(activeExportProject) };
+  });
 
   handle(HIGHLIGHT_V1_CHANNELS.verifiedOutput, async (input) => {
     if (!object(input) || typeof input.id !== 'string' || !CLIP_ID_RE.test(input.id)) {
       return { ok: false, code: 'invalid_request' };
     }
+    if (!exporter.list().some((clip) => clip.id === input.id && ownsTask(clip.taskId))) {
+      return { ok: false, code: 'task_not_found' };
+    }
     const { path, receipt } = await exporter.verifiedOutput(input.id);
+    if (!ownsTask(receipt.taskId)) return { ok: false, code: 'task_not_found' };
     return { ok: true, path, durationMs: receipt.outputDurationMs };
   });
 
-  handle(HIGHLIGHT_V1_CHANNELS.cancelExport, () => ({
-    ok: true, cancelled: exporter.cancelActive(),
-  }));
+  handle(HIGHLIGHT_V1_CHANNELS.cancelExport, () => {
+    if (!activeExportProject) return { ok: true, cancelled: false };
+    const current = options.activeProjectDir();
+    if (!current || pathKey(current) !== pathKey(activeExportProject)) {
+      return { ok: false, code: 'forbidden' };
+    }
+    return { ok: true, cancelled: exporter.cancelActive() };
+  });
 
   return {
     async importSelectedForAgent(projectDir, maxClips, beforeEnqueue) {
