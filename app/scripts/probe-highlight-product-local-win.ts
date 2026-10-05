@@ -10,19 +10,25 @@ import { ProductHighlightController } from '../electron/highlights/product-highl
 if (process.platform !== 'win32') throw new Error('Windows local probe only');
 const repo = resolve(__dirname, '..', '..');
 const asrMode = process.argv.includes('--asr');
+const selectedMode = process.argv.includes('--selected');
+if (asrMode && selectedMode) throw new Error('Probe modes must be separate');
 const media = asrMode
   ? join(repo, 'data', 'media', 'synthetic', 'asr-speech-2026-10-05')
   : join(repo, 'data', 'media', 'synthetic');
 const video = join(media, asrMode ? 'synthetic-zh-30s.mp4' : 'highlight-trial-120s.mp4');
 const srt = asrMode ? null : join(media, 'highlight-trial-120s.srt');
+const unrelatedVideo = selectedMode ? join(media, 'synthetic-livestream.mp4') : null;
+const unrelatedSrt = selectedMode ? join(media, 'synthetic-livestream.srt') : null;
 const hotclip = join(repo, 'data', 'tools', 'hotclip');
 const runDir = join(repo, 'data', 'runtime', 'validation',
-  `${asrMode ? 'highlight-product-asr' : 'highlight-product'}-${Date.now()}`);
+  `${asrMode ? 'highlight-product-asr' : selectedMode ? 'highlight-product-selected' : 'highlight-product'}-${Date.now()}`);
 const model = 'qwen3:4b-instruct';
 const endpoint = 'http://127.0.0.1:11435/v1';
 
 async function main(): Promise<void> {
-  for (const path of [video, ...(srt ? [srt] : []), join(hotclip, 'src', 'cli', 'index.ts')]) {
+  for (const path of [video, ...(srt ? [srt] : []),
+    ...(unrelatedVideo ? [unrelatedVideo, unrelatedSrt!] : []),
+    join(hotclip, 'src', 'cli', 'index.ts')]) {
     assert.ok(existsSync(path), 'Local probe prerequisite is missing');
   }
   const asrModelDir = process.env.LINGJI_ASR_MODELS_DIR;
@@ -41,8 +47,9 @@ async function main(): Promise<void> {
   let runtime = bootstrapProductHighlights(runDir);
   try {
     let controller = new ProductHighlightController({ runtime, userDataPath: runDir });
-    const [task] = await controller.importRecordings({
-      mediaRootDir: media, videoPaths: [video], subtitlePaths: [srt], maxClips: 3,
+    const [task, unrelatedTask] = await controller.importRecordings({
+      mediaRootDir: media, videoPaths: unrelatedVideo ? [video, unrelatedVideo] : [video],
+      subtitlePaths: unrelatedSrt ? [srt, unrelatedSrt] : [srt], maxClips: 3,
     });
     const receipt = task.recording.transcriptRef;
     const srtSha256 = srt ? createHash('sha256').update(readFileSync(srt)).digest('hex') : null;
@@ -54,13 +61,14 @@ async function main(): Promise<void> {
     runtime = bootstrapProductHighlights(runDir);
     controller = new ProductHighlightController({ runtime, userDataPath: runDir });
     assert.equal(runtime.queue.get(task.id)?.state, 'queued');
+    if (selectedMode) assert.equal(runtime.queue.get(unrelatedTask.id)?.state, 'queued');
     if (asrMode) {
       const settingsDir = join(runDir, 'highlights-v1', 'sidecar-home', 'hotclip');
       mkdirSync(settingsDir, { recursive: true });
       writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ modelsDir: asrModelDir }));
     }
     const started = Date.now();
-    await controller.runQueued({
+    const config = {
       mediaRootDir: media,
       executable: process.execPath,
       argsPrefix: ['--import', 'tsx', 'src/cli/index.ts'],
@@ -71,8 +79,10 @@ async function main(): Promise<void> {
       llmBaseUrl: endpoint,
       llmModel: model,
       llmApiKey: 'ollama',
-      allowModelDownload: true,
-    });
+      allowModelDownload: true as const,
+    };
+    if (selectedMode) await controller.runSelected(config, [task.id]);
+    else await controller.runQueued(config);
     const finalTask = runtime.queue.get(task.id);
     assert.ok(finalTask);
     const artifact = controller.readArtifact(task.id);
@@ -88,12 +98,15 @@ async function main(): Promise<void> {
         startMs: item.startMs, endMs: item.endMs, score: item.score,
       })) ?? [],
       recoveredQueueBeforeRun: true,
+      selectedDispatchTested: selectedMode,
+      unrelatedTaskState: unrelatedTask ? runtime.queue.get(unrelatedTask.id)?.state : null,
       realRecordingTested: false,
       humanReviewTested: false,
       platformActionAttempted: false,
     };
     writeFileSync(join(runDir, 'result.json'), JSON.stringify(report, null, 2));
     assert.equal(finalTask.state, 'completed');
+    if (selectedMode) assert.equal(runtime.queue.get(unrelatedTask.id)?.state, 'queued');
     assert.ok(artifact);
     process.stdout.write(JSON.stringify({ evidenceDir: runDir, ...report }) + '\n');
   } finally { runtime.close(); }
