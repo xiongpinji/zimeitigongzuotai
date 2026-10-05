@@ -79,6 +79,7 @@ import { HeadlessAcpProvider, type HeadlessAcpProviderEvent } from './acp/headle
 import { registerConversationIpc } from './conversations/ipc';
 import { registerMcpIpc } from './mcp/ipc';
 import { ProductionActivityStore } from './production/activity-store';
+import { createProductionAssetSearch, type ProductionAssetSearch } from './production/asset-search';
 import { registerProductionActivityIpc } from './production/activity-ipc';
 import { registerScriptHistoryIpc } from './script-history/ipc';
 import { registerPublishIpc } from './publish/ipc';
@@ -244,10 +245,16 @@ let appConfig: ResolvedAppConfig | null = null;
 let productPublishQueue: ReturnType<typeof bootstrapProductQueue> | null = null;
 let productPublishDraftService: ReturnType<typeof createProductPublishDraftService> | null = null;
 let productionActivityStore: ProductionActivityStore | null = null;
+let productionAssetSearch: ProductionAssetSearch | null = null;
 function authorizeProductionQualityCheck() {
   const projectDir = getActiveProjectPath();
   if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
   return productionActivityStore.authorizeQualityCheck(projectDir);
+}
+function authorizeProductionAssetSearch() {
+  const projectDir = getActiveProjectPath();
+  if (!projectDir || !productionActivityStore) return { allowed: false as const, reason: 'grant_missing' as const };
+  return productionActivityStore.authorizeAssetSearch(projectDir);
 }
 let productHighlights: ReturnType<typeof bootstrapProductHighlights> | null = null;
 let productHighlightController: ProductHighlightController | null = null;
@@ -2856,7 +2863,8 @@ if (process.env.NODE_ENV_ELECTRON_VITE === 'development') {
 
 registerAgentIpc(() => mainWindow);
 registerConversationIpc(() => mainWindow);
-registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck);
+registerMcpIpc(() => mainWindow, () => productPublishDraftService, authorizeProductionQualityCheck,
+  () => productionAssetSearch, authorizeProductionAssetSearch);
 registerScriptHistoryIpc();
 registerPublishIpc();
 
@@ -2892,6 +2900,16 @@ app.whenReady().then(async () => {
         type: 'question', title: '授权智能体质检',
         message: '允许智能体在当前工程中预检发布配对 30 分钟？',
         detail: '只读取安全审核信息；不能登录账号、创建发布任务或提交平台。可随时在设置中撤销。',
+        buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1;
+    },
+    confirmAnalysis: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question', title: '授权智能体素材分析',
+        message: '允许智能体在当前工程检索已授权素材并预检发布配对 30 分钟？',
+        detail: '检索会读取素材索引并按用途复核授权和文件；只向智能体返回素材 ID、类型及匹配分数。不能登录账号、创建发布任务或提交平台。可随时在设置中撤销。',
         buttons: ['取消', '允许'], defaultId: 0, cancelId: 0, noLink: true,
       });
       return response === 1;
@@ -2942,6 +2960,7 @@ app.whenReady().then(async () => {
     const assetRoot = path.join(app.getPath('userData'), 'assets-v1');
     const assetLibrary = new LocalAssetLibrary({ rootDir: assetRoot, ffprobePath });
     const assetIndex = new OllamaAssetIndex({ rootDir: assetRoot });
+    productionAssetSearch = createProductionAssetSearch({ library: assetLibrary, index: assetIndex });
     registerAssetLibraryIpc({
       ipc: ipcMain,
       library: assetLibrary,
@@ -3129,7 +3148,8 @@ app.whenReady().then(async () => {
   // 启动 MCP Server
   try {
     await startMcpServer(19820, () => mainWindow, () => productPublishDraftService,
-      authorizeProductionQualityCheck);
+      authorizeProductionQualityCheck, () => productionAssetSearch,
+      authorizeProductionAssetSearch);
   } catch (err) {
     console.error('[MCP] Failed to start server:', err);
   }

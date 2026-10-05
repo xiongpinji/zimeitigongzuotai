@@ -7,6 +7,7 @@ import { McpConfigManager, type McpAppType } from './config-manager';
 import { startMcpServer, stopMcpServer, getMcpServerStatus } from './server';
 import type { ProductionReadService } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
+import type { ProductionAssetSearch } from '../production/asset-search';
 
 const configManager = new McpConfigManager();
 
@@ -16,14 +17,17 @@ const configManager = new McpConfigManager();
  */
 export function registerMcpIpc(getMainWindow: () => BrowserWindow | null,
   getProductionReadService?: () => ProductionReadService | null,
-  authorizeQualityCheck?: () => AgentActionGateDecision): void {
+  authorizeQualityCheck?: () => AgentActionGateDecision,
+  getAssetSearch?: () => ProductionAssetSearch | null,
+  authorizeAssetSearch?: () => AgentActionGateDecision): void {
   // ─── 服务管理 ───────────────────────────────────────────
   ipcMain.handle('mcp:get-status', () => {
     return getMcpServerStatus();
   });
 
   ipcMain.handle('mcp:start', (_event, port: number) => {
-    return startMcpServer(port, getMainWindow, getProductionReadService, authorizeQualityCheck);
+    return startMcpServer(port, getMainWindow, getProductionReadService, authorizeQualityCheck,
+      getAssetSearch, authorizeAssetSearch);
   });
 
   ipcMain.handle('mcp:stop', () => {

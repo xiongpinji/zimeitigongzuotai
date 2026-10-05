@@ -44,4 +44,23 @@ describe('受信任生产活动授权', () => {
     writeFileSync(join(f.root, 'state', 'activities.json'), '{bad json');
     expect(() => f.store.authorizeQualityCheck(f.project)).toThrow();
   });
+
+  it('素材检索必须单独明确授权，并在工程切换、撤销和到期后拒绝', () => {
+    const f = fixture();
+    f.store.issueQualityCheck(f.project, 30);
+    expect(f.store.authorizeAssetSearch(f.project)).toEqual({ allowed: false,
+      reason: 'action_not_allowed' });
+    expect(f.store.issueAnalysis(f.project, 30)).toMatchObject({ active: true,
+      allowedActions: ['quality_check', 'search_authorized_assets'] });
+    expect(f.reopen().authorizeAssetSearch(f.project)).toEqual({ allowed: true });
+    expect(f.store.authorizeAssetSearch(join(f.root, 'other'))).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+    f.advance(30 * 60_000);
+    expect(f.store.authorizeAssetSearch(f.project)).toEqual({ allowed: false,
+      reason: 'grant_expired' });
+    f.store.issueAnalysis(f.project, 30);
+    f.store.revoke(f.project);
+    expect(f.store.authorizeAssetSearch(f.project)).toEqual({ allowed: false,
+      reason: 'grant_missing' });
+  });
 });

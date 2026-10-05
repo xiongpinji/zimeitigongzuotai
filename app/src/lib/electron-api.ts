@@ -941,6 +941,7 @@ export type ProductionActivityResult =
 export interface ProductionActivityAPI {
   status(): Promise<ProductionActivityResult>;
   issueQualityCheck(): Promise<ProductionActivityResult>;
+  issueAnalysis(): Promise<ProductionActivityResult>;
   revoke(): Promise<ProductionActivityResult>;
 }
 

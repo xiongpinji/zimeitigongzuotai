@@ -885,6 +885,7 @@ contextBridge.exposeInMainWorld('publishV2DraftAPI', {
 contextBridge.exposeInMainWorld('productionActivityAPI', {
   status: () => ipcRenderer.invoke('production-activity:status'),
   issueQualityCheck: () => ipcRenderer.invoke('production-activity:issue-quality-check', 30),
+  issueAnalysis: () => ipcRenderer.invoke('production-activity:issue-analysis', 30),
   revoke: () => ipcRenderer.invoke('production-activity:revoke'),
 } satisfies ProductionActivityAPI);
 

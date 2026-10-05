@@ -50,12 +50,14 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
     }
   }, []);
 
-  const updateActivity = useCallback(async (action: 'issue' | 'revoke') => {
+  const updateActivity = useCallback(async (action: 'issue' | 'analysis' | 'revoke') => {
     setActivityBusy(true);
     try {
       setActivity(action === 'issue'
         ? await window.productionActivityAPI.issueQualityCheck()
-        : await window.productionActivityAPI.revoke());
+        : action === 'analysis'
+          ? await window.productionActivityAPI.issueAnalysis()
+          : await window.productionActivityAPI.revoke());
     } finally { setActivityBusy(false); }
   }, []);
 
@@ -134,15 +136,17 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
       <div>
         <div className={styles.sectionHeader}>
           <CheckCircle size={20} className={styles.sectionIcon} />
-          <h2 className={styles.sectionTitle}>智能体质检授权</h2>
+          <h2 className={styles.sectionTitle}>智能体分析授权</h2>
         </div>
         <p className={styles.sectionDesc}>
-          授权后，智能体可在当前工程预检账号与已审核视频的配对。此授权不允许登录或发布。
+          可单独授权预检，或授权预检加已授权素材检索。此授权不允许登录或发布。
         </p>
         <div className={styles.statusRow}>
           <span className={styles.statusText}>
             {activity?.ok && activity.status.active
-              ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}`
+              ? `已授权，至 ${new Date(activity.status.expiresAtMs!).toLocaleString()}（${
+                activity.status.allowedActions?.includes('search_authorized_assets')
+                  ? '质检与素材检索' : '仅质检'}）`
               : activity && !activity.ok && activity.code === 'project_unavailable'
                 ? '请先打开工程'
                 : activity && !activity.ok && activity.code !== 'cancelled'
@@ -151,6 +155,8 @@ export function McpSettingsTab({ projectDir }: { projectDir?: string | null }) {
           </span>
           <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
             onClick={() => updateActivity('issue')}>授权 30 分钟</Button>
+          <Button type="button" variant="primary" size="sm" disabled={activityBusy || (activity?.ok === false && activity.code === 'project_unavailable')}
+            onClick={() => updateActivity('analysis')}>授权素材检索与质检 30 分钟</Button>
           <Button type="button" variant="destructive" size="sm" disabled={activityBusy || !(activity?.ok && activity.status.active)}
             onClick={() => updateActivity('revoke')}>撤销</Button>
         </div>

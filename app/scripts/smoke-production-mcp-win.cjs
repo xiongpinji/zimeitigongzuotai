@@ -263,7 +263,8 @@ async function main() {
     phase = 'production-tools';
     const productionTools = await productionClient.listTools({}, { timeout: 15_000 });
     assert.deepEqual(productionTools.tools.map((tool) => tool.name).sort(),
-      ['lingji_production_list_drafts', 'lingji_production_preview_publish']);
+      ['lingji_production_list_drafts', 'lingji_production_preview_publish',
+        'lingji_production_search_authorized_assets']);
     phase = 'production-list';
     const listedDrafts = parseResult(await productionClient.callTool({
       name: 'lingji_production_list_drafts', arguments: {},
@@ -280,6 +281,14 @@ async function main() {
     assert.equal(previewError.isError, true);
     assert.deepEqual(JSON.parse(previewError.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
+    const searchInput = { text: '夜晚街景', platform: 'douyin', region: 'cn',
+      commercialShortVideo: true, maxResults: 5 };
+    const searchBefore = await productionClient.callTool({
+      name: 'lingji_production_search_authorized_assets', arguments: searchInput,
+    }, undefined, { timeout: 15_000 });
+    assert.equal(searchBefore.isError, true);
+    assert.deepEqual(JSON.parse(searchBefore.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
     phase = 'production-activity-issue';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.status()),
       { ok: true, status: { active: false } });
@@ -290,6 +299,12 @@ async function main() {
     assert.equal(issued.ok, true);
     assert.equal(issued.status.active, true);
     assert.deepEqual(issued.status.allowedActions, ['quality_check']);
+    const searchQualityOnly = await productionClient.callTool({
+      name: 'lingji_production_search_authorized_assets', arguments: searchInput,
+    }, undefined, { timeout: 15_000 });
+    assert.equal(searchQualityOnly.isError, true);
+    assert.deepEqual(JSON.parse(searchQualityOnly.content.find((item) => item.type === 'text').text),
+      { code: 'action_not_allowed' });
     phase = 'production-activity-allowed';
     const allowedPreview = await productionClient.callTool({
       name: 'lingji_production_preview_publish', arguments: { assignments: [{
@@ -301,6 +316,16 @@ async function main() {
     assert.equal(allowedPreview.isError, true);
     assert.deepEqual(JSON.parse(allowedPreview.content.find((item) => item.type === 'text').text),
       { code: 'account_missing' });
+    phase = 'production-analysis-issue';
+    const analysis = await page.evaluate(() => window.productionActivityAPI.issueAnalysis());
+    assert.equal(analysis.ok, true);
+    assert.deepEqual(analysis.status.allowedActions,
+      ['quality_check', 'search_authorized_assets']);
+    phase = 'production-search-allowed';
+    const emptySearch = parseResult(await productionClient.callTool({
+      name: 'lingji_production_search_authorized_assets', arguments: searchInput,
+    }, undefined, { timeout: 15_000 }));
+    assert.deepEqual(emptySearch, { status: 'no_eligible_assets', assets: [] });
     phase = 'production-activity-revoke';
     assert.deepEqual(await page.evaluate(() => window.productionActivityAPI.revoke()),
       { ok: true, status: { active: false } });
@@ -312,6 +337,12 @@ async function main() {
       }] },
     }, undefined, { timeout: 15_000 });
     assert.deepEqual(JSON.parse(revokedPreview.content.find((item) => item.type === 'text').text),
+      { code: 'grant_missing' });
+    const searchRevoked = await productionClient.callTool({
+      name: 'lingji_production_search_authorized_assets', arguments: searchInput,
+    }, undefined, { timeout: 15_000 });
+    assert.equal(searchRevoked.isError, true);
+    assert.deepEqual(JSON.parse(searchRevoked.content.find((item) => item.type === 'text').text),
       { code: 'grant_missing' });
     const activities = fs.readFileSync(path.join(profile, 'production-v1', 'activities.json'), 'utf8');
     assert.equal(activities.includes(projectPath), false);

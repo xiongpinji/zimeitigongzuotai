@@ -4,6 +4,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ProductPublishDraftError, type createProductPublishDraftService } from
   '../publish/product-publish-drafts';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
+import type { ProductionAssetSearch } from '../production/asset-search';
+import { PRODUCTION_PLATFORMS } from '../../src/types/production-contracts';
+import { LocalAssetLibraryError } from '../assets/local-asset-library';
 
 export type ProductionReadService = Pick<ReturnType<typeof createProductPublishDraftService>,
   'listDrafts' | 'preview'>;
@@ -17,12 +20,15 @@ function result(value: unknown, isError = false) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], isError };
 }
 function errorResult(error: unknown) {
-  return result({ code: error instanceof ProductPublishDraftError ? error.code : 'internal_error' }, true);
+  return result({ code: error instanceof ProductPublishDraftError || error instanceof LocalAssetLibraryError
+    ? error.code : 'internal_error' }, true);
 }
 
 export function registerProductionReadTools(server: McpServer,
   getService: () => ProductionReadService | null,
-  authorizeQualityCheck: () => AgentActionGateDecision): void {
+  authorizeQualityCheck: () => AgentActionGateDecision,
+  getAssetSearch: () => ProductionAssetSearch | null,
+  authorizeAssetSearch: () => AgentActionGateDecision): void {
   server.registerTool('lingji_production_list_drafts', {
     title: '查看当前工程的安全发布草稿',
     description: '只返回账号与混剪版本的安全投影；不会提交平台，也不返回视频路径或会话。',
@@ -46,5 +52,28 @@ export function registerProductionReadTools(server: McpServer,
       return result(await service.preview(assignments));
     }
     catch (error) { return errorResult(error); }
+  });
+
+  server.registerTool('lingji_production_search_authorized_assets', {
+    title: '检索当前用途已授权的素材',
+    description: '按平台、地区和商业用途检索素材，只返回已复核的素材 ID、类型和匹配分数。需要当前工程的限时分析授权。',
+    inputSchema: {
+      text: z.string().trim().min(1).max(4096),
+      platform: z.enum(PRODUCTION_PLATFORMS),
+      region: z.string().trim().min(1).max(80),
+      commercialShortVideo: z.boolean(),
+      maxResults: z.number().int().min(1).max(10),
+    },
+  }, async (input) => {
+    const search = getAssetSearch();
+    if (!search) return result({ code: 'service_unavailable' }, true);
+    try {
+      const first = authorizeAssetSearch();
+      if (!first.allowed) return result({ code: first.reason }, true);
+      const found = await search(input);
+      const final = authorizeAssetSearch();
+      if (!final.allowed) return result({ code: final.reason }, true);
+      return result(found);
+    } catch (error) { return errorResult(error); }
   });
 }

@@ -18,6 +18,7 @@ import { handleSonarHttp, isSonarPath } from '../sonar/routes';
 import { authorizeProductionMcpRequest } from './production-auth';
 import { registerProductionReadTools, type ProductionReadService } from './production-tools';
 import type { AgentActionGateDecision } from '../production/agent-action-gate';
+import type { ProductionAssetSearch } from '../production/asset-search';
 
 // ─── 模块状态 ─────────────────────────────────────────────
 let httpServer: Server | null = null;
@@ -25,6 +26,8 @@ let currentPort = 19820;
 let getMainWindowFn: (() => BrowserWindow | null) | null = null;
 let getProductionReadServiceFn: (() => ProductionReadService | null) | null = null;
 let authorizeQualityCheckFn: (() => AgentActionGateDecision) | null = null;
+let getAssetSearchFn: (() => ProductionAssetSearch | null) | null = null;
+let authorizeAssetSearchFn: (() => AgentActionGateDecision) | null = null;
 let productionToken = '';
 const PRODUCTION_TOKEN_FILE = join(homedir(), '.lingji', 'production-mcp-token');
 
@@ -53,7 +56,9 @@ function createSessionServer(production: boolean): McpServer {
     { capabilities: { logging: {} } },
   );
   if (production) registerProductionReadTools(server, () => getProductionReadServiceFn?.() ?? null,
-    () => authorizeQualityCheckFn?.() ?? { allowed: false, reason: 'grant_missing' });
+    () => authorizeQualityCheckFn?.() ?? { allowed: false, reason: 'grant_missing' },
+    () => getAssetSearchFn?.() ?? null,
+    () => authorizeAssetSearchFn?.() ?? { allowed: false, reason: 'grant_missing' });
   else registerTools(server, getMainWindowFn!);
   return server;
 }
@@ -108,6 +113,8 @@ export async function startMcpServer(
   getMainWindow: () => BrowserWindow | null,
   getProductionReadService?: () => ProductionReadService | null,
   authorizeQualityCheck?: () => AgentActionGateDecision,
+  getAssetSearch?: () => ProductionAssetSearch | null,
+  authorizeAssetSearch?: () => AgentActionGateDecision,
 ): Promise<void> {
   // 防止重复启动
   if (httpServer) {
@@ -119,6 +126,8 @@ export async function startMcpServer(
   getMainWindowFn = getMainWindow;
   getProductionReadServiceFn = getProductionReadService ?? null;
   authorizeQualityCheckFn = authorizeQualityCheck ?? null;
+  getAssetSearchFn = getAssetSearch ?? null;
+  authorizeAssetSearchFn = authorizeAssetSearch ?? null;
 
   // 声呐桥：待创作箱 store + 共享 token（loopback + token 鉴权）
   sonarStore = createSonarInboxStore();
@@ -270,6 +279,8 @@ export async function stopMcpServer(): Promise<void> {
   productionToken = '';
   getProductionReadServiceFn = null;
   authorizeQualityCheckFn = null;
+  getAssetSearchFn = null;
+  authorizeAssetSearchFn = null;
 }
 
 /**

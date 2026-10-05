@@ -25,6 +25,7 @@ describe('生产活动 IPC 主进程边界', () => {
       activeProjectDir: () => active,
       allowedSender: (event) => event === owner,
       confirmIssue: confirm,
+      confirmAnalysis: confirm,
     });
     const call = async (channel: string, event: unknown, input?: unknown) =>
       handlers.get(channel)!(event, input);
@@ -43,6 +44,12 @@ describe('生产活动 IPC 主进程边界', () => {
     confirm.mockResolvedValue(true);
     expect(await call('production-activity:issue-quality-check', owner, 30))
       .toMatchObject({ ok: true, status: { active: true } });
+    expect(await call('production-activity:issue-analysis', other, 30))
+      .toEqual({ ok: false, code: 'project_unavailable' });
+    expect(await call('production-activity:issue-analysis', owner, 60))
+      .toEqual({ ok: false, code: 'duration_invalid' });
+    expect(await call('production-activity:issue-analysis', owner, 30))
+      .toMatchObject({ ok: true, status: { allowedActions: ['quality_check', 'search_authorized_assets'] } });
     expect(await call('production-activity:revoke', other))
       .toEqual({ ok: false, code: 'project_unavailable' });
     expect(await call('production-activity:revoke', owner))

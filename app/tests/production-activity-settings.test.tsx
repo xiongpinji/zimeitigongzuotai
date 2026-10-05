@@ -20,6 +20,9 @@ describe('智能体质检设置入口', () => {
       status: vi.fn(async () => ({ ok: true as const, status: { active } })),
       issueQualityCheck: vi.fn(async () => { active = true; return { ok: true as const,
         status: { active, expiresAtMs: Date.now() + 30 * 60_000, allowedActions: ['quality_check'] } }; }),
+      issueAnalysis: vi.fn(async () => { active = true; return { ok: true as const,
+        status: { active, expiresAtMs: Date.now() + 30 * 60_000,
+          allowedActions: ['quality_check', 'search_authorized_assets'] } }; }),
       revoke: vi.fn(async () => { active = false; return { ok: true as const, status: { active } }; }),
     };
     (window as unknown as { mcpAPI: unknown }).mcpAPI = {
@@ -37,6 +40,10 @@ describe('智能体质检设置入口', () => {
     await act(async () => { button('授权 30 分钟').click(); });
     expect(activityApi.issueQualityCheck).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('已授权，至');
+    expect(host.textContent).toContain('仅质检');
+    await act(async () => { button('授权素材检索与质检 30 分钟').click(); });
+    expect(activityApi.issueAnalysis).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('质检与素材检索');
     await act(async () => { button('撤销').click(); });
     expect(activityApi.revoke).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('当前未授权');

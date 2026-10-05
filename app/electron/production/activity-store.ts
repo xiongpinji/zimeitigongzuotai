@@ -4,7 +4,8 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { isAbsolute, join, resolve } from 'node:path';
 import { evaluateAgentProductionAction, type AgentActionGateDecision, type ProductionActivityGrantV1 } from './agent-action-gate';
 
-type AuditEntry = { atMs: number; projectId: string; action: 'quality_check'; decision: 'allowed' | 'denied'; code?: string };
+type ReadAction = 'quality_check' | 'search_authorized_assets';
+type AuditEntry = { atMs: number; projectId: string; action: ReadAction; decision: 'allowed' | 'denied'; code?: string };
 type Snapshot = { version: 1; grants: Record<string, ProductionActivityGrantV1>; audit: AuditEntry[] };
 export type ActivityStatus = { active: boolean; expiresAtMs?: number; allowedActions?: string[] };
 
@@ -54,17 +55,27 @@ export class ProductionActivityStore {
     const nowMs = this.now();
     if (!grant || !Number.isFinite(nowMs) || nowMs < grant.issuedAtMs || nowMs >= grant.expiresAtMs) return { active: false };
     const decision = evaluateAgentProductionAction({ action: 'quality_check', projectId: id }, grant, { nowMs, usedQueuedJobs: 0 });
-    return decision.allowed ? { active: true, expiresAtMs: grant.expiresAtMs, allowedActions: ['quality_check'] } : { active: false };
+    return decision.allowed ? { active: true, expiresAtMs: grant.expiresAtMs,
+      allowedActions: grant.allowedActions.filter((action) =>
+        action === 'quality_check' || action === 'search_authorized_assets') } : { active: false };
   }
 
   issueQualityCheck(projectDir: string, durationMinutes: number): ActivityStatus {
+    return this.issue(projectDir, durationMinutes, ['quality_check']);
+  }
+
+  issueAnalysis(projectDir: string, durationMinutes: number): ActivityStatus {
+    return this.issue(projectDir, durationMinutes, ['quality_check', 'search_authorized_assets']);
+  }
+
+  private issue(projectDir: string, durationMinutes: number, allowedActions: ReadAction[]): ActivityStatus {
     if (![15, 30, 60].includes(durationMinutes)) throw new Error('duration_invalid');
     const id = projectId(projectDir);
     const nowMs = this.now();
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error('clock_invalid');
     const snapshot = this.read();
     snapshot.grants[id] = { projectId: id, issuedAtMs: nowMs, expiresAtMs: nowMs + durationMinutes * 60_000,
-      allowedActions: ['quality_check'], accountIds: [], platforms: [], autoPublish: false, maxQueuedJobs: 0 };
+      allowedActions, accountIds: [], platforms: [], autoPublish: false, maxQueuedJobs: 0 };
     this.write(snapshot);
     return this.status(projectDir);
   }
@@ -77,12 +88,20 @@ export class ProductionActivityStore {
   }
 
   authorizeQualityCheck(projectDir: string): AgentActionGateDecision {
+    return this.authorize(projectDir, 'quality_check');
+  }
+
+  authorizeAssetSearch(projectDir: string): AgentActionGateDecision {
+    return this.authorize(projectDir, 'search_authorized_assets');
+  }
+
+  private authorize(projectDir: string, action: ReadAction): AgentActionGateDecision {
     const id = projectId(projectDir);
     const snapshot = this.read();
     const nowMs = this.now();
-    const decision = evaluateAgentProductionAction({ action: 'quality_check', projectId: id }, snapshot.grants[id],
+    const decision = evaluateAgentProductionAction({ action, projectId: id }, snapshot.grants[id],
       { nowMs, usedQueuedJobs: 0 });
-    snapshot.audit.push({ atMs: nowMs, projectId: id, action: 'quality_check',
+    snapshot.audit.push({ atMs: nowMs, projectId: id, action,
       decision: decision.allowed ? 'allowed' : 'denied', ...(!decision.allowed ? { code: decision.reason } : {}) });
     if (snapshot.audit.length > 1000) snapshot.audit.splice(0, snapshot.audit.length - 1000);
     this.write(snapshot); // Audit persistence is required: a failed write must fail the tool call closed.
